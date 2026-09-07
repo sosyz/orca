@@ -21,6 +21,9 @@ export const connectionLogStore = createConnectionLogStore(200, {
   },
   save(hostId, entries) {
     return AsyncStorage.setItem(storageKey(hostId), JSON.stringify(entries))
+  },
+  remove(hostId) {
+    return AsyncStorage.removeItem(storageKey(hostId))
   }
 })
 
@@ -40,6 +43,7 @@ export function recordConnectionRevival(
 }
 
 export function recordConnectionClientSessionStart(hostId: string): void {
+  connectionLogStore.activate(hostId)
   if (sessionStartedHosts.has(hostId)) {
     return
   }
@@ -52,6 +56,11 @@ export function recordConnectionClientSessionStart(hostId: string): void {
     code: 'client-session-started',
     message: 'Mobile client session started'
   })
+}
+
+export async function removeConnectionLogForHost(hostId: string): Promise<void> {
+  await connectionLogStore.remove(hostId)
+  sessionStartedHosts.delete(hostId)
 }
 
 function storageKey(hostId: string): string {

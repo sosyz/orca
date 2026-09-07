@@ -8,6 +8,7 @@ import {
   type MobileE2EEV2Hello
 } from '../../../shared/mobile-e2ee-v2-contract'
 import { sealMobileE2EEV2Frame } from '../../../shared/mobile-e2ee-v2-framing'
+import { MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES } from '../../../shared/mobile-e2ee-frame-limits'
 import {
   DesktopMobileE2EEV2Session,
   MAX_MOBILE_E2EE_V2_TEXT_FRAME_BASE64_CHARACTERS
@@ -34,6 +35,17 @@ function hello(): MobileE2EEV2Hello {
 }
 
 describe('desktop mobile E2EE v2 session', () => {
+  it('rejects oversized binary frames before decryption', () => {
+    const session = DesktopMobileE2EEV2Session.create({
+      hello: hello(),
+      serverSecretKey: server.secretKey,
+      expectedContext: { transport: 'relay', relayHostId: 'AbCdEf0123_-xyZ9' },
+      randomBytes: () => new Uint8Array(32).fill(4)
+    })!
+
+    expect(session.openBinary(new Uint8Array(MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES + 1))).toBeNull()
+  })
+
   it('rejects oversized text frames before base64 decoding', () => {
     const session = DesktopMobileE2EEV2Session.create({
       hello: hello(),

@@ -104,6 +104,21 @@ describe('connection log buffer', () => {
     )
   })
 
+  it('redacts access, API, client-secret, password, and secret fields', async () => {
+    const store = createConnectionLogStore(3, { load: async () => [], save: async () => {} })
+
+    store.append('host-a', {
+      ...entry(1),
+      detail:
+        'accessToken=access-secret refresh_token:refresh-secret api-key="api-secret" clientSecret=client-camel client_secret:client-snake client-secret=client-dash password:password-secret secret=secret-value'
+    })
+    await store.hydrate('host-a')
+
+    expect(store.get('host-a')[0]?.detail).toBe(
+      'accessToken=[redacted] refresh_token:[redacted] api-key="[redacted]" clientSecret=[redacted] client_secret:[redacted] client-secret=[redacted] password:[redacted] secret=[redacted]'
+    )
+  })
+
   it('redacts the full quoted credential when its value contains an escaped quote', async () => {
     const store = createConnectionLogStore(3, { load: async () => [], save: async () => {} })
 
@@ -145,6 +160,24 @@ describe('connection log buffer', () => {
     expect(store.get('host-a')[0]).toMatchObject({
       message: 'wss://[redacted]@example.com/x',
       detail: 'https://[redacted]@example.com/x'
+    })
+  })
+
+  it('redacts pairing codes and credentials in URL queries', async () => {
+    const store = createConnectionLogStore(3, { load: async () => [], save: async () => {} })
+
+    store.append('host-a', {
+      ...entry(1),
+      message: 'orca://pair?code=pairing-secret orca://pair?mode=manual#fragment-secret',
+      detail:
+        'wss://example.com/connect?client_secret=session-secret&refresh_token=refresh-secret&api%5Fkey=api-secret&authorization=bearer-secret&mode=direct orca://pair/?mode=manual#fragment-two'
+    })
+    await store.hydrate('host-a')
+
+    expect(store.get('host-a')[0]).toMatchObject({
+      message: 'orca://pair?code=[redacted] orca://pair?mode=manual#[redacted]',
+      detail:
+        'wss://example.com/connect?client_secret=[redacted]&refresh_token=[redacted]&api%5Fkey=[redacted]&authorization=[redacted]&mode=direct orca://pair/?mode=manual#[redacted]'
     })
   })
 
@@ -202,5 +235,61 @@ describe('connection log buffer', () => {
     expect(load).toHaveBeenCalledTimes(1)
     await expect(store.hydrate('host-a')).rejects.toThrow('storage unavailable')
     expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('removes a host from memory and persistence and notifies subscribers', async () => {
+    const remove = vi.fn(async () => {})
+    const store = createConnectionLogStore(3, {
+      load: async () => [],
+      save: async () => {},
+      remove
+    })
+    const listener = vi.fn()
+    store.subscribe('host-a', listener)
+    store.append('host-a', entry(1))
+    await store.hydrate('host-a')
+    listener.mockClear()
+
+    await store.remove('host-a')
+
+    expect(remove).toHaveBeenCalledWith('host-a')
+    expect(store.get('host-a')).toEqual([])
+    expect(listener).toHaveBeenCalledOnce()
+  })
+
+  it('keeps memory when persistent host removal fails and allows a retry', async () => {
+    const remove = vi.fn().mockRejectedValueOnce(new Error('storage unavailable'))
+    const store = createConnectionLogStore(3, {
+      load: async () => [],
+      save: async () => {},
+      remove
+    })
+    store.append('host-a', entry(1))
+    await store.hydrate('host-a')
+
+    await expect(store.remove('host-a')).rejects.toThrow('storage unavailable')
+    expect(store.get('host-a').map((value) => value.id)).toEqual(['log-1'])
+
+    await store.remove('host-a')
+    expect(store.get('host-a')).toEqual([])
+    expect(remove).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops late events after removal until a new session activates the host', async () => {
+    const store = createConnectionLogStore(3, {
+      load: async () => [],
+      save: async () => {},
+      remove: async () => {}
+    })
+    store.append('host-a', entry(1))
+    await store.hydrate('host-a')
+    await store.remove('host-a')
+
+    store.append('host-a', entry(2))
+    expect(store.get('host-a')).toEqual([])
+
+    store.activate('host-a')
+    store.append('host-a', entry(3))
+    expect(store.get('host-a').map((value) => value.id)).toEqual(['log-3'])
   })
 })

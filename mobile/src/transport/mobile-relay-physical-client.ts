@@ -1,4 +1,5 @@
 import type { PairingRelay } from '../../../src/shared/mobile-relay-pairing-offer'
+import { MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES } from '../../../src/shared/mobile-e2ee-frame-limits'
 import { RelayPhoneHelloSchema } from '../../../src/shared/mobile-relay-phone-protocol'
 import { MobileE2EEV2ClientSession } from './mobile-e2ee-v2-client-session'
 import { MobileE2EEV2PhysicalChannel } from './mobile-e2ee-v2-physical-channel'
@@ -61,7 +62,7 @@ export function connectMobileRelayForPairing(args: {
     session,
     socket,
     deviceToken: args.deviceToken,
-    decodeBinary: websocketPayloadToUint8,
+    decodeBinary: (raw) => websocketPayloadToUint8(raw, MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES),
     onAuthenticated: () => {
       authenticated = true
       log('success', 'Relay: authenticated', 'Channel ready for RPC')

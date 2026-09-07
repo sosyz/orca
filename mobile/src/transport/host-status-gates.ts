@@ -21,8 +21,8 @@ type LoadedHostStatusGates = Omit<HostStatusGates, 'statusPending'> & {
 
 const EMPTY_HOST_CAPABILITIES: string[] = []
 
-// Reads status.get on connect for capabilities, protocol-compat verdict, and the
-// floating-workspace flag. Compat constants are wide-open today so this never blocks yet.
+// Reads status.get on connect for capabilities, protocol compatibility, and the
+// floating-workspace flag; hosts without the probe predate the supported protocol floor.
 export function useHostStatusGates(args: {
   hostId: string | undefined
   client: RpcClient | null
@@ -56,7 +56,13 @@ export function useHostStatusGates(args: {
             hostCapabilities: [],
             floatingWorkspaceEnabled: false,
             desktopAppVersion: null,
-            compatVerdict: { kind: 'ok' }
+            compatVerdict:
+              response.error.code === 'method_not_found'
+                ? evaluateCompat({
+                    desktopProtocolVersion: undefined,
+                    desktopMinCompatibleMobileVersion: undefined
+                  })
+                : { kind: 'ok' }
           })
           return
         }

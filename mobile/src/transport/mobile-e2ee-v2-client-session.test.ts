@@ -6,6 +6,10 @@ import {
   type MobileE2EEV2Ready
 } from '../../../src/shared/mobile-e2ee-v2-contract'
 import { sealMobileE2EEV2Frame } from '../../../src/shared/mobile-e2ee-v2-framing'
+import {
+  MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES,
+  MOBILE_E2EE_V2_MAX_TEXT_FRAME_BASE64_CHARACTERS
+} from '../../../src/shared/mobile-e2ee-frame-limits'
 
 vi.mock('expo-crypto', () => ({
   getRandomBytes: (length: number) => new Uint8Array(length).fill(9)
@@ -39,6 +43,18 @@ function setup() {
 }
 
 describe('mobile E2EE v2 client session', () => {
+  it('rejects oversized frames before decoding or decrypting them', () => {
+    const { session } = setup()
+    const decode = vi.spyOn(globalThis, 'atob')
+
+    expect(
+      session.openText('A'.repeat(MOBILE_E2EE_V2_MAX_TEXT_FRAME_BASE64_CHARACTERS + 1))
+    ).toBeNull()
+    expect(session.openBinary(new Uint8Array(MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES + 1))).toBeNull()
+    expect(decode).not.toHaveBeenCalled()
+    decode.mockRestore()
+  })
+
   it('pins the desktop key and accepts the exact transcript', () => {
     const { session, ready } = setup()
     expect(session.acceptReady(ready)).toBe(true)

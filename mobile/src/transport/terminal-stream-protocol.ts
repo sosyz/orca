@@ -1,3 +1,5 @@
+import { decodeUtf8Text } from './utf8-text'
+
 const TERMINAL_STREAM_KIND = 0x74
 const TERMINAL_STREAM_VERSION = 1
 const HEADER_BYTES = 16
@@ -58,14 +60,14 @@ export function decodeTerminalStreamFrame(bytes: Uint8Array): TerminalStreamFram
 
 export function decodeTerminalStreamJson<T>(payload: Uint8Array): T | null {
   try {
-    return JSON.parse(new TextDecoder().decode(payload)) as T
+    return JSON.parse(decodeUtf8Text(payload)) as T
   } catch {
     return null
   }
 }
 
 export function decodeTerminalStreamText(payload: Uint8Array): string {
-  return new TextDecoder().decode(payload)
+  return decodeUtf8Text(payload)
 }
 
 function isTerminalStreamOpcode(value: number): value is TerminalStreamOpcode {

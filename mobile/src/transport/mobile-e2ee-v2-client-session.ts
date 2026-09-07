@@ -9,8 +9,13 @@ import {
   openMobileE2EEV2Frame,
   sealMobileE2EEV2Frame
 } from '../../../src/shared/mobile-e2ee-v2-framing'
+import {
+  MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES,
+  MOBILE_E2EE_V2_MAX_TEXT_FRAME_BASE64_CHARACTERS
+} from '../../../src/shared/mobile-e2ee-frame-limits'
 import { deriveSharedKey, generateKeyPair, publicKeyFromBase64, publicKeyToBase64 } from './e2ee'
 import { deriveMobileE2EEV2KeySchedule } from './mobile-e2ee-v2-key-schedule'
+import { decodeUtf8Text } from './utf8-text'
 
 export class MobileE2EEV2ClientSession {
   readonly hello: MobileE2EEV2Hello
@@ -82,16 +87,18 @@ export class MobileE2EEV2ClientSession {
   }
 
   openText(frameB64: string): string | null {
-    const frame = decodeCanonicalBase64(frameB64)
+    const frame = decodeCanonicalBase64(frameB64, MOBILE_E2EE_V2_MAX_TEXT_FRAME_BASE64_CHARACTERS)
     if (!frame) {
       return null
     }
     const plaintext = this.open(frame, 'text')
-    return plaintext ? new TextDecoder().decode(plaintext) : null
+    return plaintext ? decodeUtf8Text(plaintext) : null
   }
 
   openBinary(frame: Uint8Array): Uint8Array | null {
-    return this.open(frame, 'binary')
+    return frame.byteLength <= MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES
+      ? this.open(frame, 'binary')
+      : null
   }
 
   sealText(plaintext: string): string {
@@ -145,7 +152,13 @@ function encodeBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function decodeCanonicalBase64(value: string): Uint8Array | null {
+function decodeCanonicalBase64(value: string, maxEncodedCharacters: number): Uint8Array | null {
+  if (
+    value.length > maxEncodedCharacters ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return null
+  }
   try {
     const binary = atob(value)
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))

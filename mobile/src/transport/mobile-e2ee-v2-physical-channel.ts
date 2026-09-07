@@ -2,6 +2,12 @@ import {
   createWsOutboundBackpressureQueue,
   type WsOutboundBackpressureQueue
 } from '../../../src/shared/ws-outbound-backpressure-queue'
+import {
+  MOBILE_E2EE_MAX_BINARY_PLAINTEXT_BYTES,
+  MOBILE_E2EE_MAX_TEXT_PLAINTEXT_BYTES,
+  MOBILE_E2EE_V2_FRAME_OVERHEAD_BYTES,
+  MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES
+} from '../../../src/shared/mobile-e2ee-frame-limits'
 import type { MobileE2EEV2ClientSession } from './mobile-e2ee-v2-client-session'
 
 type ChannelState = 'awaiting-ready' | 'awaiting-authenticated' | 'ready'
@@ -48,12 +54,10 @@ export class MobileE2EEV2PhysicalChannel {
             : args.session.sealBinary(item.plaintext)
         )
       },
-      byteLengthOf: (item) =>
-        (item.kind === 'text'
-          ? new TextEncoder().encode(item.plaintext).length
-          : item.plaintext.length) + 82,
+      byteLengthOf: (item) => mobileE2EEV2OutboundFrameBytes(item),
       getBufferedAmount: () => args.socket.bufferedAmount,
       isWritable: () => args.socket.readyState === args.socket.OPEN,
+      maxFrameBytes: MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES,
       onOverflow: () => args.onError(new Error('E2EE v2 outbound buffer overflow'))
     })
   }
@@ -170,9 +174,22 @@ export class MobileE2EEV2PhysicalChannel {
     if (this.state !== 'ready') {
       return false
     }
-    this.outboundQueue.enqueue(item)
-    return true
+    return this.outboundQueue.enqueue(item)
   }
+}
+
+function mobileE2EEV2OutboundFrameBytes(item: OutboundItem): number {
+  const plaintextBytes =
+    item.kind === 'text'
+      ? new TextEncoder().encode(item.plaintext).byteLength
+      : item.plaintext.byteLength
+  const maxPlaintextBytes =
+    item.kind === 'text'
+      ? MOBILE_E2EE_MAX_TEXT_PLAINTEXT_BYTES
+      : MOBILE_E2EE_MAX_BINARY_PLAINTEXT_BYTES
+  return plaintextBytes <= maxPlaintextBytes
+    ? plaintextBytes + MOBILE_E2EE_V2_FRAME_OVERHEAD_BYTES
+    : Number.POSITIVE_INFINITY
 }
 
 function isAuthenticationRejection(plaintext: string): boolean {

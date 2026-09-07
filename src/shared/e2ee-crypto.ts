@@ -2,11 +2,13 @@
 // desktop, CLI, and mobile pairing. Keeping the Node-compatible primitives in
 // shared code prevents the CLI from importing main-process modules.
 import nacl from 'tweetnacl'
+import {
+  MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES,
+  MOBILE_E2EE_LEGACY_MAX_TEXT_FRAME_BASE64_CHARACTERS
+} from './mobile-e2ee-frame-limits'
 
-const MAX_E2EE_TEXT_PLAINTEXT_BYTES = 4 * 1024 * 1024
-const LEGACY_E2EE_FRAME_OVERHEAD_BYTES = nacl.box.nonceLength + nacl.box.overheadLength
 export const MAX_E2EE_ENCRYPTED_BASE64_CHARACTERS =
-  Math.ceil((MAX_E2EE_TEXT_PLAINTEXT_BYTES + LEGACY_E2EE_FRAME_OVERHEAD_BYTES) / 3) * 4
+  MOBILE_E2EE_LEGACY_MAX_TEXT_FRAME_BASE64_CHARACTERS
 
 export function generateKeyPair(): nacl.BoxKeyPair {
   return nacl.box.keyPair()
@@ -60,7 +62,10 @@ export function encryptBytes(
 }
 
 export function decryptBytes(bundle: Uint8Array, sharedKey: Uint8Array): Uint8Array | null {
-  if (bundle.length < nacl.box.nonceLength + nacl.box.overheadLength) {
+  if (
+    bundle.length < nacl.box.nonceLength + nacl.box.overheadLength ||
+    bundle.length > MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES
+  ) {
     return null
   }
 

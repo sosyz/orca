@@ -5,7 +5,8 @@ import type { ConnectionLogEntry } from './types'
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     getItem: vi.fn(),
-    setItem: vi.fn()
+    setItem: vi.fn(),
+    removeItem: vi.fn()
   }
 }))
 
@@ -16,6 +17,8 @@ describe('persisted connection log store', () => {
     vi.mocked(AsyncStorage.getItem).mockReset()
     vi.mocked(AsyncStorage.setItem).mockReset()
     vi.mocked(AsyncStorage.setItem).mockResolvedValue(undefined)
+    vi.mocked(AsyncStorage.removeItem).mockReset()
+    vi.mocked(AsyncStorage.removeItem).mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -51,6 +54,24 @@ describe('persisted connection log store', () => {
     expect(connectionLogStore.get('host-a').map((entry) => entry.code)).toEqual([
       'client-session-started',
       'relay-session-failed',
+      'client-session-started'
+    ])
+  })
+
+  it('removes the host log from storage and starts a fresh session when re-paired', async () => {
+    vi.resetModules()
+    const { connectionLogStore, recordConnectionClientSessionStart, removeConnectionLogForHost } =
+      await import('./persisted-connection-log-store')
+
+    recordConnectionClientSessionStart('host-a')
+    await connectionLogStore.hydrate('host-a')
+    await removeConnectionLogForHost('host-a')
+
+    expect(AsyncStorage.removeItem).toHaveBeenCalledWith('orca.mobile.connection-log.v1.host-a')
+    expect(connectionLogStore.get('host-a')).toEqual([])
+
+    recordConnectionClientSessionStart('host-a')
+    expect(connectionLogStore.get('host-a').map((entry) => entry.code)).toEqual([
       'client-session-started'
     ])
   })

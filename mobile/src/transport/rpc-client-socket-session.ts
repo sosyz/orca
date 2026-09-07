@@ -6,47 +6,31 @@ import {
   generateKeyPair,
   publicKeyToBase64
 } from './e2ee'
+import { MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES } from '../../../src/shared/mobile-e2ee-frame-limits'
+import { RpcClientAuthFrameScheduler } from './rpc-client-auth-frame'
 import { isRpcResponse } from './rpc-response-shape'
+import type { RpcClientSocketSessionOptions } from './rpc-client-socket-session-options'
 import { isStaleRpcSocketEvent, logRpcSocketClose } from './rpc-socket-close-evidence'
 import { describeSocketEvent, redactSocketEndpoint } from './socket-event-debug'
-import type { ConnectionLogEmitter, ConnectionState, RpcResponse } from './types'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
 
 const CONNECT_TIMEOUT_MS = 12_000
 const HANDSHAKE_TIMEOUT_MS = 5_000
 const WEBSOCKET_CONNECTING_STATE = 0
 
-type SocketSessionOptions = {
-  endpoint: string
-  deviceToken: string
-  serverPublicKey: Uint8Array
-  getCurrentSocket: () => WebSocket | null
-  getState: () => ConnectionState
-  getReconnectAttempt: () => number
-  isIntentionallyClosed: () => boolean
-  emitLog: ConnectionLogEmitter
-  onHandshakeStarted: () => void
-  onAuthenticated: (session: RpcClientSocketSession) => void
-  onAuthRejected: (reason: string) => void
-  onRpcResponse: (response: RpcResponse) => void
-  onBinary: (bytes: Uint8Array) => void
-  onAnyInbound: (receivedAt: number) => void
-  onAuthenticatedInbound: (session: RpcClientSocketSession) => void
-  onClosed: (session: RpcClientSocketSession, closeCode?: number) => void
-  onForcedClose: (session: RpcClientSocketSession) => void
-}
-
 export class RpcClientSocketSession {
   readonly socket: WebSocket
   readonly constructedAt = Date.now()
+  private readonly authFrameScheduler: RpcClientAuthFrameScheduler
   private sharedKey: Uint8Array | null = null
   private authenticated = false
   private lastInboundAt: number | null = null
   private connectTimer: ReturnType<typeof setTimeout> | null = null
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null
 
-  constructor(private readonly options: SocketSessionOptions) {
+  constructor(private readonly options: RpcClientSocketSessionOptions) {
     this.socket = new WebSocket(options.endpoint)
+    this.authFrameScheduler = new RpcClientAuthFrameScheduler(this.socket, options.getCurrentSocket)
     this.attachHandlers()
     this.armConnectTimeout()
   }
@@ -95,6 +79,7 @@ export class RpcClientSocketSession {
       clearTimeout(this.handshakeTimer)
       this.handshakeTimer = null
     }
+    this.authFrameScheduler.clear()
   }
 
   clearKey(): void {
@@ -115,14 +100,16 @@ export class RpcClientSocketSession {
         type: 'e2ee_hello',
         publicKeyB64: publicKeyToBase64(ephemeral.publicKey)
       })
+      // Why: RNOH can deliver a localhost response before send() returns.
+      this.sharedKey = deriveSharedKey(ephemeral.secretKey, this.options.serverPublicKey)
       try {
         this.socket.send(hello)
       } catch {
+        this.sharedKey = null
         this.options.onForcedClose(this)
         return
       }
       this.options.emitLog('info', 'Sent e2ee_hello', 'Awaiting server e2ee_ready')
-      this.sharedKey = deriveSharedKey(ephemeral.secretKey, this.options.serverPublicKey)
       this.armHandshakeTimeout()
     }
     this.socket.onmessage = (event) => {
@@ -172,7 +159,10 @@ export class RpcClientSocketSession {
       return
     }
     if (raw === null) {
-      const bytes = await websocketPayloadToUint8(rawData)
+      const bytes = await websocketPayloadToUint8(
+        rawData,
+        MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES
+      )
       if (this.options.getCurrentSocket() !== this.socket || !bytes) {
         return
       }
@@ -208,7 +198,9 @@ export class RpcClientSocketSession {
       const message = JSON.parse(raw) as { type?: unknown }
       if (message.type === 'e2ee_ready') {
         this.options.emitLog('success', 'Received e2ee_ready', 'Sending device token')
-        this.sendEncrypted({ type: 'e2ee_auth', deviceToken: this.options.deviceToken })
+        this.authFrameScheduler.schedule(() =>
+          this.sendEncrypted({ type: 'e2ee_auth', deviceToken: this.options.deviceToken })
+        )
         return
       }
     } catch {

@@ -4,6 +4,11 @@
 // stream frames use the raw byte bundle.
 import nacl from 'tweetnacl'
 import * as ExpoCrypto from 'expo-crypto'
+import {
+  MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES,
+  MOBILE_E2EE_LEGACY_MAX_TEXT_FRAME_BASE64_CHARACTERS
+} from '../../../src/shared/mobile-e2ee-frame-limits'
+import { decodeUtf8Text } from './utf8-text'
 
 // Why: Hermes (React Native's JS engine) lacks crypto.getRandomValues,
 // which tweetnacl requires. expo-crypto provides a native secure RNG
@@ -68,9 +73,15 @@ export function encrypt(plaintext: string, sharedKey: Uint8Array): string {
 }
 
 export function decrypt(encrypted: string, sharedKey: Uint8Array): string | null {
-  const bundle = base64ToUint8(encrypted)
+  const bundle = decodeCanonicalBase64(
+    encrypted,
+    MOBILE_E2EE_LEGACY_MAX_TEXT_FRAME_BASE64_CHARACTERS
+  )
+  if (!bundle) {
+    return null
+  }
   const plaintext = decryptBytes(bundle, sharedKey)
-  return plaintext ? new TextDecoder().decode(plaintext) : null
+  return plaintext ? decodeUtf8Text(plaintext) : null
 }
 
 function encryptBytes(plaintext: Uint8Array, sharedKey: Uint8Array): Uint8Array {
@@ -85,7 +96,10 @@ function encryptBytes(plaintext: Uint8Array, sharedKey: Uint8Array): Uint8Array 
 }
 
 export function decryptBytes(bundle: Uint8Array, sharedKey: Uint8Array): Uint8Array | null {
-  if (bundle.length < nacl.box.nonceLength + nacl.box.overheadLength) {
+  if (
+    bundle.length < nacl.box.nonceLength + nacl.box.overheadLength ||
+    bundle.length > MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES
+  ) {
     return null
   }
 
@@ -98,4 +112,19 @@ export function decryptBytes(bundle: Uint8Array, sharedKey: Uint8Array): Uint8Ar
   }
 
   return u8(plaintext)
+}
+
+function decodeCanonicalBase64(value: string, maxEncodedCharacters: number): Uint8Array | null {
+  if (
+    value.length > maxEncodedCharacters ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return null
+  }
+  try {
+    const bytes = base64ToUint8(value)
+    return uint8ToBase64(bytes) === value ? bytes : null
+  } catch {
+    return null
+  }
 }

@@ -10,6 +10,8 @@ export const PAIRING_OFFER_VERSION = 2
 const PairingScopeSchema = z.enum(['mobile', 'runtime'])
 const BASE64URL_16_PATTERN = /^[A-Za-z0-9_-]{16}$/
 const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
+const SENSITIVE_ENDPOINT_QUERY_KEY_PATTERN =
+  /^(?:access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|password|secret|token|credential|authorization|resume[_-]?token|device[_-]?token)$/i
 const MAX_INVITE_TTL_MS = 10 * 60 * 1000
 // The cell stamps expiry from its own clock; without leeway, a cell clock
 // even slightly ahead of this machine makes every invite fail validation
@@ -43,6 +45,28 @@ function isCanonicalBase64Key(value: string): boolean {
   }
 }
 
+function isSafePairingEndpoint(value: string): boolean {
+  try {
+    const endpoint = new URL(value)
+    if (
+      (endpoint.protocol !== 'ws:' && endpoint.protocol !== 'wss:') ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.hash
+    ) {
+      return false
+    }
+    for (const key of endpoint.searchParams.keys()) {
+      if (SENSITIVE_ENDPOINT_QUERY_KEY_PATTERN.test(key)) {
+        return false
+      }
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function createPairingOfferSchema(now: () => number = () => Date.now()) {
   const relaySchema = z.object({
     v: z.literal(1),
@@ -70,7 +94,11 @@ export function createPairingOfferSchema(now: () => number = () => Date.now()) {
   return z
     .object({
       v: z.literal(PAIRING_OFFER_VERSION),
-      endpoint: z.string().min(1).max(PAIRING_ENDPOINT_MAX_CHARACTERS),
+      endpoint: z
+        .string()
+        .min(1)
+        .max(PAIRING_ENDPOINT_MAX_CHARACTERS)
+        .refine(isSafePairingEndpoint, 'Expected a safe ws/wss endpoint'),
       deviceToken: z.string().min(1).max(PAIRING_DEVICE_TOKEN_MAX_CHARACTERS),
       // Why: the desktop's Curve25519 public key is pinned by the pairing
       // offer, while relayHostId is verified from its decoded bytes later.

@@ -2,6 +2,7 @@ import {
   RelayPhoneHelloSchema,
   type RelayPhoneHello
 } from '../../../src/shared/mobile-relay-phone-protocol'
+import { MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES } from '../../../src/shared/mobile-e2ee-frame-limits'
 import { MobileE2EEV2ClientSession } from './mobile-e2ee-v2-client-session'
 import { MobileE2EEV2PhysicalChannel } from './mobile-e2ee-v2-physical-channel'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
@@ -53,7 +54,7 @@ export class MobileRelayE2eeLink {
       session,
       socket: this.socket,
       deviceToken: options.deviceToken,
-      decodeBinary: websocketPayloadToUint8,
+      decodeBinary: (raw) => websocketPayloadToUint8(raw, MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES),
       onAuthenticated: options.onAuthenticated,
       onText: options.onText,
       onBinary: options.onBinary,

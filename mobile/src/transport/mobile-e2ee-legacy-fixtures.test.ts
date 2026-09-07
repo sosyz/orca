@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import nacl from 'tweetnacl'
+import {
+  MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES,
+  MOBILE_E2EE_LEGACY_MAX_TEXT_FRAME_BASE64_CHARACTERS
+} from '../../../src/shared/mobile-e2ee-frame-limits'
 import { MOBILE_E2EE_LEGACY_FIXTURE } from '../../../src/shared/mobile-e2ee-legacy-fixtures'
 
 vi.mock('expo-crypto', () => ({
@@ -9,6 +13,21 @@ vi.mock('expo-crypto', () => ({
 import { decrypt, decryptBytes, deriveSharedKey } from './e2ee'
 
 describe('mobile legacy E2EE fixtures', () => {
+  it('rejects oversized and non-canonical frames before decoding', () => {
+    const decode = vi.spyOn(globalThis, 'atob')
+    const shared = new Uint8Array(32)
+
+    expect(
+      decrypt('A'.repeat(MOBILE_E2EE_LEGACY_MAX_TEXT_FRAME_BASE64_CHARACTERS + 1), shared)
+    ).toBeNull()
+    expect(decrypt('not base64', shared)).toBeNull()
+    expect(
+      decryptBytes(new Uint8Array(MOBILE_E2EE_LEGACY_MAX_BINARY_FRAME_BYTES + 1), shared)
+    ).toBeNull()
+    expect(decode).not.toHaveBeenCalled()
+    decode.mockRestore()
+  })
+
   it('matches the captured desktop key and text/binary frames', () => {
     const fixture = MOBILE_E2EE_LEGACY_FIXTURE
     const server = nacl.box.keyPair.fromSecretKey(fixture.serverSecretKey)

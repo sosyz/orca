@@ -14,12 +14,15 @@ export type ConnectionLogStore = {
   append: (hostId: string, entry: ConnectionLogEntry) => void
   get: (hostId: string) => readonly ConnectionLogEntry[]
   hydrate: (hostId: string) => Promise<void>
+  remove: (hostId: string) => Promise<void>
+  activate: (hostId: string) => void
   subscribe: (hostId: string, listener: () => void) => () => void
 }
 
 export type ConnectionLogPersistence = {
   load: (hostId: string) => Promise<readonly ConnectionLogEntry[]>
   save: (hostId: string, entries: readonly ConnectionLogEntry[]) => Promise<void>
+  remove?: (hostId: string) => Promise<void>
 }
 
 export function createConnectionLogStore(
@@ -32,6 +35,10 @@ export function createConnectionLogStore(
   const hydrationFailedHosts = new Set<string>()
   const hydrationByHost = new Map<string, Promise<void>>()
   const saveByHost = new Map<string, Promise<void>>()
+  const removalByHost = new Map<string, Promise<void>>()
+  // A closed host can still deliver one queued log callback. Keep its log
+  // tombstoned until a new client session explicitly activates the host.
+  const removedHosts = new Set<string>()
   // Why: useSyncExternalStore compares snapshots by reference — getSnapshot
   // must return the SAME array until the data actually changes, or React
   // loops re-rendering. Cache per host; invalidate on append.
@@ -116,7 +123,14 @@ export function createConnectionLogStore(
   }
 
   return {
+    activate(hostId) {
+      removedHosts.delete(hostId)
+    },
+
     append(hostId, entry) {
+      if (removedHosts.has(hostId)) {
+        return
+      }
       let entries = entriesByHost.get(hostId)
       if (!entries) {
         entries = []
@@ -145,6 +159,44 @@ export function createConnectionLogStore(
     },
 
     hydrate: (hostId) => hydrateHost(hostId, true),
+
+    remove(hostId) {
+      const existing = removalByHost.get(hostId)
+      if (existing) {
+        return existing
+      }
+
+      removedHosts.add(hostId)
+      const removal = (async () => {
+        try {
+          const hydration = hydrationByHost.get(hostId)
+          if (hydration) {
+            await hydration
+          }
+          await (saveByHost.get(hostId) ?? Promise.resolve())
+          if (persistence) {
+            if (persistence.remove) {
+              await persistence.remove(hostId)
+            } else {
+              // Empty storage is equivalent for older persistence adapters.
+              await persistence.save(hostId, [])
+            }
+          }
+        } catch (error) {
+          removedHosts.delete(hostId)
+          throw error
+        }
+
+        entriesByHost.delete(hostId)
+        snapshotByHost.delete(hostId)
+        hydratedHosts.delete(hostId)
+        hydrationFailedHosts.delete(hostId)
+        saveByHost.delete(hostId)
+        notify(hostId)
+      })().finally(() => removalByHost.delete(hostId))
+      removalByHost.set(hostId, removal)
+      return removal
+    },
 
     subscribe(hostId, listener) {
       let listeners = listenersByHost.get(hostId)

@@ -9,6 +9,10 @@ import {
   openMobileE2EEV2Frame,
   sealMobileE2EEV2Frame
 } from '../../../src/shared/mobile-e2ee-v2-framing'
+import {
+  MOBILE_E2EE_MAX_BINARY_PLAINTEXT_BYTES,
+  MOBILE_E2EE_MAX_TEXT_PLAINTEXT_BYTES
+} from '../../../src/shared/mobile-e2ee-frame-limits'
 
 vi.mock('expo-crypto', () => ({
   getRandomBytes: (length: number) => new Uint8Array(length).fill(9)
@@ -194,14 +198,67 @@ describe('mobile E2EE v2 physical channel', () => {
     ).toEqual(new Uint8Array([2]))
   })
 
+  it('rejects oversized outbound binary before sealing or consuming a counter', async () => {
+    const ctx = setup(async () => null)
+    await authenticate(ctx)
+    const sentBefore = ctx.sent.length
+    const sealBinary = vi.spyOn(ctx.session, 'sealBinary')
+
+    expect(ctx.channel.sendBinary(new Uint8Array(MOBILE_E2EE_MAX_BINARY_PLAINTEXT_BYTES + 1))).toBe(
+      false
+    )
+
+    expect(sealBinary).not.toHaveBeenCalled()
+    expect(ctx.sent).toHaveLength(sentBefore)
+    expect(ctx.onError).toHaveBeenCalledOnce()
+    expect(ctx.onError.mock.calls[0]![0].message).toBe('E2EE v2 outbound buffer overflow')
+    expect(
+      openMobileE2EEV2Frame({
+        frame: ctx.session.sealBinary(new Uint8Array([5])),
+        key: ctx.schedule.mobileToDesktopKey,
+        sessionId: ctx.schedule.sessionId,
+        direction: 'mobile-to-desktop',
+        payloadKind: 'binary',
+        expectedCounter: 1n
+      })
+    ).toEqual(new Uint8Array([5]))
+    sealBinary.mockRestore()
+  })
+
+  it('rejects oversized outbound text before sealing or consuming a counter', async () => {
+    const ctx = setup(async () => null)
+    await authenticate(ctx)
+    const sentBefore = ctx.sent.length
+    const sealText = vi.spyOn(ctx.session, 'sealText')
+
+    expect(ctx.channel.sendText('x'.repeat(MOBILE_E2EE_MAX_TEXT_PLAINTEXT_BYTES + 1))).toBe(false)
+
+    expect(sealText).not.toHaveBeenCalled()
+    expect(ctx.sent).toHaveLength(sentBefore)
+    expect(ctx.onError).toHaveBeenCalledOnce()
+    expect(ctx.onError.mock.calls[0]![0].message).toBe('E2EE v2 outbound buffer overflow')
+    expect(
+      openMobileE2EEV2Frame({
+        frame: Buffer.from(ctx.session.sealText('still-next'), 'base64'),
+        key: ctx.schedule.mobileToDesktopKey,
+        sessionId: ctx.schedule.sessionId,
+        direction: 'mobile-to-desktop',
+        payloadKind: 'text',
+        expectedCounter: 1n
+      })
+    ).toEqual(new TextEncoder().encode('still-next'))
+    sealText.mockRestore()
+  })
+
   it('bounds the unified outbound queue and reports a wedged link', async () => {
     const ctx = setup(async () => null)
     await authenticate(ctx)
     ctx.socket.bufferedAmount = 9 * 1024 * 1024
     const megabyte = new Uint8Array(1024 * 1024)
-    for (let index = 0; index < 65; index++) {
+    for (let index = 0; index < 63; index++) {
       expect(ctx.channel.sendBinary(megabyte)).toBe(true)
     }
+    expect(ctx.channel.sendBinary(megabyte)).toBe(false)
     expect(ctx.onError).toHaveBeenCalledOnce()
     expect(ctx.onError.mock.calls[0]![0].message).toBe('E2EE v2 outbound buffer overflow')
   })

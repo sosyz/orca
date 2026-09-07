@@ -1,3 +1,5 @@
+import { decodeUtf8Text } from './utf8-text'
+
 const BROWSER_SCREENCAST_KIND = 0x62
 const BROWSER_SCREENCAST_VERSION = 1
 const HEADER_BYTES = 16
@@ -51,7 +53,7 @@ function byteToFormat(value: number): BrowserScreencastFormat | null {
 
 function decodeJson(bytes: Uint8Array): unknown {
   try {
-    return JSON.parse(new TextDecoder().decode(bytes)) as unknown
+    return JSON.parse(decodeUtf8Text(bytes)) as unknown
   } catch {
     return null
   }

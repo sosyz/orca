@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodePairingUrl, extractPairingCodeFromUrl, parsePairingCode } from './pairing'
 import type { PairingOffer } from './types'
+import {
+  PAIRING_CODE_MAX_CHARACTERS,
+  PAIRING_INPUT_MAX_CHARACTERS
+} from '../../../src/shared/mobile-pairing-protocol-limits'
 
 const offer: PairingOffer = {
   v: 2,
@@ -56,6 +60,12 @@ describe('pairing deep links', () => {
     expect(decodePairingUrl(`orca://pair?code=${encodeOffer()}`)).toEqual(offer)
   })
 
+  it('decodes pairing payloads when the runtime has no TextDecoder', () => {
+    vi.stubGlobal('TextDecoder', undefined)
+
+    expect(decodePairingUrl(`orca://pair?code=${encodeOffer()}`)).toEqual(offer)
+  })
+
   it('parses a full pairing URL and a bare copied code', () => {
     const code = encodeOffer()
 
@@ -71,5 +81,14 @@ describe('pairing deep links', () => {
     const code = encodeOffer(proxiedOffer)
 
     expect(parsePairingCode(code)).toEqual(proxiedOffer)
+  })
+
+  it('rejects pairing codes over the shared size limit', () => {
+    expect(parsePairingCode('A'.repeat(PAIRING_CODE_MAX_CHARACTERS + 1))).toBeNull()
+    expect(parsePairingCode(' '.repeat(PAIRING_INPUT_MAX_CHARACTERS + 1))).toBeNull()
+  })
+
+  it('rejects malformed base64 before attempting to decode it', () => {
+    expect(parsePairingCode('not a base64 code')).toBeNull()
   })
 })

@@ -273,6 +273,10 @@ describe('parseEphemeralVmRecipeResult', () => {
     const pairingCode = makePairingCode()
 
     expect(
+      redactEphemeralVmRecipeDiagnosticText(`${pairingCode} orca://pair#fragment-secret`)
+    ).toBe('orca://pair?code=[redacted] orca://pair#[redacted]')
+
+    expect(
       redactEphemeralVmRecipeDiagnosticText(
         JSON.stringify({
           pairingCode,

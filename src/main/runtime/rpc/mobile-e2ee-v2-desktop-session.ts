@@ -12,11 +12,13 @@ import {
 } from '../../../shared/mobile-e2ee-v2-framing'
 import { deriveSharedKey } from './e2ee-crypto'
 import { deriveMobileE2EEV2KeySchedule } from './mobile-e2ee-v2-key-schedule'
-import { REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES } from '../../../shared/remote-runtime-memory-limits'
+import {
+  MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES,
+  MOBILE_E2EE_V2_MAX_TEXT_FRAME_BASE64_CHARACTERS
+} from '../../../shared/mobile-e2ee-frame-limits'
 
-const MOBILE_E2EE_V2_FRAME_OVERHEAD_BYTES = 82
 export const MAX_MOBILE_E2EE_V2_TEXT_FRAME_BASE64_CHARACTERS =
-  Math.ceil((REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + MOBILE_E2EE_V2_FRAME_OVERHEAD_BYTES) / 3) * 4
+  MOBILE_E2EE_V2_MAX_TEXT_FRAME_BASE64_CHARACTERS
 
 export type DesktopMobileE2EEV2Context = {
   transport: MobileE2EETransport
@@ -86,7 +88,9 @@ export class DesktopMobileE2EEV2Session {
   }
 
   openBinary(frame: Uint8Array): Uint8Array | null {
-    return this.open(frame, 'binary')
+    return frame.byteLength <= MOBILE_E2EE_V2_MAX_BINARY_FRAME_BYTES
+      ? this.open(frame, 'binary')
+      : null
   }
 
   sealText(plaintext: string): string {
