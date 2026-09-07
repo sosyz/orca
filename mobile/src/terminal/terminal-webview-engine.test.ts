@@ -1,14 +1,23 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { Script } from 'node:vm'
 import { parse } from 'acorn'
 import { describe, expect, it, vi } from 'vitest'
-import { XTERM_ENGINE_CSS, XTERM_ENGINE_JS } from './terminal-webview-engine.generated'
+import {
+  XTERM_ENGINE_CSS,
+  XTERM_ENGINE_JS,
+  XTERM_MESLO_FONT_WOFF2_BASE64,
+  XTERM_NERD_FONT_WOFF2_BASE64
+} from './terminal-webview-engine.generated'
 import { XTERM_HTML } from './terminal-webview-html'
 import { TERMINAL_WEBGL_RECOVERY_JS } from './terminal-webview-webgl-recovery-injected'
 
 const terminalHtmlSource = readFileSync(
   new URL('./terminal-webview-html.ts', import.meta.url),
   'utf8'
+)
+const mesloFont = readFileSync(
+  new URL('../../assets/fonts/MesloLGS-NF-Regular.woff2', import.meta.url)
 )
 
 function createWebglRecoveryHarness(failSecondAttach = false) {
@@ -96,6 +105,34 @@ describe('terminal WebView bundled engine', () => {
     expect(XTERM_HTML).not.toContain('cdn.jsdelivr.net')
     expect(XTERM_HTML).not.toContain('<script src=')
     expect(XTERM_HTML).not.toContain('rel="stylesheet" href=')
+  })
+
+  it('embeds Meslo and Nerd symbols so local fonts do not depend on WebView URL schemes', () => {
+    expect(mesloFont.subarray(0, 4).toString()).toBe('wOF2')
+    expect(createHash('sha256').update(mesloFont).digest('hex')).toBe(
+      'b5ac39171de40b640726146502023aa0c4dc5220b718e957d00ddc8fe4e0d73c'
+    )
+    expect(Buffer.from(XTERM_MESLO_FONT_WOFF2_BASE64, 'base64').equals(mesloFont)).toBe(true)
+    expect(Buffer.from(XTERM_NERD_FONT_WOFF2_BASE64, 'base64').subarray(0, 4).toString()).toBe(
+      'wOF2'
+    )
+    expect(XTERM_HTML.match(/font-family: "MesloLGS NF"/g)).toHaveLength(1)
+    expect(XTERM_HTML).not.toContain('resource://rawfile')
+    expect(XTERM_HTML).toContain('font-family: "Orca Nerd Font Symbols"')
+    expect(XTERM_HTML.match(/data:font\/woff2;base64,/g)).toHaveLength(2)
+    expect(XTERM_HTML).toContain('unicode-range: U+E000-F8FF')
+    expect(XTERM_HTML).toContain('font-style: normal; font-weight: 400')
+    expect(XTERM_HTML).toContain(
+      'var terminalFontFamily = \'"MesloLGS NF", "Orca Nerd Font Symbols", \' '
+    )
+    expect(XTERM_HTML).toContain("fontWeight: '400'")
+    expect(XTERM_HTML).toContain("fontWeightBold: '700'")
+    expect(XTERM_HTML).toContain('document.fonts.load(')
+    expect(XTERM_HTML).toContain('String.fromCharCode(0xe0b0)')
+    expect(XTERM_HTML).toContain('setTimeout(resolve, 2000)')
+    expect(XTERM_HTML).toContain(
+      "waitForTerminalFont().then(function() { notify({ type: 'web-ready' }); });"
+    )
   })
 
   it('parses the bundled engine at the Chrome 74 syntax floor', () => {
@@ -219,6 +256,12 @@ describe('terminal WebView bundled engine', () => {
     expect(addons).toHaveLength(2)
     expect(addons[1]?.dispose).toHaveBeenCalledTimes(1)
     expect(term.refresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('lets native initialization explicitly retain the DOM renderer', () => {
+    expect(terminalHtmlSource).toContain('if (enableWebgl !== false) {')
+    expect(terminalHtmlSource).toContain("flog('renderer-dom', { reason: 'native-compat' });")
+    expect(terminalHtmlSource).toContain('msg.oscLinks, msg.enableWebgl')
   })
 
   it('reapplies theme, clears the active atlas, and refreshes when visible', () => {

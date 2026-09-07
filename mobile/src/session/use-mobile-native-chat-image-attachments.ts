@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useRef } from 'react'
 import { CLIPBOARD_IMAGE_TOO_LARGE_ERROR } from '../../../src/shared/clipboard-image'
 import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
 import type { RpcClient } from '../transport/rpc-client'
@@ -9,7 +9,6 @@ import {
   type MobileImageSource
 } from './mobile-image-source-picker'
 import {
-  appendPendingNativeChatImages,
   uploadMobileNativeChatImages,
   type PendingNativeChatImage
 } from './mobile-native-chat-image-attachment'
@@ -31,6 +30,16 @@ import {
   acquireMobileNativeChatTerminalWrite,
   releaseMobileNativeChatTerminalWrite
 } from './mobile-native-chat-terminal-write-lock'
+import {
+  appendMobileNativeChatAttachments,
+  beginMobileNativeChatImageAttach,
+  endMobileNativeChatImageAttach,
+  readMobileNativeChatAttachments,
+  readMobileNativeChatIsAttaching,
+  removeMobileNativeChatAttachment,
+  removeSentMobileNativeChatAttachments,
+  useMobileNativeChatRuntimeScopeToken
+} from './mobile-native-chat-runtime-store'
 
 type CurrentRef<T> = { readonly current: T }
 type ShowToast = (message: string, durationMs?: number) => void
@@ -85,19 +94,6 @@ export type MobileNativeChatImageAttachments = {
 
 const NO_ATTACHMENTS: PendingNativeChatImage[] = []
 
-function withScopeAttachments(
-  byScope: Record<string, PendingNativeChatImage[]>,
-  scope: string,
-  next: PendingNativeChatImage[]
-): Record<string, PendingNativeChatImage[]> {
-  if (next.length > 0) {
-    return { ...byScope, [scope]: next }
-  }
-  const remaining = { ...byScope }
-  delete remaining[scope]
-  return remaining
-}
-
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -117,26 +113,21 @@ export function useMobileNativeChatImageAttachments({
   onError,
   sleep = defaultSleep
 }: Args): MobileNativeChatImageAttachments {
-  const [attachmentsByScope, setAttachmentsByScope] = useState<
-    Record<string, PendingNativeChatImage[]>
-  >({})
-  const [isAttaching, setIsAttaching] = useState(false)
-  const idCounter = useRef(0)
-  // Count in-flight uploads so an overlapping attach can't clear the flag early.
-  const attachingCount = useRef(0)
+  const scopeToken = useMobileNativeChatRuntimeScopeToken(scopeKey)
   // Live connState for attachImage's catch: the closure's value was already
   // checked 'connected' at entry, so only a ref can see a mid-upload disconnect.
   const connStateRef = useRef(connState)
   connStateRef.current = connState
 
-  const attachments = (scopeKey ? attachmentsByScope[scopeKey] : undefined) ?? NO_ATTACHMENTS
+  const attachments = readMobileNativeChatAttachments(scopeKey)
+  const isAttaching = readMobileNativeChatIsAttaching(scopeKey)
 
   const attachImage = useCallback(
     async (source: MobileImageSource): Promise<void> => {
       // The chip lands in the scope that initiated the pick, even if the user
       // switches tabs while the upload is in flight.
-      const scope = scopeKey
-      if (!client || !scope || !activeHandleRef.current || connState !== 'connected') {
+      const token = scopeToken
+      if (!client || !token || !activeHandleRef.current || connState !== 'connected') {
         return
       }
       // Only this call's own increment may be undone in `finally`; a cancelled
@@ -153,25 +144,18 @@ export function useMobileNativeChatImageAttachments({
           onImageUploaded: (image) => uploadedImages.push(image),
           onUploadStart: () => {
             started = true
-            attachingCount.current += 1
-            setIsAttaching(true)
+            beginMobileNativeChatImageAttach(token)
           }
         })
       } catch (error) {
         uploadError = error
       } finally {
         if (started) {
-          attachingCount.current -= 1
-          if (attachingCount.current === 0) {
-            setIsAttaching(false)
-          }
+          endMobileNativeChatImageAttach(token)
         }
       }
       if (uploadedImages.length > 0) {
-        setAttachmentsByScope((prev) => ({
-          ...prev,
-          [scope]: appendPendingNativeChatImages(prev[scope] ?? [], uploadedImages, idCounter)
-        }))
+        appendMobileNativeChatAttachments(token, uploadedImages)
         onAttachSuccess?.()
       }
       if (uploadError !== null) {
@@ -199,26 +183,16 @@ export function useMobileNativeChatImageAttachments({
       getActiveWorktreeConnectionId,
       onAttachSuccess,
       onError,
-      scopeKey,
+      scopeToken,
       showToast
     ]
   )
 
   const removeAttachment = useCallback(
     (id: string): void => {
-      const scope = scopeKey
-      if (!scope) {
-        return
-      }
-      setAttachmentsByScope((prev) =>
-        withScopeAttachments(
-          prev,
-          scope,
-          (prev[scope] ?? []).filter((attachment) => attachment.id !== id)
-        )
-      )
+      removeMobileNativeChatAttachment(scopeToken, id)
     },
-    [scopeKey]
+    [scopeToken]
   )
 
   const sendNativeChat = useCallback(
@@ -237,9 +211,11 @@ export function useMobileNativeChatImageAttachments({
       // opening a budget per leg let `sending` run to twice the stated ceiling.
       const deadline = openMobileNativeChatSendBudget()
       try {
-        const scope = scopeKey
-        const pendingImages = (scope ? attachmentsByScope[scope] : undefined) ?? NO_ATTACHMENTS
-        if (pendingImages.length === 0 || !scope) {
+        const token = scopeToken
+        const pendingImages = token
+          ? readMobileNativeChatAttachments(token.scopeKey)
+          : NO_ATTACHMENTS
+        if (pendingImages.length === 0 || !token) {
           // Heal a previously failed paste: a text-only send to that terminal would
           // otherwise glue the stale image paste onto this message. Best-effort —
           // on failure the marker stays set and the text must not be submitted.
@@ -331,13 +307,7 @@ export function useMobileNativeChatImageAttachments({
             // flight keeps waiting for its own send. 'unknown' clears too: the
             // send usually DID land, and a kept chip would double-send the image.
             const sentIds = new Set(pendingImages.map((attachment) => attachment.id))
-            setAttachmentsByScope((prev) =>
-              withScopeAttachments(
-                prev,
-                scope,
-                (prev[scope] ?? []).filter((attachment) => !sentIds.has(attachment.id))
-              )
-            )
+            removeSentMobileNativeChatAttachments(token, sentIds)
           }
           return outcome !== 'rejected'
         } catch {
@@ -357,7 +327,6 @@ export function useMobileNativeChatImageAttachments({
     },
     [
       activeHandleRef,
-      attachmentsByScope,
       baseSend,
       client,
       connState,
@@ -366,7 +335,7 @@ export function useMobileNativeChatImageAttachments({
       onError,
       onSendError,
       readSeededLaunchDraft,
-      scopeKey,
+      scopeToken,
       sleep
     ]
   )

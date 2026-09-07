@@ -44,9 +44,11 @@ import {
   isSuccess
 } from './mobile-tasks-legacy-foundation'
 import { useMobileTasksItemState } from './use-mobile-tasks-item-state'
+import { useMobileTaskExternalLink } from './use-mobile-task-external-link'
 
 export function useMobileTasksRouteAndItemState() {
   const { hostId, taskSource } = useLocalSearchParams<{ hostId: string; taskSource?: string }>()
+  const openExternalTaskUrl = useMobileTaskExternalLink(hostId)
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const { client, state: connState } = useHostClient(hostId)
@@ -170,6 +172,7 @@ export function useMobileTasksRouteAndItemState() {
   const itemState = useMobileTasksItemState()
   return {
     hostId,
+    openExternalTaskUrl,
     taskSource,
     router,
     insets,

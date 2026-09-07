@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { View, Text, Pressable, Switch } from 'react-native'
+import { View, Text, Pressable, Switch, type ScrollView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import Animated, {
-  useAnimatedRef,
-  useAnimatedScrollHandler,
-  useSharedValue
-} from 'react-native-reanimated'
+import { useAnimatedRef, useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated'
+import { ReanimatedScrollView } from '../src/components/reanimated-scroll-view'
 import { useRouter } from 'expo-router'
 import { ChevronLeft, ChevronRight, Smartphone, Type } from 'lucide-react-native'
 import { colors, spacing } from '../src/theme/mobile-theme'
@@ -235,7 +232,7 @@ export default function TerminalSettingsScreen() {
 
   const pickerHost = pickerHostId ? hosts.find((h) => h.id === pickerHostId) : null
 
-  const scrollRef = useAnimatedRef<Animated.ScrollView>()
+  const scrollRef = useAnimatedRef<ScrollView>()
   const scrollOffsetY = useSharedValue(0)
   const scrollContentHeight = useSharedValue(0)
   const scrollHandler = useAnimatedScrollHandler((event) => {
@@ -257,13 +254,18 @@ export default function TerminalSettingsScreen() {
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.topRow}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
         <Text style={styles.heading}>Terminal</Text>
       </View>
 
-      <Animated.ScrollView
+      <ReanimatedScrollView
         ref={scrollRef}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -355,7 +357,7 @@ export default function TerminalSettingsScreen() {
           scrollContentHeight={scrollContentHeight}
           onDragActiveChange={handleDragActiveChange}
         />
-      </Animated.ScrollView>
+      </ReanimatedScrollView>
 
       <PickerModal<RestoreValue>
         visible={pickerHost != null}

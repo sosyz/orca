@@ -54,6 +54,8 @@ import {
   type MobileTerminalLinkOpenMode
 } from '../../../../src/storage/preferences'
 import { useHostClient, useForceReconnect } from '../../../../src/transport/client-context'
+import { connectionLogStore } from '../../../../src/transport/persisted-connection-log-store'
+import { formatUnknownErrorMessage } from '../../../../src/transport/unknown-error-message'
 import {
   useLastConnectedAt,
   useRelayRecoveryStatus,
@@ -67,6 +69,7 @@ import { useResponsiveLayout } from '../../../../src/layout/responsive-layout'
 import {
   type ActivePanel,
   canDockSessionPanel,
+  resolveSessionBackAction,
   resolvePanelAction,
   shouldShowSessionHeaderChecksAction,
   panelRouteDescriptor
@@ -128,6 +131,16 @@ import { dismissTerminalKeyboard } from '../../../../src/terminal/terminal-keybo
 import type { TerminalLiveInputSender } from '../../../../src/terminal/terminal-live-input-sender'
 import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-send-rpc-response'
 import { useBufferedTerminalDrafts } from '../../../../src/terminal/use-buffered-terminal-drafts'
+import {
+  classifyTerminalLiveSendError,
+  classifyTerminalLiveSendPreflight,
+  classifyTerminalLiveSendResponse,
+  createTerminalLiveSendConnectionLogEntry,
+  getTerminalLiveSendToastMessage,
+  shouldReportTerminalLiveSendFailure,
+  type TerminalLiveSendFailureReportState,
+  type TerminalLiveSendOutcome
+} from '../../../../src/terminal/terminal-live-send-outcome'
 import { sendMobileTerminalQueryReply } from '../../../../src/terminal/mobile-terminal-query-reply'
 import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../src/shared/protocol-version'
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
@@ -136,10 +149,7 @@ import {
   buildTerminalSendParams,
   TERMINAL_INPUT_SEND_OPTIONS
 } from '../../../../src/terminal/terminal-send-request'
-import {
-  getTerminalCommandKeyboardType,
-  getTerminalLiveInputKeyboardType
-} from '../../../../src/terminal/terminal-keyboard-type'
+import { getTerminalCommandKeyboardType } from '../../../../src/terminal/terminal-keyboard-type'
 import { normalizeTerminalTextInput } from '../../../../src/terminal/terminal-text-input-normalization'
 import {
   appendBufferedDictation,
@@ -188,8 +198,12 @@ import { loadMobileNewTabAgentOptions } from '../../../../src/session/mobile-new
 import { useMobileSessionImageAttachments } from '../../../../src/session/use-mobile-session-image-attachments'
 import { useMobileAttachmentInputLeaseGate } from '../../../../src/session/use-mobile-attachment-input-lease-gate'
 import { useMobileTerminalPaste } from '../../../../src/session/use-mobile-terminal-paste'
+import { shouldOfferMobileTerminalPaste } from '../../../../src/session/mobile-terminal-paste-availability'
 import { useTerminalLiveInputModePreference } from '../../../../src/session/use-terminal-live-input-mode-preference'
-import { MobileTerminalLiveInputStatus } from '../../../../src/session/MobileTerminalLiveInputStatus'
+import {
+  MobileTerminalLiveInputBar,
+  type MobileTerminalLiveInputBarHandle
+} from '../../../../src/session/MobileTerminalLiveInputBar'
 import { MobileTerminalInputActions } from '../../../../src/session/MobileTerminalInputActions'
 import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-doc'
 import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
@@ -229,6 +243,7 @@ import { useMobileNativeChatSendError } from '../../../../src/session/use-mobile
 import { getMobileTerminalActionSheetActions } from '../../../../src/session/mobile-terminal-action-sheet-actions'
 import * as nativeChatTerminalStream from '../../../../src/session/mobile-native-chat-terminal-stream'
 import { mobileNativeChatScopeKey } from '../../../../src/session/mobile-native-chat-scope-key'
+import { purgeMobileNativeChatRuntimeScope } from '../../../../src/session/mobile-native-chat-runtime-store'
 import {
   createTerminalPrunePredicate,
   pruneTerminalKeyboardMetrics,
@@ -236,6 +251,7 @@ import {
 } from '../../../../src/session/mobile-terminal-prune-decision'
 import { useMobileNativeChatTerminalStream } from '../../../../src/session/use-mobile-native-chat-terminal-stream'
 import { subscribeMobileTerminalSafely } from '../../../../src/session/mobile-terminal-stream-subscribe'
+import { setTerminalWebViewRegistration } from '../../../../src/session/terminal-webview-registration'
 import { MobileTerminalInventoryRequest } from '../../../../src/session/mobile-terminal-inventory-request'
 import {
   useMobileTerminalInventoryRecoveryBridge,
@@ -302,6 +318,7 @@ import type {
 
 const TERMINAL_KEYBOARD_DISMISS_ACTION_SHEET_FALLBACK_MS = 450
 const CLOSED_TAB_TOMBSTONE_TTL_MS = 10_000
+const terminalLiveSendLogEncoder = new TextEncoder()
 
 function createMobileTerminalMutationId(): string {
   return `mobile-create:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
@@ -350,7 +367,7 @@ export default function SessionScreen() {
     bounce: (id) => router.replace(hostRouteWithNotice(id, 'worktree-missing'))
   })
   // Master-detail state: wide layouts dock a tapped panel beside the session; narrow keeps it null and pushes full-screen routes.
-  const { isWideLayout } = useResponsiveLayout()
+  const { isLandscape, isWideLayout } = useResponsiveLayout()
   const [activePanel, setActivePanel] = useState<ActivePanel>(null)
   const [sessionContentRowWidth, setSessionContentRowWidth] = useState(0)
   const canDockPanel =
@@ -398,7 +415,6 @@ export default function SessionScreen() {
   const [autocompleteEnabled, setAutocompleteEnabled] = useState(false)
   const [terminalLinkOpenMode, setTerminalLinkOpenMode] =
     useState<MobileTerminalLinkOpenMode>('orca-browser')
-  const [liveInputCapture, setLiveInputCapture] = useState('')
   const {
     clearTerminalLiveInputDefault,
     defaultTerminalHandlesToLiveInput,
@@ -479,7 +495,9 @@ export default function SessionScreen() {
     Map<string, TerminalKeyboardAvoidanceMetrics>
   >(new Map())
   const [selectModeActive, setSelectModeActive] = useState(false)
-  const [canPaste, setCanPaste] = useState(false)
+  const [canPaste, setCanPaste] = useState(() =>
+    shouldOfferMobileTerminalPaste(Platform.OS as string, false, false)
+  )
   const [showDictationSetup, setShowDictationSetup] = useState(false)
   // 'hold' = press-and-hold mic, 'toggle' = tap-to-start/stop; mirrors Settings ▸ Voice ▸ Dictation Mode.
   const [dictationMode, setDictationMode] = useState<'toggle' | 'hold'>('toggle')
@@ -504,9 +522,11 @@ export default function SessionScreen() {
   const viewportMeasuredRef = useRef(false)
   const terminalRefs = useRef<Map<string, TerminalWebViewHandle>>(new Map())
   const liveInputRef = useRef<TextInput>(null)
+  const liveInputBarRef = useRef<MobileTerminalLiveInputBarHandle>(null)
   const commandInputRef = useRef<TextInput>(null)
   const liveInputFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sendLiveTerminalInputRef = useRef<TerminalLiveInputSender>(async () => false)
+  const terminalLiveSendFailureReportRef = useRef<TerminalLiveSendFailureReportState | null>(null)
   const sessionTabActionSheetKeyboardHideSubRef = useRef<ReturnType<
     typeof Keyboard.addListener
   > | null>(null)
@@ -558,6 +578,9 @@ export default function SessionScreen() {
   // Why: sidebar resizes change the terminal frame width without a window-dim change; track it so the refit hook re-fits (see terminal-viewport-refit.ts).
   const [terminalFrameWidth, setTerminalFrameWidth] = useState(0)
   const activeSessionTab = sessionTabs.find((tab) => tab.id === activeSessionTabId) ?? null
+  const setLiveInputCapture = useCallback((text: string) => {
+    liveInputBarRef.current?.setCaptureText(text)
+  }, [])
   const {
     clearPendingLiveInputCommit,
     flushPendingLiveInputBeforeExternalSend,
@@ -1749,9 +1772,14 @@ export default function SessionScreen() {
       if (current?.status !== 'ready') {
         return
       }
-      await Clipboard.setStringAsync(current.localContent)
-      triggerSuccess()
-      showToast('Copied')
+      try {
+        await Clipboard.setStringAsync(current.localContent)
+        triggerSuccess()
+        showToast('Copied')
+      } catch {
+        triggerError()
+        showToast("Couldn't copy", 1500)
+      }
     },
     [markdownDocs, showToast]
   )
@@ -1776,6 +1804,15 @@ export default function SessionScreen() {
     router.replace(`/h/${hostId}`)
   }, [hostId, router])
 
+  const dismissSoftwareKeyboard = useCallback(() => {
+    dismissTerminalKeyboard({
+      clearPendingLiveInputFocus: () => clearTerminalLiveInputFocusTimer(liveInputFocusTimerRef),
+      commandInput: commandInputRef.current,
+      dismissKeyboard: () => Keyboard.dismiss(),
+      liveInput: liveInputRef.current
+    })
+  }, [])
+
   const requestLeaveSession = useCallback(() => {
     const dirtyDrafts = getDirtyMarkdownDrafts()
     if (dirtyDrafts.length === 0) {
@@ -1788,11 +1825,20 @@ export default function SessionScreen() {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      requestLeaveSession()
-      return true
+      switch (resolveSessionBackAction({ activePanel, keyboardHeight })) {
+        case 'dismiss-keyboard':
+          dismissSoftwareKeyboard()
+          return true
+        case 'close-panel':
+          setActivePanel(null)
+          return true
+        case 'leave-session':
+          requestLeaveSession()
+          return true
+      }
     })
     return () => subscription.remove()
-  }, [requestLeaveSession])
+  }, [activePanel, dismissSoftwareKeyboard, keyboardHeight, requestLeaveSession])
 
   const discardMarkdownLocalContent = useCallback(
     (tab: Extract<MobileSessionTab, { type: 'markdown' }>) => {
@@ -2537,21 +2583,28 @@ export default function SessionScreen() {
   switchSessionTabRef.current = switchSessionTab
 
   // Why: only store the ref; subscribe on web-ready to avoid the blank-terminal race (init queued before xterm.js loaded).
-  const setTerminalWebViewRef = useCallback((handle: string, ref: TerminalWebViewHandle | null) => {
-    terminalDiagnosticsRef.current.webViewRef(handle, ref != null)
-    if (ref) {
-      terminalRefs.current.set(handle, ref)
-    } else {
-      terminalRefs.current.delete(handle)
-      terminalGestureInputBucketsRef.current.delete(handle)
-      const queued = terminalGestureInputQueuesRef.current.get(handle)
-      if (queued?.timer) {
-        clearTimeout(queued.timer)
-      }
-      terminalGestureInputQueuesRef.current.delete(handle)
-      terminalGestureInputInFlightRef.current.delete(handle)
-    }
-  }, [])
+  const setTerminalWebViewRef = useCallback(
+    (handle: string, ref: TerminalWebViewHandle | null) => {
+      terminalDiagnosticsRef.current.webViewRef(handle, ref != null)
+      setTerminalWebViewRegistration(
+        {
+          initializedHandlesRef,
+          leaseOnlyHandlesRef,
+          subscribingHandlesRef,
+          terminalGestureInputBucketsRef,
+          terminalGestureInputInFlightRef,
+          terminalGestureInputQueuesRef,
+          terminalRefs,
+          terminalUnsubsRef,
+          unsubscribeTerminal,
+          webReadyHandlesRef
+        },
+        handle,
+        ref
+      )
+    },
+    [unsubscribeTerminal]
+  )
 
   const handleTerminalWebReady = useCallback(
     (handle: string) => {
@@ -2607,15 +2660,6 @@ export default function SessionScreen() {
       void readFileTab(activeSessionTab)
     }
   }, [activeSessionTab, fileDocs, readFileTab])
-
-  const dismissSoftwareKeyboard = useCallback(() => {
-    dismissTerminalKeyboard({
-      clearPendingLiveInputFocus: () => clearTerminalLiveInputFocusTimer(liveInputFocusTimerRef),
-      commandInput: commandInputRef.current,
-      dismissKeyboard: () => Keyboard.dismiss(),
-      liveInput: liveInputRef.current
-    })
-  }, [])
 
   const dismissKeyboardAfterAgentSend = useAgentSendKeyboardDismissal(
     dismissSoftwareKeyboard,
@@ -2696,6 +2740,47 @@ export default function SessionScreen() {
     })
   }
 
+  const reportTerminalLiveSendOutcome = useCallback(
+    (handle: string, getByteLength: () => number, outcome: TerminalLiveSendOutcome): void => {
+      if (outcome.kind === 'accepted') {
+        if (handle === activeHandleRef.current) {
+          terminalLiveSendFailureReportRef.current = null
+        }
+        return
+      }
+      const report = shouldReportTerminalLiveSendFailure({
+        handle,
+        now: Date.now(),
+        outcome,
+        previous: terminalLiveSendFailureReportRef.current
+      })
+      terminalLiveSendFailureReportRef.current = report.next
+      if (!report.report) {
+        return
+      }
+      const entry = createTerminalLiveSendConnectionLogEntry({
+        byteLength: getByteLength(),
+        handle,
+        outcome
+      })
+      if (entry) {
+        connectionLogStore.append(hostId, entry)
+      }
+      if (handle !== activeHandleRef.current) {
+        return
+      }
+      const message = getTerminalLiveSendToastMessage(outcome)
+      if (!message) {
+        return
+      }
+      if (outcome.kind === 'rejected') {
+        triggerError()
+      }
+      showToast(message, 1800)
+    },
+    [hostId, showToast]
+  )
+
   const sendLiveTerminalInput = useCallback(
     async (handle: string, bytes: string): Promise<boolean> => {
       const text = normalizeTerminalTextInput(bytes)
@@ -2708,19 +2793,25 @@ export default function SessionScreen() {
         return false
       }
       const rpc = clientRef.current
-      // Why: callers suppress follow-up controls/toasts when this live send is stale.
-      if (
-        !rpc ||
-        connStateRef.current !== 'connected' ||
-        handle !== activeHandleRef.current ||
-        activeSessionTabTypeRef.current !== 'terminal'
-      ) {
+      const getByteLength = (): number => terminalLiveSendLogEncoder.encode(text).byteLength
+      const preflightOutcome = classifyTerminalLiveSendPreflight({
+        activeHandle: activeHandleRef.current,
+        activeSessionTabType: activeSessionTabTypeRef.current,
+        connState: connStateRef.current,
+        handle,
+        hasClient: Boolean(rpc)
+      })
+      // Why: classify local rejects before the RPC so production repros can separate stale route state from desktop refusal.
+      if (preflightOutcome || !rpc) {
+        if (preflightOutcome) {
+          reportTerminalLiveSendOutcome(handle, getByteLength, preflightOutcome)
+        }
         return false
       }
       // Why: live-mirror deltas queued behind a dying send drain into the connect
       // wait and replay stale bytes after reconnect (#6713's `YZZYecho …` corruption).
-      return rpc
-        .sendRequest(
+      try {
+        const response = await rpc.sendRequest(
           'terminal.send',
           buildTerminalSendParams({
             terminal: handle,
@@ -2730,9 +2821,16 @@ export default function SessionScreen() {
           }),
           TERMINAL_INPUT_SEND_OPTIONS
         )
-        .then(isTerminalSendRpcAccepted, () => false)
+        const outcome = classifyTerminalLiveSendResponse(response)
+        reportTerminalLiveSendOutcome(handle, getByteLength, outcome)
+        return outcome.kind === 'accepted'
+      } catch (error) {
+        const outcome = classifyTerminalLiveSendError(error)
+        reportTerminalLiveSendOutcome(handle, getByteLength, outcome)
+        return false
+      }
     },
-    [showToast]
+    [reportTerminalLiveSendOutcome, showToast]
   )
   sendLiveTerminalInputRef.current = sendLiveTerminalInput
 
@@ -3240,7 +3338,7 @@ export default function SessionScreen() {
       Clipboard.hasStringAsync().catch(() => false),
       Clipboard.hasImageAsync().catch(() => false)
     ]).then(([hasString, hasImage]) => {
-      setCanPaste(hasString || hasImage)
+      setCanPaste(shouldOfferMobileTerminalPaste(Platform.OS as string, hasString, hasImage))
     })
   }, [])
 
@@ -3302,7 +3400,7 @@ export default function SessionScreen() {
         Clipboard.hasImageAsync().catch(() => false)
       ]).then(([hasString, hasImage]) => {
         if (mounted) {
-          setCanPaste(hasString || hasImage)
+          setCanPaste(shouldOfferMobileTerminalPaste(Platform.OS as string, hasString, hasImage))
         }
       })
     }
@@ -3484,15 +3582,18 @@ export default function SessionScreen() {
         }
         scheduleDelayedAction(() => void fetchSessionTabs(), 500)
       } else {
-        const message = options?.errorToast ?? 'Failed to create terminal'
+        const message =
+          options?.errorToast ??
+          formatUnknownErrorMessage((response as RpcFailure).error, 'Failed to create terminal')
         setCreateError(message)
         if (options?.errorToast) {
           triggerError()
           showToast(message, 1800)
         }
       }
-    } catch {
-      const message = options?.errorToast ?? 'Failed to create terminal'
+    } catch (err) {
+      const message =
+        options?.errorToast ?? formatUnknownErrorMessage(err, 'Failed to create terminal')
       setCreateError(message)
       if (options?.errorToast) {
         triggerError()
@@ -3734,6 +3835,7 @@ export default function SessionScreen() {
         reason: 'user'
       })
       if (response.ok) {
+        purgeMobileNativeChatRuntimeScope(mobileNativeChatScopeKey(hostId, worktreeId, tab.id))
         const remainingTabs = sessionTabsRef.current.filter((candidate) => candidate.id !== tab.id)
         reconcileBufferedDraftsRef.current(sessionTabsRef.current, remainingTabs)
         if (tab.type === 'browser' && tab.browserPageId === pendingBrowserFocusPageIdRef.current) {
@@ -4029,7 +4131,13 @@ export default function SessionScreen() {
 
   return (
     <View ref={setMobileSessionRootRef} style={styles.container}>
-      <View style={styles.kavInner}>
+      <View
+        style={[
+          styles.kavInner,
+          // Landscape cutouts and side system bars must not cover session chrome or terminal controls.
+          isLandscape && { paddingLeft: insets.left, paddingRight: insets.right }
+        ]}
+      >
         <SafeAreaView style={styles.sessionChrome} edges={['top']}>
           <View style={styles.sessionTopBar}>
             <Pressable
@@ -4243,7 +4351,7 @@ export default function SessionScreen() {
                 </View>
               </View>
             ) : activeMarkdownTab ? (
-              <View style={styles.markdownFrame}>
+              <View style={[styles.markdownFrame, { paddingBottom: insets.bottom }]}>
                 <MobileMarkdownReader
                   documentId={activeMarkdownTab.id}
                   doc={markdownDocs.get(activeMarkdownTab.id)}
@@ -4261,7 +4369,7 @@ export default function SessionScreen() {
                 )}
               </View>
             ) : activeFileTab ? (
-              <View style={styles.markdownFrame}>
+              <View style={[styles.markdownFrame, { paddingBottom: insets.bottom }]}>
                 <MobileSessionFileReader
                   doc={fileDocs.get(activeFileTab.id)}
                   title={activeFileTab.title || 'File'}
@@ -4292,6 +4400,7 @@ export default function SessionScreen() {
                 <MobileBrowserPane
                   key={activeBrowserTab.browserPageId ?? activeBrowserTab.id}
                   client={client}
+                  pairedHostId={hostId}
                   worktreeId={worktreeId}
                   tab={activeBrowserTab}
                   screencastSupported={browserScreencastSupported}
@@ -4346,6 +4455,7 @@ export default function SessionScreen() {
                     key={terminal.handle}
                     handle={terminal.handle}
                     active={terminal.handle === activeHandle}
+                    covered={showNativeChat}
                     keyboardLift={terminal.handle === activeHandle ? activeTerminalKeyboardLift : 0}
                     terminalTheme={terminal.terminalTheme}
                     textScale={terminalTextScale}
@@ -4595,78 +4705,37 @@ export default function SessionScreen() {
 
                 {/* Input bar */}
                 {liveInputEnabled ? (
-                  <View style={[styles.inputBar, styles.liveInputBar]}>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.liveInputFocusTarget,
-                        pressed && styles.liveInputFocusTargetPressed,
-                        !canSend && styles.liveInputFocusTargetDisabled
-                      ]}
-                      disabled={!canSend}
-                      onPress={focusLiveInput}
-                      accessibilityRole="button"
-                      accessibilityLabel="Show keyboard for live terminal input"
-                      accessibilityHint="Typed text is sent directly to the active terminal"
-                    >
-                      <KeyboardIcon size={16} color={colors.textSecondary} strokeWidth={2} />
-                      <MobileTerminalLiveInputStatus
-                        dictation={dictation}
-                        isAttaching={isAttaching}
-                        liveInputText={liveInputCapture}
-                      />
-                    </Pressable>
-                    <MobileTerminalInputActions
-                      canSend={canSend}
-                      isAttaching={isAttaching}
-                      dictation={dictation}
-                      dictationMode={dictationMode}
-                      buttonStyle={styles.dictationButton}
-                      activeButtonStyle={styles.dictationButtonActive}
-                      disabledButtonStyle={styles.sendButtonDisabled}
-                      onAttachImage={() => void attachImage('library')}
-                      onAttachFile={() => void attachImage('files')}
-                      onDictationToggle={handleDictationToggle}
-                      onDictationPressIn={handleDictationPressIn}
-                      onDictationPressOut={handleDictationPressOut}
-                      onDictationCancel={cancelDictation}
-                    />
-                    <TextInput
-                      ref={liveInputRef}
-                      style={styles.liveInputCapture}
-                      value={liveInputCapture}
-                      // Why onChange, not onChangeText: only the raw native event carries the
-                      // marked-text report that says whether this text is still preedit.
-                      onChange={handleLiveInputChange}
-                      onKeyPress={handleLiveInputKeyPress}
-                      onSubmitEditing={() => {
-                        const submit = handleLiveInputSubmit()
-                        const sendOrigin = {
-                          tab: activeSessionTab,
-                          generation: getSendCompletionGeneration(),
-                          interaction: getLiveInteractionGeneration()
-                        }
-                        void submit.then((accepted) =>
-                          dismissKeyboardAfterAgentSend(
-                            sendOrigin,
-                            accepted && sendOrigin.interaction === getLiveInteractionGeneration()
-                          )
+                  <MobileTerminalLiveInputBar
+                    ref={liveInputBarRef}
+                    canSend={canSend}
+                    isAttaching={isAttaching}
+                    dictation={dictation}
+                    dictationMode={dictationMode}
+                    inputRef={liveInputRef}
+                    onFocusLiveInput={focusLiveInput}
+                    onChange={handleLiveInputChange}
+                    onKeyPress={handleLiveInputKeyPress}
+                    onSubmitEditing={() => {
+                      const submit = handleLiveInputSubmit()
+                      const sendOrigin = {
+                        tab: activeSessionTab,
+                        generation: getSendCompletionGeneration(),
+                        interaction: getLiveInteractionGeneration()
+                      }
+                      void submit.then((accepted) =>
+                        dismissKeyboardAfterAgentSend(
+                          sendOrigin,
+                          accepted && sendOrigin.interaction === getLiveInteractionGeneration()
                         )
-                      }}
-                      placeholder=""
-                      showSoftInputOnFocus
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      spellCheck={false}
-                      smartInsertDelete={false}
-                      // Why: iOS textContentType overrides autoComplete and can narrow the keyboard; keep IME switching available.
-                      autoComplete="off"
-                      keyboardType={getTerminalLiveInputKeyboardType(Platform.OS)}
-                      returnKeyType="default"
-                      blurOnSubmit={false}
-                      editable={canSend}
-                      importantForAutofill="no"
-                    />
-                  </View>
+                      )
+                    }}
+                    onAttachImage={() => void attachImage('library')}
+                    onAttachFile={() => void attachImage('files')}
+                    onDictationToggle={handleDictationToggle}
+                    onDictationPressIn={handleDictationPressIn}
+                    onDictationPressOut={handleDictationPressOut}
+                    onDictationCancel={cancelDictation}
+                  />
                 ) : (
                   <View style={styles.inputBar}>
                     <TextInput
@@ -4885,7 +4954,13 @@ export default function SessionScreen() {
               setMarkdownActionTarget(null)
               if (target) {
                 void Clipboard.setStringAsync(target.relativePath || target.filePath)
-                showToast('Path copied')
+                  .then(() => {
+                    showToast('Path copied')
+                  })
+                  .catch(() => {
+                    triggerError()
+                    showToast("Couldn't copy path", 1500)
+                  })
               }
             }
           },

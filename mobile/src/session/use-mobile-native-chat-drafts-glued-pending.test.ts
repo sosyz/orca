@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import { act, create } from 'react-test-renderer'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { clearMobileNativeChatRuntimeStoreForTests } from './mobile-native-chat-runtime-store'
 import { buildMobileNativeChatTransientData } from './mobile-native-chat-render-data'
 import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
 
@@ -55,10 +56,15 @@ describe('useMobileNativeChatDrafts glued pending sends', () => {
   let renderer: TestRenderer | null = null
   let state: DraftState | null = null
 
+  beforeEach(() => {
+    clearMobileNativeChatRuntimeStoreForTests()
+  })
+
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
     state = null
+    clearMobileNativeChatRuntimeStoreForTests()
   })
 
   function Harness({

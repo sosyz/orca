@@ -10,7 +10,6 @@ import {
   TextInput,
   ActivityIndicator,
   PickerModal,
-  Linking,
   ExternalLink,
   Lock
 } from './mobile-tasks-dependencies'
@@ -279,7 +278,9 @@ export function renderMobileTasksLinearConnectDrawer(model: ConnectionPresentati
         ) : null}
         <Pressable
           style={styles.inlineTextLink}
-          onPress={() => void Linking.openURL('https://linear.app/settings/account/security')}
+          onPress={() =>
+            void model.openExternalTaskUrl('https://linear.app/settings/account/security')
+          }
         >
           <ExternalLink size={13} color={colors.textSecondary} />
           <Text style={styles.inlineTextLinkText}>Linear Settings / Security / New API key</Text>

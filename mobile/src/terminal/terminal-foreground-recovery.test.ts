@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import type { RefObject } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ConnectionState } from '../transport/types'
-import type { TerminalWebViewHandle } from './TerminalWebView'
+import type { TerminalWebViewHandle } from './terminal-webview-contract'
 import {
   TERMINAL_FOREGROUND_RECOVERY_DELAY_MS,
   recoverActiveTerminalAfterForeground,
@@ -56,9 +56,11 @@ function createHarness(): RecoveryHarness {
 }
 
 describe('terminal foreground recovery', () => {
-  it('detects iOS foreground transitions after backgrounding or inactive states', () => {
+  it('detects iOS and Harmony foreground transitions after backgrounding or inactive states', () => {
     expect(shouldRecoverTerminalOnAppStateChange('background', 'active', 'ios')).toBe(true)
     expect(shouldRecoverTerminalOnAppStateChange('inactive', 'active', 'ios')).toBe(true)
+    expect(shouldRecoverTerminalOnAppStateChange('background', 'active', 'harmony')).toBe(true)
+    expect(shouldRecoverTerminalOnAppStateChange('inactive', 'active', 'harmony')).toBe(true)
     expect(shouldRecoverTerminalOnAppStateChange('active', 'active', 'ios')).toBe(false)
     expect(shouldRecoverTerminalOnAppStateChange('active', 'background', 'ios')).toBe(false)
     expect(shouldRecoverTerminalOnAppStateChange('background', 'active', 'android')).toBe(false)
@@ -104,6 +106,37 @@ describe('terminal foreground recovery', () => {
 
     expect(recovered).toBe('skipped')
     expect(harness.unsubscribeTerminal).not.toHaveBeenCalled()
+    expect(harness.schedule).not.toHaveBeenCalled()
+  })
+
+  it('resubscribes an uninitialized remount-surface terminal after foregrounding', () => {
+    const harness = createHarness()
+    harness.initializedHandlesRef.current.clear()
+    harness.terminalRefs.current.set('term-1', {
+      foregroundRecovery: 'remount-surface'
+    } as TerminalWebViewHandle)
+
+    const recovered = recoverActiveTerminalAfterForeground(harness)
+
+    expect(recovered).toBe('recovered')
+    expect(harness.unsubscribeTerminal).toHaveBeenCalledWith('term-1')
+    expect(harness.subscribeToTerminal).toHaveBeenCalledWith('term-1')
+    expect(harness.schedule).not.toHaveBeenCalled()
+  })
+
+  it('does not lose Harmony recovery if the socket drops before the iOS delay window', () => {
+    const harness = createHarness()
+    harness.terminalRefs.current.set('term-1', {
+      foregroundRecovery: 'remount-surface'
+    } as TerminalWebViewHandle)
+
+    expect(recoverActiveTerminalAfterForeground(harness)).toBe('recovered')
+    harness.connStateRef.current = 'reconnecting'
+    harness.runScheduled()
+
+    expect(harness.unsubscribeTerminal).toHaveBeenCalledWith('term-1')
+    expect(harness.subscribeToTerminal).toHaveBeenCalledTimes(1)
+    expect(harness.subscribeToTerminal).toHaveBeenCalledWith('term-1')
     expect(harness.schedule).not.toHaveBeenCalled()
   })
 

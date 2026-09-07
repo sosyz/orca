@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Orca companion for HarmonyOS"
+    },
+    {
+      "name": "entry_ability_desc",
+      "value": "Monitor and steer Orca tasks"
+    },
+    {
+      "name": "entry_ability_label",
+      "value": "Orca"
+    },
+    {
+      "name": "pasteboard_permission_reason",
+      "value": "Allow Orca to paste clipboard text or images you choose into terminals and chats."
+    },
+    {
+      "name": "microphone_permission_reason",
+      "value": "Allow Orca to capture speech for task dictation."
+    }
+  ]
+}

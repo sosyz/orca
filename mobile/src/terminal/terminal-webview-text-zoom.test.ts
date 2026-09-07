@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs'
 import { Script } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
-const terminalWebViewSource = readFileSync(
-  new URL('./TerminalWebView.tsx', import.meta.url),
+const terminalWebViewSurfaceSource = readFileSync(
+  new URL('./terminal-webview-surface.tsx', import.meta.url),
   'utf8'
 )
 const terminalHtmlSource = readFileSync(
@@ -61,23 +61,41 @@ output = terminalFontFamily;
 
 describe('TerminalWebView text zoom', () => {
   it('pins textZoom to 100 so Android system font scale cannot inflate glyphs past xterm cell metrics', () => {
-    const start = terminalWebViewSource.indexOf('<WebView')
+    const start = terminalWebViewSurfaceSource.indexOf('<WebView')
     expect(start).toBeGreaterThanOrEqual(0)
-    const end = terminalWebViewSource.indexOf('/>', start)
+    const end = terminalWebViewSurfaceSource.indexOf('/>', start)
     expect(end).toBeGreaterThan(start)
-    const webViewProps = terminalWebViewSource.slice(start, end)
+    const webViewProps = terminalWebViewSurfaceSource.slice(start, end)
     expect(webViewProps).toContain('textZoom={100}')
   })
 
   it('keeps the HTML source object stable so parent renders do not reload xterm', () => {
-    const start = terminalWebViewSource.indexOf('<WebView')
+    const start = terminalWebViewSurfaceSource.indexOf('<WebView')
     expect(start).toBeGreaterThanOrEqual(0)
-    const end = terminalWebViewSource.indexOf('/>', start)
+    const end = terminalWebViewSurfaceSource.indexOf('/>', start)
     expect(end).toBeGreaterThan(start)
-    const webViewProps = terminalWebViewSource.slice(start, end)
+    const webViewProps = terminalWebViewSurfaceSource.slice(start, end)
     expect(terminalHtmlSource).toContain('export const XTERM_WEBVIEW_SOURCE = { html: XTERM_HTML }')
     expect(webViewProps).toContain('source={XTERM_WEBVIEW_SOURCE}')
     expect(webViewProps).not.toContain('source={{ html: XTERM_HTML }}')
+  })
+
+  it('blocks file access and mixed HTTP content in the terminal WebView', () => {
+    const start = terminalWebViewSurfaceSource.indexOf('<WebView')
+    expect(start).toBeGreaterThanOrEqual(0)
+    const end = terminalWebViewSurfaceSource.indexOf('/>', start)
+    expect(end).toBeGreaterThan(start)
+    const webViewProps = terminalWebViewSurfaceSource.slice(start, end)
+
+    expect(webViewProps).toContain('{...LOCAL_DOCUMENT_WEBVIEW_SECURITY_PROPS}')
+  })
+
+  it('marks Harmony documents before inline scripts resolve rawfile fonts', () => {
+    expect(terminalHtmlSource).toContain(
+      "export const HARMONY_TERMINAL_BOOTSTRAP_JS = 'window.__ORCA_HARMONY_WEBVIEW__ = true; true;'"
+    )
+    expect(terminalWebViewSurfaceSource).toContain('injectedJavaScriptBeforeContentLoaded={')
+    expect(terminalWebViewSurfaceSource).toContain("bridgeReadiness === 'native-ack-gated'")
   })
 
   it('forces the Claude status dot to text presentation before xterm writes', () => {
@@ -150,13 +168,13 @@ describe('TerminalWebView text zoom', () => {
     expect(replay).toBeGreaterThan(unicode)
   })
 
-  it('uses the bundled WebGL-capable xterm stack and platform-safe font fallbacks', () => {
+  it('uses the bundled WebGL-capable xterm stack and Meslo-compatible weights', () => {
     expect(terminalHtmlSource).not.toContain('cdn.jsdelivr.net')
     expect(terminalWebglRecoverySource).toContain('window.WebglAddon.WebglAddon')
     expect(terminalHtmlSource).toContain('function isIOSWebView()')
     expect(terminalHtmlSource).toContain('fontFamily: terminalFontFamily')
-    expect(terminalHtmlSource).toContain("fontWeight: '300'")
-    expect(terminalHtmlSource).toContain("fontWeightBold: '500'")
+    expect(terminalHtmlSource).toContain("fontWeight: '400'")
+    expect(terminalHtmlSource).toContain("fontWeightBold: '700'")
     expect(terminalWebglRecoverySource).toContain('new window.WebglAddon.WebglAddon()')
   })
 
@@ -171,10 +189,12 @@ describe('TerminalWebView text zoom', () => {
     maxTouchPoints: 5
   }
 
-  it('starts iOS WebViews on ui-monospace, never SF Mono, still ending in a generic monospace guarantee', () => {
+  it('starts iOS WebViews on Meslo, Nerd symbols, then the platform-safe generic chain', () => {
     const fontFamily = resolveTerminalFontFamily(IOS_IPHONE_NAVIGATOR)
-    expect(fontFamily.startsWith('ui-monospace, "Menlo"')).toBe(true)
-    expect(fontFamily.startsWith('"SF Mono"')).toBe(false)
+    expect(
+      fontFamily.startsWith('"MesloLGS NF", "Orca Nerd Font Symbols", ui-monospace, "Menlo"')
+    ).toBe(true)
+    expect(fontFamily.includes('"SF Mono"')).toBe(false)
     // The chain must always terminate in the generic so it can never fall back to
     // a script/proportional system face — the actual iOS bug being fixed.
     expect(fontFamily.endsWith(', monospace')).toBe(true)
@@ -186,14 +206,18 @@ describe('TerminalWebView text zoom', () => {
       platform: 'MacIntel',
       maxTouchPoints: 5
     })
-    expect(fontFamily.startsWith('ui-monospace, "Menlo"')).toBe(true)
-    expect(fontFamily.startsWith('"SF Mono"')).toBe(false)
+    expect(
+      fontFamily.startsWith('"MesloLGS NF", "Orca Nerd Font Symbols", ui-monospace, "Menlo"')
+    ).toBe(true)
+    expect(fontFamily.includes('"SF Mono"')).toBe(false)
     expect(fontFamily.endsWith(', monospace')).toBe(true)
   })
 
-  it('keeps the SF Mono lead outside iOS WebViews and shares the identical fallback tail', () => {
+  it('keeps Meslo and Nerd symbols first outside iOS while sharing the fallback tail', () => {
     const androidFontFamily = resolveTerminalFontFamily(ANDROID_NAVIGATOR)
-    expect(androidFontFamily.startsWith('"SF Mono", "Menlo"')).toBe(true)
+    expect(
+      androidFontFamily.startsWith('"MesloLGS NF", "Orca Nerd Font Symbols", "SF Mono", "Menlo"')
+    ).toBe(true)
     expect(androidFontFamily.endsWith(', monospace')).toBe(true)
     // Only the lead family may differ across platforms; the rest of the chain is
     // shared so the two platforms cannot silently drift apart.

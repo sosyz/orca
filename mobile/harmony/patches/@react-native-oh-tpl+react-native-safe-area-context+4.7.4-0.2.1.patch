@@ -1,0 +1,158 @@
+diff --git a/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeAreaProvider.ets b/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeAreaProvider.ets
+--- a/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeAreaProvider.ets
++++ b/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeAreaProvider.ets
+@@ -38,6 +38,7 @@ import { SafeAreaViewTurboModule } from "./SafeViewTurboModule"
+ import { Event, Tag } from './common/SafeAreaType';
+ import Logger from './Logger'
+ import { SafeAreaProviderModifier } from './SafeAreaProviderModifier'
++import window from '@ohos.window'
+ 
+ export const SAFE_AREA_PROVIDER_TYPE: string = "RNCSafeAreaProvider"
+ 
+@@ -62,6 +63,10 @@ export struct SafeAreaProvider {
+   @State descriptorWrapper: SafeAreaProviderDescriptorWrapper | undefined = undefined
+   private unregisterDescriptorChangesListener?: () => void = undefined
+   private unregisterComponentManager?: () => void = undefined
++  private windowInstance?: window.Window = undefined
++  private isVisible: boolean = false
++  private windowSizeChangeCallback = (_size: window.Size) => this.onInsetsChange()
++  private avoidAreaChangeCallback = (_options: window.AvoidAreaOptions) => this.onInsetsChange()
+ 
+   onInsetsChange() {
+     const safeAreaViewTurboModule = this.ctx.rnInstance.getTurboModule<SafeAreaViewTurboModule>("RNCSafeAreaContext")
+@@ -70,17 +75,13 @@ export struct SafeAreaProvider {
+       this.ctx.rnInstance.emitComponentEvent(this.descriptor.tag, SAFE_AREA_PROVIDER_TYPE, {
+         type: "onInsetsChange",
+         insets: data.insets,
+-        frame: {
+-          x: this.descriptor.layoutMetrics.frame.origin.x,
+-          y: this.descriptor.layoutMetrics.frame.origin.y,
+-          width: this.descriptor.layoutMetrics.frame.size.width,
+-          height: this.descriptor.layoutMetrics.frame.size.height
+-        },
++        frame: data.frame,
+       })
+     })
+   }
+ 
+   aboutToAppear() {
++    this.isVisible = true
+     this.descriptor = this.ctx.descriptorRegistry.getDescriptor<SafeAreaProviderDescriptor>(this.tag)
+     if (this.descriptor) {
+       this.setDescriptor(this.descriptor)
+@@ -92,13 +93,44 @@ export struct SafeAreaProvider {
+     )
+     this.initComponent();
+     this.onInsetsChange()
++    this.registerWindowListeners()
+   }
+ 
+   aboutToDisappear() {
++    this.isVisible = false
++    this.unregisterWindowListeners()
+     this.unregisterDescriptorChangesListener?.()
+     this.unregisterComponentManager?.()
+   }
+ 
++  private async registerWindowListeners() {
++    try {
++      const windowInstance = await window.getLastWindow(this.ctx.uiAbilityContext)
++      if (!this.isVisible) {
++        return
++      }
++      this.windowInstance = windowInstance
++      windowInstance.on('windowSizeChange', this.windowSizeChangeCallback)
++      windowInstance.on('avoidAreaChange', this.avoidAreaChangeCallback)
++      this.onInsetsChange()
++    } catch (error) {
++      Logger.error('Failed to register safe area listeners: ' + JSON.stringify(error))
++    }
++  }
++
++  private unregisterWindowListeners() {
++    if (!this.windowInstance) {
++      return
++    }
++    try {
++      this.windowInstance.off('windowSizeChange', this.windowSizeChangeCallback)
++      this.windowInstance.off('avoidAreaChange', this.avoidAreaChangeCallback)
++    } catch (error) {
++      Logger.error('Failed to unregister safe area listeners: ' + JSON.stringify(error))
++    }
++    this.windowInstance = undefined
++  }
++
+   initComponent() {
+     if (!this.componentManager) {
+       this.componentManager = new RNViewManager(this.tag, this.ctx)
+diff --git a/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeViewTurboModule.ts b/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeViewTurboModule.ts
+--- a/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeViewTurboModule.ts
++++ b/node_modules/@react-native-oh-tpl/react-native-safe-area-context/harmony/safe_area/src/main/ets/SafeViewTurboModule.ts
+@@ -57,6 +57,28 @@ export class SafeAreaViewTurboModule extends TurboModule {
+     }
+   }
+ 
++  private getWindowInsets(windowInstance: window.Window): EdgeInsets {
++    const system = windowInstance.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
++    const cutout = windowInstance.getWindowAvoidArea(window.AvoidAreaType.TYPE_CUTOUT)
++    const navigation = windowInstance.getWindowAvoidArea(
++      window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR
++    )
++    return {
++      top: px2vp(
++        Math.max(system.topRect.height, cutout.topRect.height, navigation.topRect.height)
++      ),
++      right: px2vp(
++        Math.max(system.rightRect.width, cutout.rightRect.width, navigation.rightRect.width)
++      ),
++      bottom: px2vp(
++        Math.max(system.bottomRect.height, cutout.bottomRect.height, navigation.bottomRect.height)
++      ),
++      left: px2vp(
++        Math.max(system.leftRect.width, cutout.leftRect.width, navigation.leftRect.width)
++      )
++    }
++  }
++
+   getConstants(): {} {
+     Logger.debug(TAG, 'RNCSafeAreaContext getConstants:' + this.windowInstance);
+     let frame: Frame = {
+@@ -73,20 +95,13 @@ export class SafeAreaViewTurboModule extends TurboModule {
+     }
+     if (this.windowInstance != null) {
+       const windowInfo = this.windowInstance.getWindowProperties()
+-      const avoidArea = this.windowInstance.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+-      const avoidAreaBottom = this.windowInstance.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+       frame = {
+         x: px2vp(windowInfo.windowRect.left),
+         y: px2vp(windowInfo.windowRect.top),
+         width: px2vp(windowInfo.windowRect.width),
+         height: px2vp(windowInfo.windowRect.height)
+       }
+-      insets = {
+-        top: px2vp(avoidArea.topRect.height),
+-        right: px2vp(avoidArea.rightRect.height),
+-        bottom: px2vp(avoidAreaBottom.bottomRect.height),
+-        left: px2vp(avoidArea.leftRect.height)
+-      }
++      insets = this.getWindowInsets(this.windowInstance)
+     }
+     return { "initialWindowMetrics": { frame, insets } }
+   }
+@@ -112,15 +127,7 @@ export class SafeAreaViewTurboModule extends TurboModule {
+           }
+           resolve({ insets, frame })
+         } else {
+-          let type = window.AvoidAreaType.TYPE_SYSTEM;
+-          let avoidArea = windowInstance.getWindowAvoidArea(type);
+-          const avoidAreaBottom = this.windowInstance.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+-          const insets: EdgeInsets = {
+-            top: px2vp(avoidArea.topRect.height),
+-            right: px2vp(avoidArea.rightRect.height),
+-            bottom: px2vp(avoidAreaBottom.bottomRect.height),
+-            left: px2vp(avoidArea.leftRect.height)
+-          }
++          const insets = this.getWindowInsets(windowInstance)
+           resolve({ insets, frame })
+         }
+       } catch (exception) {

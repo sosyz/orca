@@ -16,6 +16,7 @@ import type { BrowserTouchLayout, BrowserZoomState } from './browser-touch-geome
 import {
   clearCachedBrowserFramesForWorktree,
   makeBrowserFrameCacheKey,
+  makeMobileBrowserPaneBoundaryKey,
   peekCachedBrowserFrame,
   type FrameLayer,
   type PinchGesture
@@ -42,6 +43,7 @@ export type MobileBrowserTab = {
 
 type MobileBrowserPaneProps = {
   client: RpcClient | null
+  pairedHostId: string
   worktreeId: string
   tab: MobileBrowserTab
   screencastSupported: boolean | null
@@ -64,8 +66,23 @@ type BrowserDialogState = {
 
 const DEFAULT_ZOOM: BrowserZoomState = { scale: 1, offsetX: 0, offsetY: 0 }
 
-export function MobileBrowserPane({
+export function MobileBrowserPane(props: MobileBrowserPaneProps) {
+  return (
+    <MobileBrowserPaneFrameBoundary
+      key={makeMobileBrowserPaneBoundaryKey(
+        props.pairedHostId,
+        props.worktreeId,
+        props.tab.browserPageId,
+        props.tab.id
+      )}
+      {...props}
+    />
+  )
+}
+
+function MobileBrowserPaneFrameBoundary({
   client,
+  pairedHostId,
   worktreeId,
   tab,
   screencastSupported,
@@ -76,7 +93,12 @@ export function MobileBrowserPane({
   const [browserViewMode, setBrowserViewMode] = useState<MobileBrowserViewMode>(() =>
     getInitialMobileBrowserViewMode(worktreeId, tab.browserPageId, tab.url)
   )
-  const cacheKey = makeBrowserFrameCacheKey(worktreeId, tab.browserPageId, browserViewMode)
+  const cacheKey = makeBrowserFrameCacheKey(
+    pairedHostId,
+    worktreeId,
+    tab.browserPageId,
+    browserViewMode
+  )
   const cachedInitialFrame = peekCachedBrowserFrame(cacheKey)
   const [addressValue, setAddressValue] = useState(displayBrowserUrl(tab.url))
   const [addressFocused, setAddressFocused] = useState(false)
@@ -156,14 +178,14 @@ export function MobileBrowserPane({
     const subscription = AppState.addEventListener('change', (nextState) => {
       const active = nextState === 'active'
       if (!active) {
-        clearCachedBrowserFramesForWorktree(worktreeId)
+        clearCachedBrowserFramesForWorktree(pairedHostId, worktreeId)
       }
       setAppActive(active)
     })
     return () => {
       subscription.remove()
     }
-  }, [worktreeId])
+  }, [pairedHostId, worktreeId])
 
   const addressSync = resolveMobileBrowserAddressSync(addressSyncState, {
     focused: addressFocused,

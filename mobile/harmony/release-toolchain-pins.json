@@ -1,0 +1,19 @@
+{
+  "codeLinterContentSha256": "bfdf5b10af175e728f09d3a91f9671bb822c1c49841313c46d704be6a0bf66af",
+  "devEcoNode": "18.20.1",
+  "devEcoNodeContentSha256": "1fc826d8247c79caf1c0a8537ab914f78d01feeea8c9de28a51c23baa0dc92ef",
+  "hapSignToolSha256": "bb820486777cc28cf3f8a53365fe41ffe6fcd05c31de3387e6ede0ed03a11702",
+  "hvigor": "6.21.1",
+  "hvigorContentSha256": "7687017163878cbf851ecff831667c8890298906edea173dade385d6b4d1f293",
+  "java": "21.0.8",
+  "javaContentSha256": "f6e2e2ab2c32c0175f2bed907f7817bd24e47838b750ce927243a07344e20095",
+  "node": "20.19.4",
+  "npm": "10.8.2",
+  "ohpm": "6.0.1",
+  "ohpmContentSha256": "ee5dec3fdebcc3a72360a9ea9ef0d21ba627d7498b2cc86fd198fbea8783935a",
+  "platform": "darwin-arm64",
+  "sdkApi": 21,
+  "sdkComponents": ["ets", "js", "native", "previewer", "toolchains"],
+  "sdkContentSha256": "913fdffaffd694083cbb4d1522d553654628102f8f03bf2f53d291b03596c267",
+  "sdkVersion": "6.0.1.112"
+}

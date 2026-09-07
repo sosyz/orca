@@ -4,7 +4,10 @@ import { colors } from '../theme/mobile-theme'
 import { TERMINAL_TEXT_SCALES } from '../storage/preferences'
 import { TERMINAL_PATH_TAP_JS } from './terminal-path-tap-injected'
 import { TERMINAL_KEYBOARD_AVOIDANCE_METRICS_JS } from './terminal-keyboard-avoidance-metrics-injected'
+import { TERMINAL_WEBVIEW_BRIDGE_READINESS_JS } from './terminal-webview-bridge-readiness-injected'
 import { XTERM_ENGINE_CSS, XTERM_ENGINE_JS } from './terminal-webview-engine.generated'
+import { TERMINAL_WEBVIEW_FONT_FACE_CSS } from './terminal-webview-font-faces'
+import { TERMINAL_WEBVIEW_FONT_READINESS_JS } from './terminal-webview-font-readiness-injected'
 import { TERMINAL_REFLOW_JS } from './terminal-webview-reflow-injected'
 import { TERMINAL_SURFACE_SWAP_JS } from './terminal-webview-surface-swap-injected'
 import { TERMINAL_TAP_DISPATCH_JS } from './terminal-webview-tap-dispatch-injected'
@@ -64,6 +67,7 @@ window.onerror = function(msg) {
 </script>
 <style>${XTERM_ENGINE_CSS}</style>
 <style>
+  ${TERMINAL_WEBVIEW_FONT_FACE_CSS}
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     background: ${colors.terminalBg};
@@ -264,10 +268,10 @@ window.onerror = function(msg) {
     if (/iP(ad|hone|od)/.test(navigator.userAgent)) return true;
     return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
   }
-  // Why: iOS WebKit does not reliably resolve "SF Mono" by CSS family name and can
-  // fall to a non-monospace face; lead with the ui-monospace generic to avoid that.
-  var TERMINAL_FONT_FALLBACKS = '"Menlo", "Monaco", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", monospace';
-  var terminalFontFamily = (isIOSWebView() ? 'ui-monospace, ' : '"SF Mono", ') + TERMINAL_FONT_FALLBACKS;
+  // Why: both faces are embedded because ArkWeb blocks resource:// font subrequests;
+  // Meslo matches Powerlevel10k while the symbols face covers newer Nerd Font prompts.
+  var SYSTEM_MONOSPACE_FALLBACKS = '"Menlo", "Monaco", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+  var terminalFontFamily = '"MesloLGS NF", "Orca Nerd Font Symbols", ' + (isIOSWebView() ? 'ui-monospace, ' : '"SF Mono", ') + SYSTEM_MONOSPACE_FALLBACKS;
   // Why: change the real font size, then resize the grid to fit the viewport at
   // the new cell metrics so the text shows at its true size immediately. RN's
   // refit (measure → updateViewport) then makes the server reflow the PTY to the
@@ -678,7 +682,7 @@ ${TERMINAL_WEBVIEW_THEME_JS}
 
 ${TERMINAL_WEBGL_RECOVERY_JS}
 
-  function init(cols, rows, initialData, nextTheme, nextFontScale, preserveScroll, nextOscLinks) {
+  function init(cols, rows, initialData, nextTheme, nextFontScale, preserveScroll, nextOscLinks, enableWebgl) {
     if (typeof nextFontScale === 'number' && nextFontScale > 0) currentTextScale = nextFontScale;
     // Why: a width-reflow re-stream rewraps the same content at new cols.
     // Distance-from-bottom (rows) is the only stable anchor across reflow,
@@ -731,8 +735,8 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
       minimumContrastRatio: terminalMinimumContrastRatio,
       fontFamily: terminalFontFamily,
       fontSize: fontPxForScale(currentTextScale),
-      fontWeight: '300',
-      fontWeightBold: '500',
+      fontWeight: '400',
+      fontWeightBold: '700',
       scrollback: 5000,
       // Why: xterm suppresses parser-generated query replies when disableStdin
       // is true. Native accepts only validated reply grammars from onData.
@@ -749,7 +753,12 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     var nextTerm = term;
     pendingTerm = nextTerm;
     term.open(surface);
-    attachWebglAddon(true);
+    // Why: ArkWeb may create WebGL2 but fail to paint xterm's glyph atlas; keep its DOM renderer when native opts out.
+    if (enableWebgl !== false) {
+      attachWebglAddon(true);
+    } else {
+      flog('renderer-dom', { reason: 'native-compat' });
+    }
     if (window.Unicode11Addon && window.Unicode11Addon.Unicode11Addon) try { term.loadAddon(new window.Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = '11'; } catch (e) {}
     if (typeof replayData === 'string' && replayData.length > 0) {
       // Why no trailing reset: the snapshot pen belongs to the live host TUI receiving later output.
@@ -814,8 +823,12 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
   ${TERMINAL_REFLOW_JS}
 
   function notify(msg) {
-    if (window.ReactNativeWebView) {
+    if (!window.ReactNativeWebView || typeof window.ReactNativeWebView.postMessage !== 'function') return false;
+    try {
       window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -854,6 +867,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
       message: parts.join(' - ')
     });
   }
+  ${TERMINAL_WEBVIEW_FONT_READINESS_JS}
 
   window.onerror = function(msg, source, line, column, err) {
     if (window.__engineErrors.length < 20) window.__engineErrors.push(String(msg));
@@ -929,10 +943,15 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
       handledMessageIds.push(msg.id);
       if (handledMessageIds.length > 256) handledMessageIds.shift();
     }
-    if (msg.type === 'ping') {
+    if (msg.type === 'bridge-ack') {
+      if (msg.bridgeId === bridgeReadyId) {
+        bridgeReadyAcknowledged = true;
+        announceWebReady();
+      }
+    } else if (msg.type === 'ping') {
       notify({ type: 'pong', pingId: msg.id });
     } else if (msg.type === 'init') {
-      init(msg.cols, msg.rows, msg.initialData, msg.terminalTheme, msg.fontScale, msg.preserveScroll, msg.oscLinks);
+      init(msg.cols, msg.rows, msg.initialData, msg.terminalTheme, msg.fontScale, msg.preserveScroll, msg.oscLinks, msg.enableWebgl);
     } else if (msg.type === 'set-font-scale') {
       // Why: ignore RN echoing back the value a pinch just set (msg.fontScale ===
       // currentTextScale) so the post-pinch state isn't reset; only apply changes.
@@ -1871,11 +1890,8 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     updateTransform();
   });
 
-  if (window.Terminal) {
-    notify({ type: 'web-ready' });
-  } else {
-    reportEngineError('terminal engine missing', 'xterm failed to load', true);
-  }
+  ${TERMINAL_WEBVIEW_BRIDGE_READINESS_JS}
+  announceInitialEngineState(300);
 })();
 </script>
 </body>
@@ -1883,3 +1899,4 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
 
 // Why: some WebViews treat source identity as page identity; keep this stable so re-renders don't reload xterm.
 export const XTERM_WEBVIEW_SOURCE = { html: XTERM_HTML }
+export const HARMONY_TERMINAL_BOOTSTRAP_JS = 'window.__ORCA_HARMONY_WEBVIEW__ = true; true;'

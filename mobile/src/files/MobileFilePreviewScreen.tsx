@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, BackHandler, Pressable, Text, View, useWindowDimensions } from 'react-native'
+import { Alert, Pressable, Text, View, type LayoutChangeEvent } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { ChevronLeft, Save } from 'lucide-react-native'
+import { useResponsiveLayout } from '../layout/responsive-layout'
+import { useMobileRouteBackHandler } from '../navigation/use-mobile-route-back-handler'
 import { getWorktreeLabel } from '../session/worktree-label'
 import { colors, spacing } from '../theme/mobile-theme'
 import { useForceReconnect, useHostClient } from '../transport/client-context'
@@ -33,6 +35,7 @@ type Props = {
 
 export function MobileFilePreviewScreen({ route }: Props) {
   const router = useRouter()
+  const { isLandscape } = useResponsiveLayout()
   const previewParams = route.ok ? route.params : null
   const { client, state: connState } = useHostClient(previewParams?.hostId)
   const forceReconnect = useForceReconnect()
@@ -46,7 +49,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
   const draftContentRef = useRef(draftContent)
   const savedContentRef = useRef(savedContent)
   const draftSourceKeyRef = useRef<string | null>(null)
-  const { width, height } = useWindowDimensions()
+  const [previewBodySize, setPreviewBodySize] = useState({ width: 1, height: 1 })
   const routePreviewSource = useMemo(
     () => (previewParams ? previewSourceFromRoute(previewParams) : null),
     [previewParams]
@@ -231,13 +234,20 @@ export function MobileFilePreviewScreen({ route }: Props) {
     return true
   }, [hasUnsavedTerminalArtifactDraft, router])
 
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', requestBack)
-    return () => subscription.remove()
-  }, [requestBack])
+  useMobileRouteBackHandler(requestBack)
+
+  const handlePreviewBodyLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout
+    setPreviewBodySize((current) =>
+      current.width === width && current.height === height ? current : { width, height }
+    )
+  }, [])
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView
+      style={styles.container}
+      edges={isLandscape ? ['left', 'right', 'bottom'] : ['bottom']}
+    >
       <SafeAreaView style={styles.header} edges={['top']}>
         <View style={styles.topBar}>
           <Pressable
@@ -268,23 +278,25 @@ export function MobileFilePreviewScreen({ route }: Props) {
           ) : null}
         </View>
       </SafeAreaView>
-      <MobileFilePreviewBody
-        preview={preview}
-        relativePath={displayPath}
-        title={title || 'File'}
-        editable={isEditableTerminalArtifact}
-        draftContent={draftContent}
-        saveError={saveError}
-        lineColumn={lineColumn}
-        imageWidth={Math.max(1, width - spacing.md * 2)}
-        imageHeight={Math.max(240, height - 160)}
-        onDraftChange={setDraftContent}
-        onImageError={() =>
-          setPreview({ status: 'error', message: 'Unable to load preview', reconnect: false })
-        }
-        onRetry={retry}
-      />
-    </View>
+      <View style={styles.body} onLayout={handlePreviewBodyLayout}>
+        <MobileFilePreviewBody
+          preview={preview}
+          relativePath={displayPath}
+          title={title || 'File'}
+          editable={isEditableTerminalArtifact}
+          draftContent={draftContent}
+          saveError={saveError}
+          lineColumn={lineColumn}
+          imageWidth={Math.max(1, previewBodySize.width - spacing.md * 2)}
+          imageHeight={Math.max(1, previewBodySize.height - spacing.md * 2)}
+          onDraftChange={setDraftContent}
+          onImageError={() =>
+            setPreview({ status: 'error', message: 'Unable to load preview', reconnect: false })
+          }
+          onRetry={retry}
+        />
+      </View>
+    </SafeAreaView>
   )
 }
 

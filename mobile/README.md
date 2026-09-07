@@ -2,6 +2,8 @@
 
 React Native companion app for Orca. Monitor worktrees, view terminal output, and send commands from your phone.
 
+The native HarmonyOS client lives in [`harmony/`](harmony/README.md). It runs the same screens, transport, terminal, tasks, files, review, settings, pairing, and notification logic through React Native OpenHarmony, with Harmony-specific adapters for the Expo and device APIs.
+
 Local development uses two processes:
 
 - Orca desktop/Electron from the repo root. This hosts the mobile WebSocket RPC server on port `6768`.

@@ -4,6 +4,7 @@ import {
   clampDragReorderIndex,
   dragReorderPositionsFromKeys,
   moveDragReorderKey,
+  moveDragReorderKeyByOffset,
   orderedKeysFromDragReorderPositions
 } from './drag-reorder-positions'
 
@@ -44,5 +45,13 @@ describe('drag reorder positions', () => {
     const positions = dragReorderPositionsFromKeys(['a', 'b'])
     expect(moveDragReorderKey(positions, 'a', 0)).toBe(positions)
     expect(moveDragReorderKey(positions, 'missing', 1)).toBe(positions)
+  })
+
+  it('moves ordered keys by bounded offsets for touch and accessibility controls', () => {
+    const keys = ['a', 'b', 'c']
+    expect(moveDragReorderKeyByOffset(keys, 'b', -1)).toEqual(['b', 'a', 'c'])
+    expect(moveDragReorderKeyByOffset(keys, 'b', 1)).toEqual(['a', 'c', 'b'])
+    expect(moveDragReorderKeyByOffset(keys, 'a', -1)).toBe(keys)
+    expect(moveDragReorderKeyByOffset(keys, 'missing', 1)).toBe(keys)
   })
 })

@@ -4,6 +4,22 @@
 
 export type ActivePanel = 'sourceControl' | 'files' | 'pr' | null
 
+export function shouldCloseActivePanelOnBack(activePanel: ActivePanel): boolean {
+  return activePanel !== null
+}
+
+export type SessionBackAction = 'dismiss-keyboard' | 'close-panel' | 'leave-session'
+
+export function resolveSessionBackAction(args: {
+  activePanel: ActivePanel
+  keyboardHeight: number
+}): SessionBackAction {
+  if (args.keyboardHeight > 0) {
+    return 'dismiss-keyboard'
+  }
+  return shouldCloseActivePanelOnBack(args.activePanel) ? 'close-panel' : 'leave-session'
+}
+
 // Toggle/swap reducer for the wide-layout dock: tapping the active panel closes it,
 // tapping any other opens/swaps to it. Exactly one panel docks at a time (R2).
 export function nextActivePanel(

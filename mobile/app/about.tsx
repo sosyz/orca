@@ -9,14 +9,16 @@ import { colors, spacing, typography } from '../src/theme/mobile-theme'
 
 // Why: read version + native build identifier from expo-constants at
 // runtime so the About screen never drifts out of sync with app.json.
-// nativeBuildVersion is iOS buildNumber on iOS and versionCode on
-// Android — different concepts, same role (monotonic native build id).
+// Each native platform exposes a different monotonic build identifier.
 function getVersionLabel(): string {
   const version = Constants.expoConfig?.version ?? '?.?.?'
+  const platform = Platform.OS as string
   const build =
-    Platform.OS === 'ios'
+    platform === 'ios'
       ? Constants.expoConfig?.ios?.buildNumber
-      : String(Constants.expoConfig?.android?.versionCode ?? '')
+      : platform === 'harmony'
+        ? String(Constants.expoConfig?.extra?.harmonyVersionCode ?? '')
+        : String(Constants.expoConfig?.android?.versionCode ?? '')
   return build ? `v${version} (${build})` : `v${version}`
 }
 
@@ -43,7 +45,12 @@ export default function AboutScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.topRow}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
         <Text style={styles.heading}>About</Text>

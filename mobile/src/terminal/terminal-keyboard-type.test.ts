@@ -19,4 +19,10 @@ describe('terminal keyboard type', () => {
     expect(getTerminalCommandKeyboardType('ios', false)).toBe('default')
     expect(getTerminalCommandKeyboardType('ios', true)).toBe('default')
   })
+
+  it('keeps Harmony IME keyboards available for terminal input', () => {
+    expect(getTerminalLiveInputKeyboardType('harmony')).toBe('default')
+    expect(getTerminalCommandKeyboardType('harmony', false)).toBe('default')
+    expect(getTerminalCommandKeyboardType('harmony', true)).toBe('default')
+  })
 })

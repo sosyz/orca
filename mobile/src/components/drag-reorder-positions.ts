@@ -52,3 +52,18 @@ export function moveDragReorderKey(
   }
   return next
 }
+
+export function moveDragReorderKeyByOffset(keys: string[], key: string, delta: number): string[] {
+  const fromIndex = keys.indexOf(key)
+  if (fromIndex === -1) {
+    return keys
+  }
+  const toIndex = clampDragReorderIndex(fromIndex + delta, keys.length)
+  if (toIndex === fromIndex) {
+    return keys
+  }
+  const next = [...keys]
+  next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, key)
+  return next
+}

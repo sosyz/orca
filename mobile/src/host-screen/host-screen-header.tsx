@@ -97,6 +97,7 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
             disabled={connState !== 'connected'}
             accessibilityRole="button"
             accessibilityLabel="Floating Workspace"
+            accessibilityState={{ disabled: connState !== 'connected' }}
             hitSlop={8}
           >
             <SquareTerminal
@@ -188,6 +189,7 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
               disabled={connState !== 'connected'}
               accessibilityRole="button"
               accessibilityLabel="Accounts"
+              accessibilityState={{ disabled: connState !== 'connected' }}
             >
               <UserCircle
                 size={16}
@@ -204,6 +206,7 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
               disabled={connState !== 'connected'}
               accessibilityRole="button"
               accessibilityLabel="Tasks"
+              accessibilityState={{ disabled: connState !== 'connected' }}
             >
               <List
                 size={16}
@@ -221,6 +224,7 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
                 disabled={connState !== 'connected'}
                 accessibilityRole="button"
                 accessibilityLabel="Floating Workspace"
+                accessibilityState={{ disabled: connState !== 'connected' }}
               >
                 <SquareTerminal
                   size={18}
@@ -238,6 +242,7 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
               disabled={connState !== 'connected'}
               accessibilityRole="button"
               accessibilityLabel="New workspace"
+              accessibilityState={{ disabled: connState !== 'connected' }}
             >
               <Plus
                 size={16}
@@ -305,6 +310,9 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
             style={styles.searchToggle}
             onPress={() => actions.navigateFromHostList(`/h/${hostId}/accounts`)}
             disabled={connState !== 'connected'}
+            accessibilityRole="button"
+            accessibilityLabel="Accounts"
+            accessibilityState={{ disabled: connState !== 'connected' }}
           >
             <UserCircle
               size={16}
@@ -316,6 +324,9 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
             style={styles.searchToggle}
             onPress={() => actions.navigateFromHostList(`/h/${hostId}/tasks`)}
             disabled={connState !== 'connected'}
+            accessibilityRole="button"
+            accessibilityLabel="Tasks"
+            accessibilityState={{ disabled: connState !== 'connected' }}
           >
             <List
               size={16}
@@ -323,7 +334,12 @@ export function HostScreenHeader({ controller }: { controller: HostScreenControl
             />
           </Pressable>
 
-          <Pressable style={styles.searchToggle} onPress={() => state.setShowSearch((s) => !s)}>
+          <Pressable
+            style={styles.searchToggle}
+            onPress={() => state.setShowSearch((s) => !s)}
+            accessibilityRole="button"
+            accessibilityLabel={state.showSearch ? 'Close search' : 'Search workspaces'}
+          >
             {state.showSearch ? (
               <X size={16} color={colors.textSecondary} />
             ) : (

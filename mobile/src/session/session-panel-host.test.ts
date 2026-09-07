@@ -2,13 +2,42 @@ import { describe, it, expect } from 'vitest'
 import {
   canDockSessionPanel,
   nextActivePanel,
+  resolveSessionBackAction,
   resolvePanelAction,
   panelRouteDescriptor,
+  shouldCloseActivePanelOnBack,
   shouldShowSessionHeaderChecksAction,
   type ActivePanel
 } from './session-panel-host'
 
 const PANELS = ['sourceControl', 'files', 'pr'] as const
+
+describe('shouldCloseActivePanelOnBack', () => {
+  it('closes a docked panel before leaving the session', () => {
+    for (const panel of PANELS) {
+      expect(shouldCloseActivePanelOnBack(panel)).toBe(true)
+    }
+    expect(shouldCloseActivePanelOnBack(null)).toBe(false)
+  })
+})
+
+describe('resolveSessionBackAction', () => {
+  it('dismisses the software keyboard before closing a panel or leaving', () => {
+    for (const activePanel of [null, ...PANELS]) {
+      expect(resolveSessionBackAction({ activePanel, keyboardHeight: 1 })).toBe('dismiss-keyboard')
+    }
+  })
+
+  it('closes a docked panel before leaving once the keyboard is hidden', () => {
+    for (const activePanel of PANELS) {
+      expect(resolveSessionBackAction({ activePanel, keyboardHeight: 0 })).toBe('close-panel')
+    }
+  })
+
+  it('leaves only when neither the keyboard nor a panel consumes Back', () => {
+    expect(resolveSessionBackAction({ activePanel: null, keyboardHeight: 0 })).toBe('leave-session')
+  })
+})
 
 describe('nextActivePanel', () => {
   it('opens a panel from the closed state', () => {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
@@ -11,18 +11,22 @@ import {
   type ListRenderItem
 } from 'react-native'
 import { Copy, MessageSquare, Send } from 'lucide-react-native'
+import type { DiffComment } from '../../../src/shared/diff-comment-types'
+import { MobileCodeScaleControls } from '../files/MobileCodeScaleControls'
+import {
+  scaledMobileCodeGutterWidth,
+  scaledMobileCodeTextMetrics
+} from '../files/mobile-code-text-scale'
+import { useMobileCodeTextScale } from '../files/use-mobile-code-text-scale'
 import { MobileHtmlPreview } from '../components/MobileHtmlPreview'
 import { MobileSyntaxSegments } from '../components/MobileSyntaxSegments'
-import { colors } from '../theme/mobile-theme'
+import { colors, typography } from '../theme/mobile-theme'
 import {
   buildPlainMobileDiffSyntaxLines,
   highlightMobileCode,
   highlightMobileDiffLines,
   resolveMobileSyntaxLanguage
 } from './mobile-file-syntax'
-import { styles } from './mobile-session-styles'
-import { MobileDiffCommentLineRow } from './MobileDiffCommentLineRow'
-import type { DiffComment } from '../../../src/shared/diff-comment-types'
 import type {
   DiffCommentActions,
   DiffSyntaxState,
@@ -30,6 +34,9 @@ import type {
   FileSyntaxState,
   RenderableDiffLine
 } from './mobile-session-route-types'
+import { MobileSessionDiffLineRow } from './MobileSessionDiffLineRow'
+import { MOBILE_SESSION_DIFF_GUTTER_WIDTH } from './mobile-session-reader-styles'
+import { styles } from './mobile-session-styles'
 
 export function MobileSessionFileReader({
   doc,
@@ -44,6 +51,18 @@ export function MobileSessionFileReader({
   language?: string
   diffCommentActions?: DiffCommentActions
 }) {
+  const { textScale, panHandlers, zoomOut, zoomIn, resetZoom } = useMobileCodeTextScale()
+  const codeTextMetrics = useMemo(
+    () => scaledMobileCodeTextMetrics(typography.bodySize, 22, textScale),
+    [textScale]
+  )
+  const gutterTextMetrics = useMemo(
+    () => ({
+      ...scaledMobileCodeTextMetrics(typography.metaSize, 22, textScale),
+      width: scaledMobileCodeGutterWidth(MOBILE_SESSION_DIFF_GUTTER_WIDTH, textScale)
+    }),
+    [textScale]
+  )
   const syntaxLanguage = useMemo(
     () => resolveMobileSyntaxLanguage(relativePath || title, language),
     [language, relativePath, title]
@@ -78,6 +97,15 @@ export function MobileSessionFileReader({
     }
     return map
   }, [diffCommentsForFile])
+  const sourceSegments = useMemo(() => {
+    if (doc?.status !== 'ready' || (doc.kind !== 'file' && doc.kind !== 'html')) {
+      return []
+    }
+    if (fileSyntax?.doc === doc && fileSyntax.language === syntaxLanguage) {
+      return fileSyntax.segments
+    }
+    return [{ text: doc.content, kind: 'plain' as const }]
+  }, [doc, fileSyntax, syntaxLanguage])
 
   const startComment = useCallback((lineNumber: number) => {
     setActiveCommentLine(lineNumber)
@@ -106,10 +134,12 @@ export function MobileSessionFileReader({
 
   const renderDiffLine: ListRenderItem<RenderableDiffLine> = useCallback(
     ({ item, index }) => (
-      <MobileDiffCommentLineRow
+      <MobileSessionDiffLineRow
         line={item}
         title={title}
         index={index}
+        codeTextMetrics={codeTextMetrics}
+        gutterTextMetrics={gutterTextMetrics}
         comments={
           item.newLineNumber !== undefined ? (diffCommentsByLine.get(item.newLineNumber) ?? []) : []
         }
@@ -130,9 +160,11 @@ export function MobileSessionFileReader({
     [
       activeCommentLine,
       cancelComment,
+      codeTextMetrics,
       commentDraft,
       diffCommentActions,
       diffCommentsByLine,
+      gutterTextMetrics,
       startComment,
       submitComment,
       title
@@ -140,13 +172,19 @@ export function MobileSessionFileReader({
   )
 
   useEffect(() => {
-    if (doc?.status !== 'ready') {
+    if (doc?.status !== 'ready' || doc.kind === 'image') {
+      setFileSyntax(null)
+      setDiffSyntax(null)
       return undefined
+    }
+    if (doc.kind === 'diff') {
+      setFileSyntax(null)
+    } else {
+      setDiffSyntax(null)
     }
 
     // Why: defer highlighting one tick so large files show as plain text immediately before colors are applied.
     const timer = setTimeout(() => {
-      // file + html share the syntax-segment source view (html's "Source" toggle).
       if (doc.kind === 'file' || doc.kind === 'html') {
         setFileSyntax({
           doc,
@@ -162,7 +200,6 @@ export function MobileSessionFileReader({
           lines: highlightMobileDiffLines(doc.lines, syntaxLanguage)
         })
       }
-      // image: no syntax highlighting.
     }, 0)
 
     return () => clearTimeout(timer)
@@ -193,7 +230,13 @@ export function MobileSessionFileReader({
     const canCopyNotes = commentCount > 0 && !commentsBusy
     const canSendNotes = unsentCommentCount > 0 && !commentsBusy
     return (
-      <View style={styles.markdownEditor}>
+      <View style={styles.markdownEditor} {...panHandlers}>
+        <MobileCodeScaleControls
+          textScale={textScale}
+          onZoomOut={zoomOut}
+          onZoomIn={zoomIn}
+          onReset={resetZoom}
+        />
         {diffCommentActions ? (
           <View style={styles.diffNotesToolbar}>
             <View style={styles.diffNotesTitleRow}>
@@ -245,6 +288,7 @@ export function MobileSessionFileReader({
           windowSize={7}
           removeClippedSubviews={Platform.OS !== 'web'}
           keyboardShouldPersistTaps="handled"
+          extraData={textScale}
         />
       </View>
     )
@@ -271,20 +315,24 @@ export function MobileSessionFileReader({
     )
   }
 
-  const renderSourceText = (content: string) => (
-    <View style={styles.markdownEditor}>
+  const renderSourceText = () => (
+    <View style={styles.markdownEditor} {...panHandlers}>
+      <MobileCodeScaleControls
+        textScale={textScale}
+        onZoomOut={zoomOut}
+        onZoomIn={zoomIn}
+        onReset={resetZoom}
+      />
       <ScrollView
         style={styles.filePreviewScroll}
         contentContainerStyle={styles.filePreviewContent}
       >
-        <Text selectable style={styles.filePreviewText} accessibilityLabel={`${title} preview`}>
-          <MobileSyntaxSegments
-            segments={
-              fileSyntax?.doc === doc && fileSyntax.language === syntaxLanguage
-                ? fileSyntax.segments
-                : [{ text: content, kind: 'plain' }]
-            }
-          />
+        <Text
+          selectable
+          style={[styles.filePreviewText, codeTextMetrics]}
+          accessibilityLabel={`${title} preview`}
+        >
+          <MobileSyntaxSegments segments={sourceSegments} />
         </Text>
       </ScrollView>
     </View>
@@ -293,10 +341,10 @@ export function MobileSessionFileReader({
   if (doc.kind === 'html') {
     return (
       <View style={styles.markdownEditor}>
-        <MobileHtmlPreview html={doc.content} renderSource={() => renderSourceText(doc.content)} />
+        <MobileHtmlPreview html={doc.content} renderSource={renderSourceText} />
       </View>
     )
   }
 
-  return renderSourceText(doc.content)
+  return renderSourceText()
 }

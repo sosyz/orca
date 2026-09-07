@@ -5,7 +5,6 @@ import {
   Plus,
   colors,
   Text,
-  Linking,
   ExternalLink,
   Copy,
   RefreshCw,
@@ -60,7 +59,7 @@ export function renderMobileTasksItemActions(model: ConnectionPresentationModel)
       <View style={styles.actionSeparator} />
       <Pressable
         style={styles.actionRow}
-        onPress={() => void Linking.openURL(actionItem.source.url)}
+        onPress={() => void model.openExternalTaskUrl(actionItem.source.url)}
       >
         <ExternalLink size={16} color={colors.textPrimary} />
         <Text style={styles.actionText}>{taskExternalOpenLabel(actionItem)}</Text>

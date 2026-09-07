@@ -8,7 +8,8 @@ const WEB_READY_WATCHDOG_MS = 15000
 
 export function useTerminalWebReadyWatchdog(
   isWebReadyRef: RefObject<boolean>,
-  reportEngineError: (message: string, fatal: boolean) => void
+  reportEngineError: (message: string, fatal: boolean) => void,
+  enabled = true
 ) {
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -21,6 +22,9 @@ export function useTerminalWebReadyWatchdog(
 
   const armWebReadyWatchdog = useCallback(() => {
     clearWebReadyWatchdog()
+    if (!enabled || isWebReadyRef.current) {
+      return
+    }
     const fire = () => {
       watchdogRef.current = null
       if (isWebReadyRef.current) {
@@ -37,7 +41,7 @@ export function useTerminalWebReadyWatchdog(
       )
     }
     watchdogRef.current = setTimeout(fire, WEB_READY_WATCHDOG_MS)
-  }, [clearWebReadyWatchdog, isWebReadyRef, reportEngineError])
+  }, [clearWebReadyWatchdog, enabled, isWebReadyRef, reportEngineError])
 
   useEffect(() => {
     armWebReadyWatchdog()

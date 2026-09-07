@@ -26,6 +26,11 @@ import {
   mobileOnboardingDestination
 } from '../src/onboarding/mobile-onboarding-plan'
 import { pairScanStyles as styles } from '../src/pair-scan-styles'
+import { formatUnknownErrorMessage } from '../src/transport/unknown-error-message'
+import {
+  redactConnectionLogEntry,
+  redactConnectionLogText
+} from '../src/diagnostics/connection-log-redaction'
 
 // Why: see pair-confirm.tsx — cap initial-pair "Connecting…" so a broken
 // route surfaces as a real error with the log visible instead of a
@@ -137,7 +142,7 @@ export default function PairScanScreen() {
           if (!mountedRef.current || activePairingAttemptRef.current !== attempt) {
             return
           }
-          logsRef.current = [...logsRef.current, entry]
+          logsRef.current = [...logsRef.current, redactConnectionLogEntry(entry)]
           setLogs(logsRef.current)
         }
       }
@@ -173,12 +178,15 @@ export default function PairScanScreen() {
       if (!mountedRef.current || !attemptIsCurrent) {
         return
       }
-      console.warn('[pair] connect failed', err)
+      const failureMessage = redactConnectionLogText(
+        formatUnknownErrorMessage(err, 'Unknown error')
+      )
+      console.warn('[pair] connect failed')
       setStatus('error')
       setErrorMessage(
         timedOut
           ? `Couldn't connect within ${PAIRING_OVERALL_TIMEOUT_MS / 1000}s — see log below for where it stalled`
-          : `Pairing failed: ${err instanceof Error ? err.message : String(err)}`
+          : `Pairing failed: ${failureMessage}`
       )
       processingRef.current = false
     }
@@ -218,7 +226,12 @@ export default function PairScanScreen() {
     const canAskAgain = permission.canAskAgain !== false
     return (
       <View ref={setPairScanRootRef} style={[styles.container, containerPadding]}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
         <View style={styles.centered}>
@@ -261,7 +274,12 @@ export default function PairScanScreen() {
 
   return (
     <View ref={setPairScanRootRef} style={[styles.container, containerPadding]}>
-      <Pressable style={styles.backButton} onPress={() => router.back()}>
+      <Pressable
+        style={styles.backButton}
+        onPress={() => router.back()}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+      >
         <ChevronLeft size={22} color={colors.textSecondary} />
       </Pressable>
 

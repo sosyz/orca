@@ -259,4 +259,21 @@ describe('HostProtocolGate', () => {
     renderer = await renderGate()
     expect(renderedText(renderer)).toContain('HostContent')
   })
+
+  it('blocks a legacy host that does not implement the status probe', async () => {
+    hostClient.current = {
+      client: {
+        sendRequest: vi.fn().mockResolvedValue({
+          ok: false,
+          error: { code: 'method_not_found', message: 'Unknown method: status.get' }
+        })
+      } as unknown as RpcClient,
+      state: 'connected'
+    }
+
+    renderer = await renderGate()
+
+    expect(renderedText(renderer)).toContain('Update Orca on your computer')
+    expect(renderedText(renderer)).not.toContain('HostContent')
+  })
 })

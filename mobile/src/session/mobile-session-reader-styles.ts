@@ -2,6 +2,8 @@ import { Platform, StyleSheet } from 'react-native'
 
 import { colors, spacing, radii, typography } from '../theme/mobile-theme'
 
+export const MOBILE_SESSION_DIFF_GUTTER_WIDTH = 42
+
 export const mobileSessionReaderStyles = StyleSheet.create({
   markdownTextInput: {
     flex: 1,
@@ -113,7 +115,7 @@ export const mobileSessionReaderStyles = StyleSheet.create({
     borderLeftColor: colors.gitDecorationDeleted
   },
   diffGutter: {
-    width: 42,
+    width: MOBILE_SESSION_DIFF_GUTTER_WIDTH,
     paddingRight: spacing.sm,
     textAlign: 'right',
     color: colors.textMuted,

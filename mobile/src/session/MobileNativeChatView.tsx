@@ -9,7 +9,7 @@ import {
   View
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { ArrowDown, ChevronsDownUp, ChevronsUpDown, Square } from 'lucide-react-native'
 import type { AskAnswerSelection, AskPrompt } from '../../../src/shared/native-chat-ask'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
@@ -32,6 +32,7 @@ import type { MobileChatPermission } from './mobile-native-chat-permission'
 import { MobileNativeChatQuestion } from './MobileNativeChatQuestion'
 import { mobileChatQuestionKey, type MobileChatQuestion } from './mobile-native-chat-question'
 import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
+import { PlatformSafeGestureDetector } from '../components/platform-safe-gesture-detector'
 
 const INPUT_LOCK_SETTLE_MS = 600
 
@@ -290,7 +291,7 @@ export function MobileNativeChatView({
         </View>
       ) : (
         <GestureHandlerRootView style={styles.listWrap}>
-          <GestureDetector gesture={pinchGesture}>
+          <PlatformSafeGestureDetector gesture={pinchGesture}>
             <FlatList
               ref={listRef}
               data={data}
@@ -346,7 +347,7 @@ export function MobileNativeChatView({
                 ) : null
               }
             />
-          </GestureDetector>
+          </PlatformSafeGestureDetector>
           {/* Jump-to-latest control. The scroll-to-top affordance now lives
               per-message (the up-arrow in each agent message's controls). */}
           {!atBottom ? (

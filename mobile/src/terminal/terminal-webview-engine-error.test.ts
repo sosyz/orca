@@ -10,8 +10,50 @@ const nativeWebViewMethods = vi.hoisted(() => ({
   reload: vi.fn<() => void>()
 }))
 
+const appStateMock = vi.hoisted(() => {
+  type Listener = (state: 'active' | 'background' | 'inactive') => void
+  let currentState: 'active' | 'background' | 'inactive' = 'active'
+  const listeners = new Set<Listener>()
+  const addEventListener = vi.fn((_eventName: 'change', listener: Listener) => {
+    listeners.add(listener)
+    return {
+      remove: vi.fn(() => {
+        listeners.delete(listener)
+      })
+    }
+  })
+  return {
+    addEventListener,
+    emit(nextState: 'active' | 'background' | 'inactive') {
+      currentState = nextState
+      for (const listener of Array.from(listeners)) {
+        listener(nextState)
+      }
+    },
+    get currentState() {
+      return currentState
+    },
+    listenerCount() {
+      return listeners.size
+    },
+    reset() {
+      currentState = 'active'
+      listeners.clear()
+      addEventListener.mockClear()
+    },
+    set currentState(nextState: 'active' | 'background' | 'inactive') {
+      currentState = nextState
+    }
+  }
+})
+
 vi.mock('react-native', () => ({
-  AppState: { currentState: 'active' },
+  AppState: {
+    addEventListener: appStateMock.addEventListener,
+    get currentState() {
+      return appStateMock.currentState
+    }
+  },
   Platform: { OS: 'ios' },
   Pressable: 'Pressable',
   StyleSheet: {
@@ -86,8 +128,36 @@ describe('TerminalWebView engine errors', () => {
       })
       activeRenderer = null
     }
+    appStateMock.reset()
     vi.clearAllMocks()
     vi.restoreAllMocks()
+  })
+
+  it.each([
+    ['onError', 'Terminal WebView load failed'],
+    ['onHttpError', 'Terminal WebView HTTP error'],
+    ['onRenderProcessGone', 'Terminal WebView render process ended']
+  ])('reports %s as a fatal native WebView error', (callbackName, context) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { onEngineError, renderer } = createTerminalWebViewRenderer()
+
+    act(() => {
+      renderer.root.findByType('WebView').props[callbackName]({
+        nativeEvent: {
+          code: 7,
+          description: 'native failure',
+          didCrash: true,
+          domain: 'WebView'
+        }
+      })
+    })
+
+    expect(onEngineError).toHaveBeenCalledWith(
+      `${context} - native failure - code 7 - WebView - renderer crashed`
+    )
+    expect(renderedText(renderer)).toContain('Terminal failed to load')
+    expect(renderedText(renderer)).toContain(context)
+    expect(renderedText(renderer)).toContain('native failure')
   })
 
   it('renders the reload overlay for fatal engine errors from the WebView', () => {
@@ -179,6 +249,236 @@ describe('TerminalWebView engine errors', () => {
     }
   })
 
+  it('recreates Harmony ArkWeb once when its RN bridge never attaches', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'harmony'
+    try {
+      const { onEngineError, renderer } = createTerminalWebViewRenderer()
+      const firstWebView = renderer.root.findByType('WebView')
+
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+
+      const recoveredWebView = renderer.root.findByType('WebView')
+      expect(recoveredWebView).not.toBe(firstWebView)
+      expect(nativeWebViewMethods.reload).not.toHaveBeenCalled()
+      expect(onEngineError).not.toHaveBeenCalled()
+
+      act(() => {
+        recoveredWebView.props.onLoadStart()
+      })
+      postWebViewMessage(renderer, { bridgeId: 'recovered-document', type: 'bridge-ready' })
+      postWebViewMessage(renderer, { type: 'web-ready' })
+      act(() => {
+        vi.advanceTimersByTime(60000)
+      })
+      expect(onEngineError).not.toHaveBeenCalled()
+    } finally {
+      mutablePlatform.OS = 'ios'
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not spend the Harmony bridge recovery attempt while backgrounded', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'harmony'
+    appStateMock.currentState = 'background'
+    try {
+      const { renderer } = createTerminalWebViewRenderer()
+      const backgroundWebView = renderer.root.findByType('WebView')
+
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(renderer.root.findByType('WebView')).toBe(backgroundWebView)
+
+      act(() => {
+        appStateMock.emit('active')
+      })
+      act(() => {
+        vi.advanceTimersByTime(4999)
+      })
+      expect(renderer.root.findByType('WebView')).toBe(backgroundWebView)
+
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(renderer.root.findByType('WebView')).not.toBe(backgroundWebView)
+      expect(nativeWebViewMethods.reload).not.toHaveBeenCalled()
+    } finally {
+      mutablePlatform.OS = 'ios'
+      vi.useRealTimers()
+    }
+  })
+
+  it('checks AppState again before spending the Harmony bridge recovery attempt', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'harmony'
+    try {
+      const { renderer } = createTerminalWebViewRenderer()
+      const firstWebView = renderer.root.findByType('WebView')
+
+      act(() => {
+        appStateMock.emit('background')
+        vi.advanceTimersByTime(5000)
+      })
+      expect(renderer.root.findByType('WebView')).toBe(firstWebView)
+
+      act(() => {
+        appStateMock.emit('active')
+      })
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(renderer.root.findByType('WebView')).not.toBe(firstWebView)
+    } finally {
+      mutablePlatform.OS = 'ios'
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the Harmony bridge recovery timer on unmount', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'harmony'
+    try {
+      const { renderer } = createTerminalWebViewRenderer()
+      expect(appStateMock.listenerCount()).toBe(1)
+
+      act(() => {
+        renderer.unmount()
+      })
+      activeRenderer = null
+      expect(appStateMock.listenerCount()).toBe(0)
+
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(nativeWebViewMethods.reload).not.toHaveBeenCalled()
+    } finally {
+      mutablePlatform.OS = 'ios'
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not use the Harmony bridge remount timer on iOS or Android', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mutablePlatform = Platform as { OS: string }
+    try {
+      for (const platform of ['ios', 'android']) {
+        mutablePlatform.OS = platform
+        const { renderer } = createTerminalWebViewRenderer()
+        const webView = renderer.root.findByType('WebView')
+
+        act(() => {
+          vi.advanceTimersByTime(5000)
+        })
+        expect(renderer.root.findByType('WebView')).toBe(webView)
+        expect(nativeWebViewMethods.reload).not.toHaveBeenCalled()
+
+        act(() => {
+          renderer.unmount()
+        })
+        activeRenderer = null
+      }
+    } finally {
+      mutablePlatform.OS = 'ios'
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets a manual Harmony reload reset the bounded bridge recovery attempt', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'harmony'
+    try {
+      const { renderer } = createTerminalWebViewRenderer()
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+      const autoRecoveredWebView = renderer.root.findByType('WebView')
+
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(renderer.root.findByType('WebView')).toBe(autoRecoveredWebView)
+
+      postWebViewMessage(renderer, { fatal: true, message: 'bridge missing', type: 'error' })
+      act(() => {
+        renderer.root.findByType('Pressable').props.onPress()
+      })
+      const manualReloadWebView = renderer.root.findByType('WebView')
+      expect(manualReloadWebView).not.toBe(autoRecoveredWebView)
+
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(renderer.root.findByType('WebView')).not.toBe(manualReloadWebView)
+    } finally {
+      mutablePlatform.OS = 'ios'
+      vi.useRealTimers()
+    }
+  })
+
+  it('acknowledges a Harmony bridge before accepting web readiness', () => {
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'harmony'
+    try {
+      const onWebReady = vi.fn()
+      const { renderer } = createTerminalWebViewRenderer(vi.fn(), { onWebReady })
+      nativeWebViewMethods.postMessage.mockClear()
+
+      postWebViewMessage(renderer, { bridgeId: 'current-document', type: 'bridge-ready' })
+      expect(postedCommands()).toEqual([
+        expect.objectContaining({ bridgeId: 'current-document', type: 'bridge-ack' })
+      ])
+
+      postWebViewMessage(renderer, { type: 'web-ready' })
+      postWebViewMessage(renderer, { type: 'web-ready' })
+      expect(onWebReady).toHaveBeenCalledTimes(1)
+    } finally {
+      mutablePlatform.OS = 'ios'
+    }
+  })
+
+  it('defers hidden-pane watchdogs without an eager activation reload', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const onEngineError = vi.fn()
+      const { renderer } = createTerminalWebViewRenderer(onEngineError, { active: false })
+
+      act(() => {
+        vi.advanceTimersByTime(60000)
+      })
+      expect(onEngineError).not.toHaveBeenCalled()
+      expect(nativeWebViewMethods.reload).not.toHaveBeenCalled()
+
+      act(() => {
+        renderer.update(createElement(TerminalWebView, { active: true, onEngineError }))
+      })
+      expect(nativeWebViewMethods.reload).not.toHaveBeenCalled()
+
+      postWebViewMessage(renderer, { type: 'web-ready' })
+      act(() => {
+        vi.advanceTimersByTime(60000)
+      })
+      expect(onEngineError).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('queues iOS foreground traffic until the current document answers its ping', () => {
     const terminalRef = createRef<TerminalWebViewHandle>()
     const onWebReady = vi.fn()
@@ -211,17 +511,36 @@ describe('TerminalWebView engine errors', () => {
 
   it('keeps Android foreground traffic on the existing ready document', () => {
     const terminalRef = createRef<TerminalWebViewHandle>()
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'android'
     const { renderer } = createTerminalWebViewRenderer(vi.fn(), { ref: terminalRef })
     postWebViewMessage(renderer, { type: 'web-ready' })
     nativeWebViewMethods.postMessage.mockClear()
-    const mutablePlatform = Platform as { OS: string }
-    mutablePlatform.OS = 'android'
     try {
       act(() => {
         terminalRef.current?.prepareForForegroundRecovery()
         terminalRef.current?.write('android output')
       })
       expect(postedCommands().map((command) => command.type)).toEqual(['write'])
+    } finally {
+      mutablePlatform.OS = 'ios'
+    }
+  })
+
+  it('keeps Harmony terminal initialization on the DOM renderer', () => {
+    const terminalRef = createRef<TerminalWebViewHandle>()
+    const mutablePlatform = Platform as { OS: string }
+    mutablePlatform.OS = 'harmony'
+    const { renderer } = createTerminalWebViewRenderer(vi.fn(), { ref: terminalRef })
+    postWebViewMessage(renderer, { type: 'web-ready' })
+    nativeWebViewMethods.postMessage.mockClear()
+    try {
+      act(() => {
+        terminalRef.current?.init(80, 24, 'prompt')
+      })
+      expect(postedCommands()).toEqual([
+        expect.objectContaining({ type: 'init', enableWebgl: false })
+      ])
     } finally {
       mutablePlatform.OS = 'ios'
     }

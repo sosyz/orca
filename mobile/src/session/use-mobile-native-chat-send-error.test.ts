@@ -1,6 +1,11 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  clearMobileNativeChatRuntimeStoreForTests,
+  ensureMobileNativeChatRuntimeScope,
+  recordMobileNativeChatSendError
+} from './mobile-native-chat-runtime-store'
 import { useMobileNativeChatSendError } from './use-mobile-native-chat-send-error'
 
 type HookApi = ReturnType<typeof useMobileNativeChatSendError>
@@ -41,11 +46,13 @@ describe('useMobileNativeChatSendError', () => {
     apiRef.current = null
     showToast.mockClear()
     vi.useFakeTimers()
+    clearMobileNativeChatRuntimeStoreForTests()
   })
 
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
+    clearMobileNativeChatRuntimeStoreForTests()
     vi.useRealTimers()
   })
 
@@ -145,7 +152,25 @@ describe('useMobileNativeChatSendError', () => {
     expect(api().message).toBe('b')
   })
 
-  it('toasts a failure that resolves after the route unmounted', async () => {
+  it('starts display timing for equal local error ids when switching scopes', async () => {
+    await render('terminal-1')
+    await act(async () => api().show('a'))
+    expect(api().message).toBe('a')
+
+    const scopeB = ensureMobileNativeChatRuntimeScope('terminal-2')
+    recordMobileNativeChatSendError({ scopeKey: 'terminal-2', generation: scopeB.generation }, 'b')
+    await act(async () => {
+      renderer?.update(createElement(Harness, { scopeKey: 'terminal-2' }))
+    })
+    expect(api().message).toBe('b')
+
+    await act(async () => {
+      vi.advanceTimersByTime(4000)
+    })
+    expect(api().message).toBeNull()
+  })
+
+  it('shows a failure on remount when it resolves after the route unmounted', async () => {
     await render()
     const showWhileMounted = api().show
 
@@ -155,7 +180,9 @@ describe('useMobileNativeChatSendError', () => {
     // stuck true — the failure would target a banner that no longer exists.
     await act(async () => showWhileMounted('Delivery unconfirmed'))
 
-    expect(showToast).toHaveBeenCalledWith('Delivery unconfirmed', 1600)
+    expect(showToast).not.toHaveBeenCalled()
+    await render()
+    expect(api().message).toBe('Delivery unconfirmed')
   })
 
   it('does not fire the hold timer after unmount', async () => {

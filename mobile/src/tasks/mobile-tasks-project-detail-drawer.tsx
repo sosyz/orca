@@ -4,7 +4,6 @@ import {
   View,
   Text,
   Pressable,
-  Linking,
   ExternalLink,
   colors,
   Copy,
@@ -62,7 +61,7 @@ export function renderMobileTasksProjectMissingRepoDrawer(model: ConnectionPrese
                 style={styles.actionRow}
                 onPress={() => {
                   if (projectRepoNotInOrca.url) {
-                    void Linking.openURL(projectRepoNotInOrca.url)
+                    void model.openExternalTaskUrl(projectRepoNotInOrca.url)
                   }
                 }}
               >
@@ -261,7 +260,7 @@ export function renderMobileTasksProjectDetailDrawer(model: ConnectionPresentati
                   style={styles.actionRow}
                   onPress={() => {
                     if (projectRowItem.content.url) {
-                      void Linking.openURL(projectRowItem.content.url)
+                      void model.openExternalTaskUrl(projectRowItem.content.url)
                     }
                   }}
                 >

@@ -6,11 +6,12 @@ import {
   StyleSheet,
   Pressable,
   Switch,
-  type AppStateStatus
+  Platform,
+  type AppStateStatus,
+  type ScrollView
 } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import { ChevronRight, X } from 'lucide-react-native'
-import type Animated from 'react-native-reanimated'
 import type { AnimatedRef, SharedValue } from 'react-native-reanimated'
 import { CustomKeyModal, loadCustomKeys, saveCustomKeys, type CustomKey } from './CustomKeyModal'
 import { DragReorderList } from './DragReorderList'
@@ -60,7 +61,7 @@ function ShortcutBarRow({
 }
 
 type Props = {
-  scrollRef: AnimatedRef<Animated.ScrollView>
+  scrollRef: AnimatedRef<ScrollView>
   scrollOffsetY: SharedValue<number>
   scrollContentHeight: SharedValue<number>
   onDragActiveChange: (active: boolean) => void
@@ -219,23 +220,27 @@ export function TerminalShortcutSettings({
       return key ? [key] : []
     })
   }, [shortcutLayout.orderedBuiltInIds])
+  const dragReorderScrollProps = {
+    rowHeight: REORDER_ROW_HEIGHT,
+    scrollRef,
+    scrollOffsetY,
+    scrollContentHeight,
+    onDragActiveChange
+  }
 
   return (
     <>
       <Text style={[styles.groupHeading, styles.groupTopGap]}>SHORTCUT BAR</Text>
       <Text style={styles.groupDescription}>
-        Toggle keys to show or hide them, and hold the grip to drag a key into the order you want on
-        the terminal shortcut bar.
+        Toggle keys to show or hide them, and{' '}
+        {(Platform.OS as string) === 'harmony' ? 'use up/down controls' : 'drag the grip'} to set
+        their order.
       </Text>
       <View style={[styles.section, styles.sectionTopGap]}>
         <DragReorderList
+          {...dragReorderScrollProps}
           items={orderedAccessoryKeys}
           itemKey={(shortcutKey) => shortcutKey.id}
-          rowHeight={REORDER_ROW_HEIGHT}
-          scrollRef={scrollRef}
-          scrollOffsetY={scrollOffsetY}
-          scrollContentHeight={scrollContentHeight}
-          onDragActiveChange={onDragActiveChange}
           onReorder={reorderBuiltInKeys}
           renderRow={(shortcutKey) => (
             <ShortcutBarRow
@@ -269,13 +274,9 @@ export function TerminalShortcutSettings({
           </>
         ) : (
           <DragReorderList
+            {...dragReorderScrollProps}
             items={customKeys}
             itemKey={(key) => key.id}
-            rowHeight={REORDER_ROW_HEIGHT}
-            scrollRef={scrollRef}
-            scrollOffsetY={scrollOffsetY}
-            scrollContentHeight={scrollContentHeight}
-            onDragActiveChange={onDragActiveChange}
             onReorder={reorderCustomKeys}
             renderRow={(key) => (
               <View style={styles.reorderRowContent}>
@@ -363,8 +364,6 @@ const styles = StyleSheet.create({
   rowPressed: {
     backgroundColor: colors.bgRaised
   },
-  // Why: rows inside DragReorderList get a fixed height and a trailing grip
-  // handle from the list itself, so content only pads on the left.
   reorderRowContent: {
     flex: 1,
     height: '100%',

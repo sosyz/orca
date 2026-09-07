@@ -29,7 +29,14 @@ export type BrowserFrameCacheEntry = {
 export const MIN_ZOOM = 1
 export const MAX_ZOOM = 3.5
 const BROWSER_FRAME_CACHE_LIMIT = 4
+const BROWSER_FRAME_CACHE_KEY_KIND = 'mobile-browser-frame'
+const BROWSER_FRAME_BOUNDARY_KEY_KIND = 'mobile-browser-pane'
 const browserFrameCache = new Map<string, BrowserFrameCacheEntry>()
+
+type BrowserFrameCacheScope = {
+  pairedHostId: string
+  worktreeId: string
+}
 
 export function buttonColor(enabled: boolean): string {
   return enabled ? colors.textSecondary : colors.textMuted
@@ -40,17 +47,43 @@ export function createBrowserFrameDataUri(frame: BrowserScreencastFrame): string
 }
 
 export function makeBrowserFrameCacheKey(
+  pairedHostId: string,
   worktreeId: string,
   browserPageId: string | null,
   viewMode: MobileBrowserViewMode
 ): string | null {
-  return browserPageId ? `${worktreeId}:${browserPageId}:${viewMode}` : null
+  return browserPageId
+    ? JSON.stringify([
+        BROWSER_FRAME_CACHE_KEY_KIND,
+        pairedHostId,
+        worktreeId,
+        browserPageId,
+        viewMode
+      ])
+    : null
 }
 
-export function clearCachedBrowserFramesForWorktree(worktreeId: string): void {
-  const prefix = `${worktreeId}:`
+export function makeMobileBrowserPaneBoundaryKey(
+  pairedHostId: string,
+  worktreeId: string,
+  browserPageId: string | null,
+  tabId: string
+): string {
+  return JSON.stringify([
+    BROWSER_FRAME_BOUNDARY_KEY_KIND,
+    pairedHostId,
+    worktreeId,
+    browserPageId ?? tabId
+  ])
+}
+
+export function clearCachedBrowserFramesForWorktree(
+  pairedHostId: string,
+  worktreeId: string
+): void {
   for (const key of browserFrameCache.keys()) {
-    if (key.startsWith(prefix)) {
+    const scope = parseBrowserFrameCacheScope(key)
+    if (scope?.pairedHostId === pairedHostId && scope.worktreeId === worktreeId) {
       browserFrameCache.delete(key)
     }
   }
@@ -86,6 +119,26 @@ export function cacheBrowserFrame(cacheKey: string | null, entry: BrowserFrameCa
     }
     browserFrameCache.delete(oldestKey)
   }
+}
+
+function parseBrowserFrameCacheScope(cacheKey: string): BrowserFrameCacheScope | null {
+  try {
+    const parsed = JSON.parse(cacheKey) as unknown
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 5 &&
+      parsed[0] === BROWSER_FRAME_CACHE_KEY_KIND &&
+      typeof parsed[1] === 'string' &&
+      typeof parsed[2] === 'string' &&
+      typeof parsed[3] === 'string' &&
+      (parsed[4] === 'web' || parsed[4] === 'mobile')
+    ) {
+      return { pairedHostId: parsed[1], worktreeId: parsed[2] }
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 export function updateBrowserLayerVisibility(

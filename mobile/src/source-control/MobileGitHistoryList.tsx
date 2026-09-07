@@ -1,8 +1,8 @@
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
-import type { ConnectionState, RpcSuccess } from '../transport/types'
+import type { ConnectionState, RpcResponse, RpcSuccess } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
 import { useForceReconnect } from '../transport/client-context'
 import {
@@ -12,6 +12,22 @@ import {
 } from './mobile-git-history'
 import { resolveMobileHistoryScreenView } from './mobile-history-screen-state'
 import type { GitBranchChangeEntry } from '../../../src/shared/git-diff-compare-types'
+
+type CommitFilesState =
+  | { kind: 'loading'; entries?: GitBranchChangeEntry[] }
+  | { kind: 'loaded'; entries: GitBranchChangeEntry[] }
+  | { kind: 'error'; message: string; entries?: GitBranchChangeEntry[] }
+
+function commitCompareErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Failed to load file changes'
+}
+
+function commitCompareEntries(response: RpcResponse): GitBranchChangeEntry[] {
+  if (!response.ok) {
+    throw new Error(response.error?.message || 'Failed to load file changes')
+  }
+  return ((response as RpcSuccess).result as { entries: GitBranchChangeEntry[] }).entries
+}
 
 type Props = {
   client: RpcClient | null
@@ -40,8 +56,12 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
   const [rows, setRows] = useState<MobileCommitRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [reloadNonce, setReloadNonce] = useState(0)
+  const [filesReloadNonce, setFilesReloadNonce] = useState(0)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [filesById, setFilesById] = useState<Record<string, GitBranchChangeEntry[] | 'loading'>>({})
+  const [filesById, setFilesById] = useState<Record<string, CommitFilesState>>({})
+  const scopeKey = `${hostId}\0${worktreeId}`
+  const liveScopeKeyRef = useRef(scopeKey)
+  liveScopeKeyRef.current = scopeKey
 
   // Host or worktree identity change must wipe history immediately — even while
   // disconnected — so a kept-mounted hub segment never shows another tree's commits.
@@ -59,17 +79,18 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
       // resolveMobileHistoryScreenView keeps them visible (STA-1511).
       return
     }
+    const requestScopeKey = scopeKey
     // Why (F10): clear only the error (it wins render precedence, so a stale one would outlive a
     // successful retry) — the loaded rows stay up until fresh ones land instead of flashing empty.
     setError(null)
     void (async () => {
       try {
         const result = await fetchMobileGitHistory(client, worktreeId)
-        if (active) {
+        if (active && requestScopeKey === liveScopeKeyRef.current) {
           setRows(mapMobileCommitRows(result, Date.now()))
         }
       } catch (err) {
-        if (active) {
+        if (active && requestScopeKey === liveScopeKeyRef.current) {
           setError(err instanceof Error ? err.message : 'Failed to load history')
         }
       }
@@ -77,7 +98,7 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     return () => {
       active = false
     }
-  }, [client, connState, reloadNonce, refreshNonce, worktreeId])
+  }, [client, connState, reloadNonce, refreshNonce, scopeKey, worktreeId])
 
   const retry = useCallback(() => {
     setError(null)
@@ -96,6 +117,21 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     setExpanded((current) => (current === row.id ? null : row.id))
   }, [])
 
+  const retryCommitFiles = useCallback(
+    (commitId: string) => {
+      setFilesById((prev) => ({
+        ...prev,
+        [commitId]: { kind: 'loading', entries: prev[commitId]?.entries }
+      }))
+      if (connState !== 'connected' && hostId) {
+        void forceReconnect(hostId)
+        return
+      }
+      setFilesReloadNonce((n) => n + 1)
+    },
+    [connState, forceReconnect, hostId]
+  )
+
   // Why (F10): the expanded commit's files load here, not in the tap handler, so a row expanded
   // during an outage refetches on reconnect instead of caching the outage's answer forever.
   useEffect(() => {
@@ -103,36 +139,40 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
       return
     }
     const commitId = expanded
+    const requestScopeKey = scopeKey
     let stale = false
-    setFilesById((prev) => (prev[commitId] ? prev : { ...prev, [commitId]: 'loading' }))
+    setFilesById((prev) => (prev[commitId] ? prev : { ...prev, [commitId]: { kind: 'loading' } }))
     void client
       .sendRequest('git.commitCompare', { worktree: `id:${worktreeId}`, commitId })
       .then((response) => {
-        const entries = response.ok
-          ? ((response as RpcSuccess).result as { entries: GitBranchChangeEntry[] }).entries
-          : []
-        if (!stale) {
-          setFilesById((prev) => ({ ...prev, [commitId]: entries }))
+        const entries = commitCompareEntries(response)
+        if (!stale && requestScopeKey === liveScopeKeyRef.current) {
+          setFilesById((prev) => ({ ...prev, [commitId]: { kind: 'loaded', entries } }))
         }
       })
-      .catch(() => {
-        // Keep an already-loaded list; a first load that fails resolves to "No file changes".
-        if (!stale) {
-          setFilesById((prev) =>
-            prev[commitId] === 'loading' ? { ...prev, [commitId]: [] } : prev
-          )
+      .catch((err) => {
+        if (!stale && requestScopeKey === liveScopeKeyRef.current) {
+          setFilesById((prev) => ({
+            ...prev,
+            [commitId]: {
+              kind: 'error',
+              message: commitCompareErrorMessage(err),
+              entries: prev[commitId]?.entries
+            }
+          }))
         }
       })
     return () => {
       stale = true
     }
-  }, [client, connState, expanded, worktreeId])
+  }, [client, connState, expanded, filesReloadNonce, scopeKey, worktreeId])
 
   const connected = client !== null && connState === 'connected'
 
   const renderCommit = useCallback(
     ({ item }: { item: MobileCommitRow }) => {
       const files = filesById[item.id]
+      const entries = files?.entries ?? []
       const isOpen = expanded === item.id
       return (
         <View style={styles.commit}>
@@ -156,34 +196,55 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
           </Pressable>
           {isOpen ? (
             <View style={styles.files}>
-              {files === 'loading' || files === undefined ? (
+              {files === undefined || (files.kind === 'loading' && entries.length === 0) ? (
                 // No request can complete while disconnected, so say so instead of spinning forever.
                 connected ? (
                   <ActivityIndicator size="small" color={colors.textSecondary} />
                 ) : (
                   <Text style={styles.empty}>Waiting for desktop...</Text>
                 )
-              ) : files.length === 0 ? (
+              ) : null}
+              {files?.kind === 'loading' && entries.length > 0 ? (
+                connected ? (
+                  <ActivityIndicator size="small" color={colors.textSecondary} />
+                ) : (
+                  <Text style={styles.empty}>Waiting for desktop...</Text>
+                )
+              ) : null}
+              {files?.kind === 'error' ? (
+                <View style={styles.fileErrorBlock}>
+                  <Text style={styles.fileError}>{files.message}</Text>
+                  <Pressable
+                    style={styles.fileRetryButton}
+                    onPress={() => retryCommitFiles(item.id)}
+                    accessibilityLabel="Retry file changes"
+                  >
+                    <Text style={styles.fileRetryText}>Retry</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              {files?.kind === 'loaded' && entries.length === 0 ? (
                 <Text style={styles.empty}>No file changes</Text>
-              ) : (
-                files.map((file) => (
-                  <View key={file.path} style={styles.fileRow}>
-                    <Text style={styles.filePath} numberOfLines={1}>
-                      {file.path}
-                    </Text>
-                    <Text style={styles.fileStat}>
-                      {file.added ? <Text style={styles.add}>+{file.added} </Text> : null}
-                      {file.removed ? <Text style={styles.del}>-{file.removed}</Text> : null}
-                    </Text>
-                  </View>
-                ))
-              )}
+              ) : null}
+              {entries.length > 0
+                ? entries.map((file) => (
+                    <View key={file.path} style={styles.fileRow}>
+                      <Text style={styles.filePath} numberOfLines={1}>
+                        {file.path}
+                      </Text>
+                      <Text style={styles.fileStat}>
+                        {file.added ? <Text style={styles.add}>+{file.added} </Text> : null}
+                        {file.removed ? <Text style={styles.del}>-{file.removed}</Text> : null}
+                      </Text>
+                    </View>
+                  ))
+                : null}
             </View>
           ) : null}
         </View>
       )
     },
-    [connected, expanded, filesById, toggleCommit]
+    [connected, expanded, filesById, retryCommitFiles, toggleCommit]
   )
 
   const view = resolveMobileHistoryScreenView({ connected, rows, error })
@@ -263,5 +324,15 @@ const styles = StyleSheet.create({
   fileStat: { fontSize: typography.metaSize, fontFamily: typography.monoFamily },
   add: { color: colors.gitDecorationAdded },
   del: { color: colors.gitDecorationDeleted },
-  empty: { color: colors.textMuted, fontSize: typography.metaSize }
+  empty: { color: colors.textMuted, fontSize: typography.metaSize },
+  fileErrorBlock: { gap: spacing.xs },
+  fileError: { color: colors.statusRed, fontSize: typography.metaSize },
+  fileRetryButton: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.button,
+    backgroundColor: colors.bgRaised
+  },
+  fileRetryText: { color: colors.textPrimary, fontSize: typography.metaSize, fontWeight: '600' }
 })

@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const removeHostMock = vi.hoisted(() => vi.fn())
+const removeConnectionLogMock = vi.hoisted(() => vi.fn(async () => undefined))
 const asyncStorage = vi.hoisted(() => ({
   getItem: vi.fn(async () => null),
   setItem: vi.fn(async () => undefined),
@@ -16,17 +17,34 @@ vi.mock('./host-store', () => ({
   removeHost: (hostId: string) => removeHostMock(hostId)
 }))
 
+vi.mock('./persisted-connection-log-store', () => ({
+  removeConnectionLogForHost: (hostId: string) => removeConnectionLogMock(hostId)
+}))
+
 import { removeHostAndCloseClient } from './host-removal-lifecycle'
 import {
   getHostNotificationSession,
   resetHostNotificationSessionsForTests
 } from '../notifications/notification-reconnect-catchup'
+import {
+  clearMobileNativeChatRuntimeStoreForTests,
+  ensureMobileNativeChatRuntimeScope,
+  readMobileNativeChatDraftText,
+  updateMobileNativeChatDraftText
+} from '../session/mobile-native-chat-runtime-store'
 
 describe('host removal lifecycle', () => {
   beforeEach(() => {
     removeHostMock.mockReset()
+    removeConnectionLogMock.mockReset()
+    removeConnectionLogMock.mockResolvedValue(undefined)
     asyncStorage.removeItem.mockClear()
     resetHostNotificationSessionsForTests()
+    clearMobileNativeChatRuntimeStoreForTests()
+  })
+
+  afterEach(() => {
+    clearMobileNativeChatRuntimeStoreForTests()
   })
 
   it('closes the client only after metadata removal commits', async () => {
@@ -44,6 +62,44 @@ describe('host removal lifecycle', () => {
     await removal
 
     expect(closeHostClient).toHaveBeenCalledWith('host-1')
+  })
+
+  it('clears the connection log after metadata removal and client closure', async () => {
+    removeHostMock.mockResolvedValue(undefined)
+    const closeHostClient = vi.fn()
+
+    await removeHostAndCloseClient('host-1', closeHostClient)
+
+    expect(removeConnectionLogMock).toHaveBeenCalledWith('host-1')
+    expect(closeHostClient).toHaveBeenCalledWith('host-1')
+    expect(closeHostClient.mock.invocationCallOrder[0]).toBeLessThan(
+      removeConnectionLogMock.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('clears transient native-chat state after metadata removal commits', async () => {
+    removeHostMock.mockResolvedValue(undefined)
+    const scopeKey = 'host-1\0worktree\0tab'
+    const scope = ensureMobileNativeChatRuntimeScope(scopeKey)
+    updateMobileNativeChatDraftText({ scopeKey, generation: scope.generation }, 'draft')
+
+    await removeHostAndCloseClient('host-1', vi.fn())
+
+    expect(readMobileNativeChatDraftText(scopeKey)).toBe('')
+  })
+
+  it('still retires notification state when connection-log cleanup fails', async () => {
+    removeHostMock.mockResolvedValue(undefined)
+    removeConnectionLogMock.mockRejectedValue(new Error('log storage unavailable'))
+    const closeHostClient = vi.fn()
+    const session = getHostNotificationSession('host-1')
+    session.lastDeliveredSeq = 42
+
+    await expect(removeHostAndCloseClient('host-1', closeHostClient)).rejects.toThrow(
+      'log storage unavailable'
+    )
+    expect(closeHostClient).toHaveBeenCalledWith('host-1')
+    expect(getHostNotificationSession('host-1')).not.toBe(session)
   })
 
   it('keeps the client open when metadata removal fails', async () => {

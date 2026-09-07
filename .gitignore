@@ -32,6 +32,7 @@ native/**/.build/
 # pnpm
 .pnpm-store/
 package-lock.json
+!mobile/harmony/package-lock.json
 
 # Environment
 .env

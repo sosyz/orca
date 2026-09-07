@@ -317,11 +317,21 @@ function MobileNativeChatMessageImpl({
       return
     }
     void Clipboard.setStringAsync(text)
-    setCopied(true)
-    if (copyTimer.current) {
-      clearTimeout(copyTimer.current)
-    }
-    copyTimer.current = setTimeout(() => setCopied(false), 700)
+      .then(() => {
+        setCopied(true)
+        if (copyTimer.current) {
+          clearTimeout(copyTimer.current)
+        }
+        copyTimer.current = setTimeout(() => setCopied(false), 700)
+      })
+      .catch((error) => {
+        const err = error as { message?: string; name?: string }
+        // eslint-disable-next-line no-console
+        console.warn('[mobile-clip] native chat copy failed', {
+          message: err.message,
+          name: err.name
+        })
+      })
   }
 
   // Copy + scroll-to-top, shown inline with the first tool call (or after the

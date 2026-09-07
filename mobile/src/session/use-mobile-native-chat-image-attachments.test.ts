@@ -4,6 +4,7 @@ import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-in
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcResponse, RpcSuccess } from '../transport/types'
+import { clearMobileNativeChatRuntimeStoreForTests } from './mobile-native-chat-runtime-store'
 import { resetMobileNativeChatStaleInputForTests } from './mobile-native-chat-stale-input'
 import { resetMobileNativeChatTerminalWritesForTests } from './mobile-native-chat-terminal-write-lock'
 import { useMobileNativeChatImageAttachments } from './use-mobile-native-chat-image-attachments'
@@ -92,11 +93,13 @@ describe('useMobileNativeChatImageAttachments', () => {
     // screen), so they also outlive a test.
     resetMobileNativeChatStaleInputForTests()
     resetMobileNativeChatTerminalWritesForTests()
+    clearMobileNativeChatRuntimeStoreForTests()
   })
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
     hook = null
+    clearMobileNativeChatRuntimeStoreForTests()
   })
 
   function mount(args: HookArgs): void {

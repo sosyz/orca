@@ -10,7 +10,7 @@ import {
   Platform
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
+import { Gesture, GestureHandlerRootView } from 'react-native-gesture-handler'
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -28,6 +28,8 @@ import { BOTTOM_DRAWER_HIDE_DURATION_MS } from './bottom-drawer-constants'
 import { bottomDrawerStyles as styles } from './bottom-drawer-styles'
 import { useInsideBottomDrawerModalHost } from './bottom-drawer-modal-host'
 import { useResponsiveLayout } from '../layout/responsive-layout'
+import { ReanimatedScrollView } from './reanimated-scroll-view'
+import { PlatformSafeGestureDetector } from './platform-safe-gesture-detector'
 
 const DISMISS_THRESHOLD = 80
 const SPRING_CONFIG = { damping: 28, stiffness: 400 }
@@ -80,6 +82,7 @@ export function MountedBottomDrawer({
   // transforms below) is unchanged, so phone behavior stays identical.
   const { isWideLayout, modalMaxWidth } = useResponsiveLayout()
   const insideModalHost = useInsideBottomDrawerModalHost()
+  const drawerGesturesSupported = (Platform.OS as string) !== 'harmony'
   const fillHeight = fillAvailable
     ? resolveBottomDrawerFillHeight({
         screenHeight,
@@ -311,16 +314,26 @@ export function MountedBottomDrawer({
   // anchors to the scrolled content and clips the sheet. Show/hide is driven by
   // `progress` (animationType "none") so the reanimated exit animation runs before
   // the parent unmounts us.
-  const handle = (
-    <GestureDetector gesture={handlePanGesture}>
+  const handleContent = <View style={styles.handle} />
+  const handle = drawerGesturesSupported ? (
+    <PlatformSafeGestureDetector gesture={handlePanGesture}>
       <Animated.View
         style={styles.handleHitArea}
         accessibilityRole="button"
         accessibilityLabel="Dismiss drawer"
       >
-        <View style={styles.handle} />
+        {handleContent}
       </Animated.View>
-    </GestureDetector>
+    </PlatformSafeGestureDetector>
+  ) : (
+    <Pressable
+      style={styles.handleHitArea}
+      accessibilityRole="button"
+      accessibilityLabel="Dismiss drawer"
+      onPress={dismiss}
+    >
+      {handleContent}
+    </Pressable>
   )
 
   const body = !contentScrollable ? (
@@ -330,13 +343,13 @@ export function MountedBottomDrawer({
         {children}
       </View>
     </>
-  ) : dragContentToDismiss ? (
+  ) : dragContentToDismiss && drawerGesturesSupported ? (
     <>
       {handle}
-      <GestureDetector gesture={contentPanGesture}>
+      <PlatformSafeGestureDetector gesture={contentPanGesture}>
         <Animated.View collapsable={false}>
-          <GestureDetector gesture={scrollGesture}>
-            <Animated.ScrollView
+          <PlatformSafeGestureDetector gesture={scrollGesture}>
+            <ReanimatedScrollView
               bounces={false}
               keyboardShouldPersistTaps="handled"
               onScroll={scrollHandler}
@@ -344,10 +357,10 @@ export function MountedBottomDrawer({
               showsVerticalScrollIndicator={false}
             >
               {children}
-            </Animated.ScrollView>
-          </GestureDetector>
+            </ReanimatedScrollView>
+          </PlatformSafeGestureDetector>
         </Animated.View>
-      </GestureDetector>
+      </PlatformSafeGestureDetector>
     </>
   ) : (
     <>

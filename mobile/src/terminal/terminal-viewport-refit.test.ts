@@ -171,9 +171,9 @@ describe('terminal viewport refit', () => {
     )
   })
 
-  it('forces a refit on iOS foreground and connection recovery', () => {
+  it('forces a refit on iOS or Harmony foreground and connection recovery', () => {
     const foregroundEffect = hookSource.slice(
-      hookSource.indexOf("if (Platform.OS !== 'ios')"),
+      hookSource.indexOf('getTerminalWebViewPlatformPolicy(platform).foregroundRecovery'),
       hookSource.indexOf('const previousConnStateRef')
     )
     const reconnectEffect = hookSource.slice(
@@ -182,6 +182,7 @@ describe('terminal viewport refit', () => {
     )
 
     expect(foregroundEffect).toContain("AppState.addEventListener('change'")
+    expect(foregroundEffect).toContain("foregroundRecovery === 'none'")
     expect(foregroundEffect).toContain('viewportMeasuredRef.current = false')
     expect(foregroundEffect).toContain('scheduleForcedViewportRefit()')
     expect(reconnectEffect).toContain("connState !== 'connected'")

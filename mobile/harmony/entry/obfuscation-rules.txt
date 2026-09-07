@@ -1,0 +1,1 @@
+# Keep empty until release builds introduce reflection-sensitive ArkTS APIs.

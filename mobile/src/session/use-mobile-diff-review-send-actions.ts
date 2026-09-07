@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard'
 import type { DiffComment, MobileDiffReviewState } from '../../../src/shared/diff-comment-types'
 import type { ConnectionState } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
-import { triggerSuccess } from '../platform/haptics'
+import { triggerError, triggerSuccess } from '../platform/haptics'
 import { formatDiffComments, formatMobileDiffReviewPrompt } from './mobile-diff-comments'
 import { clearSentMobileDiffComments, markMobileDiffCommentsSent } from './mobile-diff-comment-edit'
 import {
@@ -42,9 +42,14 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
     if (screenState.kind !== 'ready' || screenState.comments.length === 0) {
       return
     }
-    await Clipboard.setStringAsync(formatDiffComments(screenState.comments))
-    triggerSuccess()
-    setActionError('Review notes copied')
+    try {
+      await Clipboard.setStringAsync(formatDiffComments(screenState.comments))
+      triggerSuccess()
+      setActionError('Review notes copied')
+    } catch (err) {
+      triggerError()
+      setActionError(err instanceof Error ? err.message : "Couldn't copy review notes")
+    }
   }, [screenState, setActionError])
 
   const clearSentNotes = useCallback(async () => {

@@ -10,7 +10,6 @@ import {
   ChevronLeft,
   ChevronRight,
   triggerMediumImpact,
-  Linking,
   TaskProviderLogo,
   GitBranch,
   getHostedReviewSignalTone,
@@ -167,7 +166,7 @@ export function renderMobileTasksProviderItemList(model: ConnectionPresentationM
             onPress={() => {
               triggerMediumImpact()
               if (item.provider === 'gitlabTodo') {
-                void Linking.openURL(item.source.targetUrl)
+                void model.openExternalTaskUrl(item.source.targetUrl)
                 return
               }
               setActionItem(item)

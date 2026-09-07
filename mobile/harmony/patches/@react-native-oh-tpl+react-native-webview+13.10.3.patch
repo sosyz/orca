@@ -1,0 +1,154 @@
+diff --git a/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/Magic.ets b/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/Magic.ets
+index f4fb1dd..bfc0a4a 100644
+--- a/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/Magic.ets
++++ b/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/Magic.ets
+@@ -36,6 +36,8 @@ export interface WebViewProps extends ViewRawProps {
+   height: number
+   newSource: WebViewNewSource
+   javaScriptEnabled: boolean
++  allowFileAccess: boolean
++  mixedContentMode: 'never' | 'always' | 'compatibility'
+   injectedJavaScript: string
+   messagingEnabled: boolean
+   showsHorizontalScrollIndicator: boolean
+diff --git a/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/RNCWebView.ets b/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/RNCWebView.ets
+index 4627b65..1e30261 100644
+--- a/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/RNCWebView.ets
++++ b/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/RNCWebView.ets
+@@ -57,7 +57,7 @@ export struct RNCWebView {
+   url: string | Resource = "";
+   controller: webview.WebviewController = new webview.WebviewController();
+   javaScriptEnable: boolean = true;
+-  allowFileAccess: boolean = true;
++  allowFileAccess: boolean = false;
+   forceDark: boolean = true;
+   minFontSize: number = EIGHT;
+   overScrollMode: OverScrollMode = OverScrollMode.NEVER;
+@@ -79,7 +79,7 @@ export struct RNCWebView {
+   @State webviewWidth: number = ZERO
+   @State webviewHeight: number = ZERO
+   @State isRefreshing: boolean = false
+-  @State mode: MixedMode = MixedMode.All;
++  @State mode: MixedMode = MixedMode.None;
+   private unregisterDescriptorChangesListener?: () => void = undefined
+   private cleanupCommandCallback?: () => void = undefined
+   private eventEmitter: RNC.RNCWebView.EventEmitter | undefined = undefined
+@@ -131,19 +131,26 @@ export struct RNCWebView {
+   aboutToDisappear() {
+     this.getUIContext().getFocusController().clearFocus()
+     this.cleanupCommandCallback?.()
++    this.cleanupCommandCallback = undefined
+     this.unregisterDescriptorChangesListener?.()
++    this.unregisterDescriptorChangesListener = undefined
+     this.cleanUpCallbacks.forEach(cb => cb())
++    this.cleanUpCallbacks = []
+     try {
+       if (this.hasIncognito()) {
+         this.webViewBaseOperate?.setIncognito()
+       }
+-      this.controller.deleteJavaScriptRegister(JAVASCRIPT_INTERFACE)
+-      this.controller.refresh()
+-      this.hasRegisterJavaScriptProxy = false
+-      this.webViewBaseOperate = null
++      if (this.controllerAttached && this.hasRegisterJavaScriptProxy) {
++        this.controller.deleteJavaScriptRegister(JAVASCRIPT_INTERFACE)
++      }
+     } catch (error) {
+       Logger.error(TAG, `[RNOH]Errorcode: ${error.code}, Message: ${error.message}`);
+     }
++    this.hasRegisterJavaScriptProxy = false
++    this.controllerAttached = false
++    this.messagingEnabled = false
++    this.eventEmitter = undefined
++    this.webViewBaseOperate = null
+   }
+ 
+   registerCommandCallback() {
+@@ -271,6 +278,9 @@ export struct RNCWebView {
+     this.webViewBaseOperate.setCustomUserAgent(this.descriptorWrapper.rawProps.userAgent,
+       this.descriptorWrapper.rawProps.applicationNameForUserAgent)
+     this.webViewBaseOperate.setFraudulentWebsiteWarningEnabled(this.descriptorWrapper.rawProps.fraudulentWebsiteWarningEnabled)
++    if (!this.hasRegisterJavaScriptProxy) {
++      this.registerPostMessage(false)
++    }
+     let baseUrl = this.source.baseUrl
+     let uri = this.source.uri
+     if (this.source.html != undefined && this.source.html != "") {
+@@ -280,9 +290,6 @@ export struct RNCWebView {
+     } else {
+       this.loadHtmlData()
+     }
+-    if (!this.hasRegisterJavaScriptProxy) {
+-      this.registerPostMessage()
+-    }
+   }
+ 
+   onPageBegin() {
+@@ -475,12 +482,24 @@ export struct RNCWebView {
+     }
+     if (this.controllerAttached) {
+       this.controller?.setScrollable(this.descriptorWrapper.rawProps.scrollEnabled)
++      if (!this.hasRegisterJavaScriptProxy) {
++        this.registerPostMessage()
++      }
+     }
+   }
+ 
+   private initVariable() {
+     this.descriptorWrapper = this.ctx.descriptorRegistry.getDescriptor<WebViewDescriptor>(this.tag)
+     this.javaScriptEnable = this.descriptorWrapper.rawProps.javaScriptEnabled;
++    this.allowFileAccess = this.descriptorWrapper.rawProps.allowFileAccess === true;
++    const mixedContentMode = this.descriptorWrapper.rawProps.mixedContentMode;
++    if (mixedContentMode === "always") {
++      this.mode = MixedMode.All;
++    } else if (mixedContentMode === "compatibility") {
++      this.mode = MixedMode.Compatible;
++    } else {
++      this.mode = MixedMode.None;
++    }
+     this.minFontSize =
+       this.descriptorWrapper.rawProps.minimumFontSize ? this.descriptorWrapper.rawProps.minimumFontSize : EIGHT;
+     this.cacheMode =
+@@ -527,7 +546,7 @@ export struct RNCWebView {
+     }
+   }
+ 
+-  private registerPostMessage() {
++  private registerPostMessage(reloadAfterRegistration: boolean = true) {
+     if (this.messagingEnabled == this.descriptorWrapper.rawProps.messagingEnabled) {
+       return;
+     }
+@@ -547,9 +566,11 @@ export struct RNCWebView {
+         }
+       };
+       this.controller.registerJavaScriptProxy(bridge, JAVASCRIPT_INTERFACE, ["postMessage"])
+-      this.source.uri ?
+-      this.controller.loadUrl(this.source.uri, this.headers) : this.controller.refresh()
+       this.hasRegisterJavaScriptProxy = true
++      if (reloadAfterRegistration) {
++        this.source.uri ?
++        this.controller.loadUrl(this.source.uri, this.headers) : this.controller.refresh()
++      }
+     }
+   }
+ }
+diff --git a/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/WebViewBaseOperate.ets b/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/WebViewBaseOperate.ets
+index 8e3d911..9d5185b 100644
+--- a/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/WebViewBaseOperate.ets
++++ b/node_modules/@react-native-oh-tpl/react-native-webview/harmony/rn_webview/src/main/ets/WebViewBaseOperate.ets
+@@ -427,7 +427,14 @@ export class BaseOperate {
+ 
+   onRenderExited(event: OnRenderExitedEvent) {
+     try {
+-
++      this.eventEmitter!.emit('contentProcessDidTerminate', {
++        url: "",
++        loading: false,
++        title: "",
++        canGoBack: false,
++        canGoForward: false,
++        lockIdentifier: this.lockIdentifier
++      })
+     } catch (error) {
+       Logger.error(TAG, `[RNOH] onRenderExited Errorcode: ${error.code}`);
+     }

@@ -1,7 +1,8 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { clearMobileNativeChatRuntimeStoreForTests } from './mobile-native-chat-runtime-store'
 import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
 
 type DraftState = ReturnType<typeof useMobileNativeChatDrafts>
@@ -23,10 +24,15 @@ describe('useMobileNativeChatDrafts launch draft', () => {
   let renderer: ReactTestRenderer | null = null
   let state: DraftState | null = null
 
+  beforeEach(() => {
+    clearMobileNativeChatRuntimeStoreForTests()
+  })
+
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
     state = null
+    clearMobileNativeChatRuntimeStoreForTests()
   })
 
   function Harness({
@@ -311,6 +317,47 @@ describe('useMobileNativeChatDrafts launch draft', () => {
     await act(async () =>
       renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: null }))
     )
+    expect(state?.composerText).toBe('')
+  })
+
+  it('does not seed again after the same route remounts with a cleared adopted prefill', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: 'issue link' }))
+    )
+    expect(state?.composerText).toBe('issue link')
+
+    act(() => state?.setComposerText(''))
+    act(() => renderer?.unmount())
+    renderer = null
+    await mount('a')
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: 'issue link' }))
+    )
+
+    expect(state?.composerText).toBe('')
+  })
+
+  it('keeps a declined seed declined across the same route remount', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [userTextMessage('m1', 'already sent')],
+          launchDraft: 'issue link'
+        })
+      )
+    )
+    expect(state?.composerText).toBe('')
+
+    act(() => renderer?.unmount())
+    renderer = null
+    await mount('a')
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: 'issue link' }))
+    )
+
     expect(state?.composerText).toBe('')
   })
 })

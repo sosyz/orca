@@ -28,14 +28,13 @@ function installGlobalStaleTagForegroundDrain(): void {
 
 export function useMobileDictationForegroundKeepAwake(
   keepAwakeOwner: MobileDictationKeepAwakeOwner,
-  activeIdRef: RefObject<string | null>
+  activeIdRef: RefObject<string | null>,
+  cancelDictation: () => Promise<void>
 ): void {
   useEffect(() => {
     installGlobalStaleTagForegroundDrain()
-    // Android keeps FLAG_KEEP_SCREEN_ON on the Activity window, so Activity
-    // recreation silently drops it mid-dictation; refresh on return to
-    // active. iOS re-applies natively on foreground.
-    if (Platform.OS !== 'android') {
+    // Android and Harmony keep the flag on a native window that can be recreated.
+    if (Platform.OS !== 'android' && (Platform.OS as string) !== 'harmony') {
       return
     }
     // A retry from an earlier foreground event can outlive a newer reacquire and
@@ -57,6 +56,11 @@ export function useMobileDictationForegroundKeepAwake(
     }
     const sub = AppState.addEventListener('change', (state) => {
       const run = ++reacquireRun
+      if ((Platform.OS as string) === 'harmony' && state !== 'active') {
+        // Also invalidate a permission/initialization start that has no dictation ID yet.
+        void cancelDictation().catch(() => undefined)
+        return
+      }
       const dictationId = activeIdRef.current
       if (state === 'active' && dictationId) {
         reacquireWithRetry(dictationId, 0, run)
@@ -66,5 +70,5 @@ export function useMobileDictationForegroundKeepAwake(
       reacquireRun += 1
       sub.remove()
     }
-  }, [keepAwakeOwner, activeIdRef])
+  }, [keepAwakeOwner, activeIdRef, cancelDictation])
 }

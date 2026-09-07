@@ -1,6 +1,6 @@
 import { useCallback, useEffect, type ReactNode } from 'react'
 import { StyleSheet, View } from 'react-native'
-import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+import { Gesture } from 'react-native-gesture-handler'
 import { GripVertical } from 'lucide-react-native'
 import Animated, {
   measure,
@@ -10,7 +10,6 @@ import Animated, {
   useFrameCallback,
   useSharedValue,
   withSpring,
-  type AnimatedRef,
   type SharedValue
 } from 'react-native-reanimated'
 import { colors, spacing } from '../theme/mobile-theme'
@@ -19,9 +18,12 @@ import {
   clampDragReorderIndex,
   dragReorderPositionsFromKeys,
   moveDragReorderKey,
+  moveDragReorderKeyByOffset,
   orderedKeysFromDragReorderPositions,
   type DragReorderPositions
 } from './drag-reorder-positions'
+import type { DragReorderListProps } from './DragReorderListContract'
+import { PlatformSafeGestureDetector } from './platform-safe-gesture-detector'
 
 const ROW_SPRING = { damping: 28, stiffness: 350 }
 const LONG_PRESS_ACTIVATION_MS = 200
@@ -43,19 +45,7 @@ type DragSharedState = {
   dragPointerAbsY: SharedValue<number>
 }
 
-export type DragReorderListProps<ItemT> = {
-  items: ItemT[]
-  itemKey: (item: ItemT) => string
-  rowHeight: number
-  renderRow: (item: ItemT) => ReactNode
-  /** Called with every item key in the new order after a drop changes it. */
-  onReorder: (orderedKeys: string[]) => void
-  /** Lets the owning screen disable its ScrollView while a row is held. */
-  onDragActiveChange?: (active: boolean) => void
-  scrollRef: AnimatedRef<Animated.ScrollView>
-  scrollOffsetY: SharedValue<number>
-  scrollContentHeight: SharedValue<number>
-}
+export type { DragReorderListProps } from './DragReorderListContract'
 
 export function DragReorderList<ItemT>({
   items,
@@ -159,17 +149,10 @@ export function DragReorderList<ItemT>({
   // move up/down accessibility actions that commit the same reorder.
   const moveRowByAccessibilityAction = useCallback(
     (key: string, delta: number) => {
-      const fromIndex = keys.indexOf(key)
-      if (fromIndex === -1) {
+      const next = moveDragReorderKeyByOffset(keys, key, delta)
+      if (next === keys) {
         return
       }
-      const toIndex = Math.min(Math.max(fromIndex + delta, 0), keys.length - 1)
-      if (toIndex === fromIndex) {
-        return
-      }
-      const next = [...keys]
-      next.splice(fromIndex, 1)
-      next.splice(toIndex, 0, key)
       onReorder(next)
     },
     [keys, onReorder]
@@ -291,7 +274,7 @@ function DragReorderRow({
   return (
     <Animated.View style={[styles.row, { height: rowHeight }, rowStyle]}>
       <View style={styles.rowContent}>{children}</View>
-      <GestureDetector gesture={pan}>
+      <PlatformSafeGestureDetector gesture={pan}>
         <Animated.View
           style={styles.handle}
           accessible
@@ -313,7 +296,7 @@ function DragReorderRow({
         >
           <GripVertical size={18} color={colors.textMuted} />
         </Animated.View>
-      </GestureDetector>
+      </PlatformSafeGestureDetector>
       <View style={styles.rowSeparator} />
     </Animated.View>
   )

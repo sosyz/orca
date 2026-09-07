@@ -80,6 +80,15 @@ describe('terminal live accessory bytes decision', () => {
     expect(decision).toEqual({ kind: 'commit-held-then-send', bytes: '\x1b' })
   })
 
+  it('Given mirrored text and accessory Enter Then ends the field before submitting', () => {
+    const decision = getTerminalLiveAccessoryBytesDecision({
+      bytes: '\r',
+      heldText: '',
+      sentText: 'pwd'
+    })
+    expect(decision).toEqual({ kind: 'commit-held-then-send', bytes: '\r' })
+  })
+
   it('Given raw accessory bytes with nothing held Then sends immediately', () => {
     const decision = getTerminalLiveAccessoryBytesDecision({
       bytes: '\x1b',

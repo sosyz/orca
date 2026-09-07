@@ -10,7 +10,9 @@ const reflowSource = readFileSync(
   'utf8'
 )
 const htmlSource = readFileSync(new URL('./terminal-webview-html.ts', import.meta.url), 'utf8')
-const handleSource = readFileSync(new URL('./TerminalWebView.tsx', import.meta.url), 'utf8')
+const handleSource =
+  readFileSync(new URL('./TerminalWebView.tsx', import.meta.url), 'utf8') +
+  readFileSync(new URL('./terminal-webview-handle.ts', import.meta.url), 'utf8')
 
 function reflowFnBody(): string {
   const start = reflowSource.indexOf('function reflow(cols, rows) {')

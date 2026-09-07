@@ -101,8 +101,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row'
   },
   tableCell: {
-    minWidth: 112,
-    maxWidth: 220,
+    flexShrink: 0,
     borderRightWidth: 1,
     borderBottomWidth: 1,
     borderColor: colors.borderSubtle,

@@ -159,8 +159,10 @@ describe('MobileHostCard', () => {
       credentialStatus: 'temporarily-unavailable'
     })
 
-    expect(lines).toContain('Pairing temporarily unavailable')
-    expect(lines).toContain('Unlock your phone, then tap to retry')
+    expect(lines).toContain("Pairing credentials couldn't be read")
+    expect(lines).toContain('Tap to retry reading saved credentials')
+    expect(lines).toContain('Studio')
     expect(lines).not.toContain('Pairing invalid')
+    expect(lines).not.toContain('Unlock your phone, then tap to retry')
   })
 })

@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalWebView } from './TerminalWebView'
 
 vi.mock('react-native', () => ({
+  AppState: {
+    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    currentState: 'active'
+  },
   Platform: { OS: 'ios' },
   StyleSheet: {
     absoluteFillObject: {

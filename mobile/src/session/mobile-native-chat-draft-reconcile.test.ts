@@ -33,12 +33,9 @@ describe('mobile native chat image preview reconciliation', () => {
       text: 'look at this'
     }
     const unconfirmed: UnconfirmedSend = {
-      draftKey: 'draft',
-      pendingKey: 'pending-key',
-      text: 'look at this',
       normalizedText: 'look at this',
-      baselineTailMessageId: null,
-      deadline: null
+      expectedOccurrence: 1,
+      baselineTailMessageId: null
     }
 
     expect(findLandedUnconfirmedSends(messages, [unconfirmed])).toEqual([unconfirmed])
@@ -54,12 +51,9 @@ describe('mobile native chat image preview reconciliation', () => {
     ]
     const preview = { ...pending('pending', ['file:///a.jpg']), text: 'look here' }
     const unconfirmed: UnconfirmedSend = {
-      draftKey: 'draft',
-      pendingKey: 'pending-key',
-      text: 'look here',
       normalizedText: 'look here',
-      baselineTailMessageId: null,
-      deadline: null
+      expectedOccurrence: 1,
+      baselineTailMessageId: null
     }
 
     expect(findLandedUnconfirmedSends(messages, [unconfirmed])).toEqual([unconfirmed])

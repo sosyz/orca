@@ -1,6 +1,7 @@
 import type { RefObject } from 'react'
 import type { ConnectionState } from '../transport/types'
-import type { TerminalWebViewHandle } from './TerminalWebView'
+import type { TerminalWebViewHandle } from './terminal-webview-contract'
+import { shouldRunTerminalForegroundRecovery } from './terminal-webview-platform-policy'
 
 export const TERMINAL_FOREGROUND_RECOVERY_DELAY_MS = 120
 
@@ -25,11 +26,7 @@ export function shouldRecoverTerminalOnAppStateChange(
   nextState: string,
   platform: string
 ): boolean {
-  return (
-    platform === 'ios' &&
-    nextState === 'active' &&
-    (previousState === 'background' || previousState === 'inactive')
-  )
+  return shouldRunTerminalForegroundRecovery(previousState, nextState, platform)
 }
 
 export function recoverActiveTerminalAfterForeground({
@@ -45,18 +42,25 @@ export function recoverActiveTerminalAfterForeground({
   if (connStateRef.current !== 'connected') {
     return 'deferred'
   }
-  const initializedMountedHandles = Array.from(initializedHandlesRef.current).filter((handle) =>
-    terminalRefs.current.has(handle)
-  )
-  if (initializedMountedHandles.length === 0) {
+  const handle = activeHandleRef.current
+  const activeRef = handle ? terminalRefs.current.get(handle) : undefined
+  const activeNeedsSurfaceRemount = activeRef?.foregroundRecovery === 'remount-surface'
+  const shouldRecoverActive =
+    !!handle &&
+    !!activeRef &&
+    (initializedHandlesRef.current.has(handle) || activeNeedsSurfaceRemount)
+  const initializedMountedHandles: string[] = []
+  for (const initializedHandle of initializedHandlesRef.current) {
+    if (terminalRefs.current.has(initializedHandle)) {
+      initializedMountedHandles.push(initializedHandle)
+    }
+  }
+  if (initializedMountedHandles.length === 0 && !shouldRecoverActive) {
     return 'skipped'
   }
-  const handle = activeHandleRef.current
-  const shouldRecoverActive =
-    !!handle && terminalRefs.current.has(handle) && initializedHandlesRef.current.has(handle)
 
-  // Why: inactive terminal WebViews stay mounted with opacity:0; iOS can blank
-  // those backing stores too, so their next activation must accept scrollback.
+  // Why: any mounted terminal document covered by the platform foreground policy
+  // must accept scrollback on next visibility instead of trusting stale pixels.
   for (const initializedHandle of initializedMountedHandles) {
     initializedHandlesRef.current.delete(initializedHandle)
   }
@@ -66,6 +70,13 @@ export function recoverActiveTerminalAfterForeground({
   }
 
   unsubscribeTerminal(handle)
+  if (activeNeedsSurfaceRemount) {
+    if (activeHandleRef.current === handle && terminalRefs.current.has(handle)) {
+      subscribeToTerminal(handle)
+    }
+    return 'recovered'
+  }
+
   schedule(() => {
     if (connStateRef.current !== 'connected') {
       return

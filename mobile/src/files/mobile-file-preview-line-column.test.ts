@@ -35,5 +35,7 @@ describe('mobile-file-preview-line-column', () => {
   it('maps line numbers to the mono preview scroll offset', () => {
     expect(scrollOffsetForPreviewLine(1)).toBe(0)
     expect(scrollOffsetForPreviewLine(4)).toBe(57)
+    expect(scrollOffsetForPreviewLine(4, 24)).toBe(72)
+    expect(scrollOffsetForPreviewLine(4, -1)).toBe(0)
   })
 })

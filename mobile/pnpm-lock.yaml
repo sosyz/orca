@@ -8,6 +8,9 @@ overrides:
   xcode>uuid: 11.1.1
 
 patchedDependencies:
+  image-size@1.2.1:
+    hash: a5f215f616a99a61357ff8be0fea71eb8d73cf296250c4cc01162854282f789e
+    path: patches/image-size@1.2.1.patch
   react-native-webview@13.16.2:
     hash: de6761dfa76a5491a23e49f1262566a8831cab26736a336fdffc5d4e7d05ff27
     path: patches/react-native-webview@13.16.2.patch
@@ -12706,7 +12709,7 @@ snapshots:
 
   ignore@7.0.5: {}
 
-  image-size@1.2.1:
+  image-size@1.2.1(patch_hash=a5f215f616a99a61357ff8be0fea71eb8d73cf296250c4cc01162854282f789e):
     dependencies:
       queue: 6.0.2
 
@@ -13985,7 +13988,7 @@ snapshots:
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
       hermes-parser: 0.35.0
-      image-size: 1.2.1
+      image-size: 1.2.1(patch_hash=a5f215f616a99a61357ff8be0fea71eb8d73cf296250c4cc01162854282f789e)
       invariant: 2.2.4
       jest-worker: 29.7.0
       jsc-safe-url: 0.2.4
@@ -14076,7 +14079,7 @@ snapshots:
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
       hermes-parser: 0.35.0
-      image-size: 1.2.1
+      image-size: 1.2.1(patch_hash=a5f215f616a99a61357ff8be0fea71eb8d73cf296250c4cc01162854282f789e)
       invariant: 2.2.4
       jest-worker: 29.7.0
       jsc-safe-url: 0.2.4

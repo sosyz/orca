@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { buildHtml } from './MermaidDiagram'
 import { MERMAID_ENGINE_JS } from './mermaid-webview-engine.generated'
@@ -13,6 +14,15 @@ vi.mock('react-native-webview', () => ({ WebView: 'WebView' }))
 // The diagram source is untrusted (agent output, PR/chat content). It is embedded
 // inside an inline <script>, so it must not be able to close that script element.
 describe('buildHtml source escaping', () => {
+  it('blocks file access and mixed HTTP content in the diagram WebView', () => {
+    const source = readFileSync(new URL('./MermaidDiagram.tsx', import.meta.url), 'utf8')
+    const start = source.indexOf('<WebView')
+    const end = source.indexOf('/>', start)
+    const props = source.slice(start, end)
+
+    expect(props).toContain('{...LOCAL_DOCUMENT_WEBVIEW_SECURITY_PROPS}')
+  })
+
   it('does not let a </script> payload break out of the inline script', () => {
     const payload = 'graph TD; A-->B</script><script>window.evil=1</script>'
     const countClosers = (html: string) => (html.match(/<\/script>/gi) ?? []).length

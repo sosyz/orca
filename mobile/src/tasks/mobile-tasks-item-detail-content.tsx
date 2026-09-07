@@ -5,7 +5,6 @@ import {
   colors,
   Text,
   Pressable,
-  Linking,
   ExternalLink,
   TextInput
 } from './mobile-tasks-dependencies'
@@ -150,7 +149,7 @@ export function renderMobileTasksItemDetailContent(model: ConnectionPresentation
                 disabled={!check.url}
                 onPress={() => {
                   if (check.url) {
-                    void Linking.openURL(check.url)
+                    void model.openExternalTaskUrl(check.url)
                   }
                 }}
               >
@@ -191,7 +190,7 @@ export function renderMobileTasksItemDetailContent(model: ConnectionPresentation
                   disabled={!job.webUrl}
                   onPress={() => {
                     if (job.webUrl) {
-                      void Linking.openURL(job.webUrl)
+                      void model.openExternalTaskUrl(job.webUrl)
                     }
                   }}
                 >

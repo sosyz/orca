@@ -81,4 +81,24 @@ describe('MobileRichMarkdownEditor', () => {
     )
     expect(mocks.dismissKeyboard).toHaveBeenCalledOnce()
   })
+
+  it('blocks file access and mixed HTTP content', () => {
+    act(() => {
+      renderer = create(
+        createElement(MobileRichMarkdownEditor, {
+          content: '',
+          editable: true,
+          onChange: vi.fn()
+        })
+      )
+    })
+
+    const props = renderer!.root.findByType('WebView').props
+    expect(props).toMatchObject({
+      allowFileAccess: false,
+      allowFileAccessFromFileURLs: false,
+      allowUniversalAccessFromFileURLs: false,
+      mixedContentMode: 'never'
+    })
+  })
 })

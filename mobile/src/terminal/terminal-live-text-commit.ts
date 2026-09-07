@@ -59,7 +59,8 @@ export function getTerminalLiveAccessoryBytesDecision({
     return { kind: 'local-edit', localEdit }
   }
 
-  if (heldText.length > 0) {
+  const submitsLine = bytes.includes('\r') || bytes.includes('\n')
+  if (heldText.length > 0 || (submitsLine && sentText.length > 0)) {
     return { kind: 'commit-held-then-send', bytes }
   }
 

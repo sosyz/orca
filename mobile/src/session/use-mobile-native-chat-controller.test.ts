@@ -95,6 +95,7 @@ const ORIGIN = {
   draftKey: 'h\0w\0tab-1',
   draftEditGeneration: 0,
   pendingKey: 'h\0w\0tab-1\0session-1',
+  scopeGeneration: 1,
   normalizedText: 'look',
   baselineOccurrences: 0,
   baselineTailMessageId: null,
@@ -269,7 +270,10 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
     })
     expect(accepted).toBe(true)
     expect(acceptSend).not.toHaveBeenCalled()
-    expect(holdUnconfirmedSend).toHaveBeenCalledWith(ORIGIN, 'look', expect.any(Function))
+    expect(holdUnconfirmedSend).toHaveBeenCalledWith(
+      ORIGIN,
+      'Delivery unconfirmed — check chat before sending again'
+    )
     // Delivery-unknown usually means delivered — keep the composer clear.
     expect(clearDraftForSend).toHaveBeenCalledWith(ORIGIN, 'look')
     expect(restoreRejectedDraft).not.toHaveBeenCalled()
@@ -284,7 +288,10 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
     // Image sends heal a possibly-orphaned paste off this — 'unknown' must not
     // collapse into the boolean 'sent' shape (#10228).
     expect(outcome).toBe('unknown')
-    expect(holdUnconfirmedSend).toHaveBeenCalledWith(ORIGIN, 'look', expect.any(Function))
+    expect(holdUnconfirmedSend).toHaveBeenCalledWith(
+      ORIGIN,
+      'Delivery unconfirmed — check chat before sending again'
+    )
   })
 
   it('fails a send fast while the socket is down, before spending the heal budget', async () => {

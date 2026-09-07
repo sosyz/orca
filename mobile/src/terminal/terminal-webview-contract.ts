@@ -1,6 +1,7 @@
 import type { RuntimeMobileTerminalTheme } from '../../../src/shared/runtime-types'
 import type { TerminalOscLinkRange } from '../../../src/shared/terminal-osc-link-ranges'
 import type { StyleProp, ViewStyle } from 'react-native'
+import type { TerminalForegroundRecoveryStrategy } from './terminal-webview-platform-policy'
 
 type TerminalMouseTrackingMode = 'none' | 'x10' | 'vt200' | 'drag' | 'any'
 
@@ -65,6 +66,8 @@ export type TerminalSelectionEvents = {
 
 export type TerminalWebViewProps = {
   style?: StyleProp<ViewStyle>
+  // Suppresses hidden-pane watchdogs; Harmony mounts only the active pane.
+  active?: boolean
   terminalTheme?: MobileTerminalTheme
   // Why: baseline zoom multiplier applied on top of fit-to-width scale; raw
   // xterm fontSize alone cannot drive apparent size because fitting cancels it.
@@ -74,6 +77,7 @@ export type TerminalWebViewProps = {
 } & TerminalSelectionEvents
 
 export type TerminalWebViewHandle = {
+  foregroundRecovery: TerminalForegroundRecoveryStrategy
   // Why: iOS can preserve the native view while discarding its JS/backing-store
   // state; foreground recovery must wait for the document to answer before replay.
   prepareForForegroundRecovery: () => void

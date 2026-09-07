@@ -7,6 +7,10 @@ const sessionRouteSource = readFileSync(
   new URL('../../app/h/[hostId]/session/[worktreeId].tsx', import.meta.url),
   'utf8'
 )
+const liveInputBarSource = readFileSync(
+  new URL('../session/MobileTerminalLiveInputBar.tsx', import.meta.url),
+  'utf8'
+)
 
 function routeSlice(anchorStart: string, anchorEnd: string): string {
   const start = sessionRouteSource.indexOf(anchorStart)
@@ -89,8 +93,8 @@ describe('session route offline-compose wiring', () => {
     )
     expect(bufferedInput).toContain('editable={canCompose}')
 
-    const liveCapture = routeSlice('ref={liveInputRef}', 'importantForAutofill="no"')
-    expect(liveCapture).toContain('editable={canSend}')
+    expect(sessionRouteSource).toContain('inputRef={liveInputRef}')
+    expect(liveInputBarSource).toContain('editable={canSend}')
   })
 
   it('keeps the send button connection-gated so held text cannot fire into a dead link', () => {

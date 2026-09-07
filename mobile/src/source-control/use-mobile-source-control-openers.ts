@@ -18,6 +18,7 @@ import {
   type MobileGitStatusEntry
 } from './mobile-git-status'
 import { buildMobileReviewFileRoute } from './mobile-review-route'
+import * as rendererFallback from './mobile-source-control-renderer-fallback'
 import { revealMobileSourceControlSessionDiff } from './reveal-mobile-source-control-session-diff'
 import type {
   GitDiffTextResult,
@@ -34,9 +35,8 @@ type Params = {
   origin: string
   embedded: boolean
   onRequestClose?: () => void
-  // Fired synchronously at tap time (before the openDiff RPC) so the session can
-  // snapshot the active tab then — capturing it post-await would misread a tab
-  // the user switched to during the RPC window as the tap-time tab.
+  // Fired before openDiff so the session snapshots the tap-time active tab,
+  // not one the user switched to during the RPC window.
   onFileOpenStart?: () => void
   onOpenedFileDiff?: (relativePath: string) => void
   branchCompareState: MobileBranchCompareState
@@ -45,8 +45,7 @@ type Params = {
   setActionError: (message: string | null) => void
 }
 
-// Owns opening a changed file (diff or session replace) and previewing a
-// committed branch diff, plus the in-flight openingPath/openingBranchPath state.
+// Owns changed-file open/branch-preview flows and their in-flight row state.
 export function useMobileSourceControlOpeners(params: Params) {
   const {
     client,
@@ -107,9 +106,7 @@ export function useMobileSourceControlOpeners(params: Params) {
           )
           return
         }
-        // Snapshot the active tab now, at tap time, before the openDiff RPC —
-        // the session uses it to avoid stealing focus if the user switches tabs
-        // during the RPC window.
+        // Snapshot now so session focus recovery uses the tap-time tab.
         onFileOpenStart?.()
         let response = await client.sendRequest('files.openDiff', {
           worktree: `id:${worktreeId}`,
@@ -117,6 +114,22 @@ export function useMobileSourceControlOpeners(params: Params) {
           staged: entry.area === 'staged'
         })
         let openedTabMode: 'diff' | 'edit' = 'diff'
+        if (!response.ok && rendererFallback.isMobileOpenDiffRendererUnavailable(response.error)) {
+          if (!mountedRef.current || openingPathRef.current !== entry.path) {
+            return
+          }
+          triggerSelection()
+          rendererFallback.navigateMobileOpenDiffRendererFallback({
+            router,
+            hostId,
+            worktreeId,
+            worktreeName: name,
+            entry,
+            embedded,
+            onRequestClose
+          })
+          return
+        }
         if (!response.ok && isMobileGitUnavailable(response.error?.code, response.error?.message)) {
           response = await client.sendRequest('files.open', {
             worktree: `id:${worktreeId}`,
@@ -146,12 +159,8 @@ export function useMobileSourceControlOpeners(params: Params) {
           throw new Error("The file opened, but its tab isn't ready yet. Try again.")
         }
         triggerSelection()
-        // Why: when launched from the session screen, opening a file dismisses
-        // this surface back to the session. In embedded mode there is nothing
-        // to pop (the panel docks beside the terminal), so close the dock
-        // instead of calling router.back() — falling back to router.back() when
-        // no close handler is wired, mirroring MobileSourceControlPanel, so the
-        // panel never sits on top of the activated diff tab.
+        // Why: route-launched panels pop back to the session; docked panels have
+        // nothing to pop, so close the dock instead.
         if (embedded) {
           ;(onRequestClose ?? (() => router.back()))()
         } else {

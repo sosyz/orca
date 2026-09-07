@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest'
 // TerminalWebView.tsx. Concatenate both so assertions resolve regardless of file.
 const source =
   readFileSync(new URL('./TerminalWebView.tsx', import.meta.url), 'utf8') +
+  readFileSync(new URL('./terminal-webview-handle.ts', import.meta.url), 'utf8') +
+  readFileSync(new URL('./terminal-webview-measurement.ts', import.meta.url), 'utf8') +
+  readFileSync(new URL('./terminal-webview-surface.tsx', import.meta.url), 'utf8') +
   readFileSync(new URL('./terminal-webview-pending-messages.ts', import.meta.url), 'utf8') +
   readFileSync(new URL('./terminal-webview-url-tap.ts', import.meta.url), 'utf8') +
   readFileSync(new URL('./terminal-webview-tap-dispatch-injected.ts', import.meta.url), 'utf8') +
@@ -130,13 +133,17 @@ describe('TerminalWebView scroll routing', () => {
   })
 
   it('clears WebView await timers when the real response wins', () => {
-    const measureBlock = sliceBetween('measureFitDimensions(', 'resetZoom()')
+    const measureBlock = sliceBetween('export function measureTerminalFitDimensions', '})\n}')
     expect(measureBlock).toContain('clearTimeout(timeout)')
     expect(measureBlock).toContain('measureResolveRef.current === finish')
 
+    const settleReadyBlock = sliceBetween('const settleReady', 'const settlePendingOperations')
+    expect(settleReadyBlock).toContain('clearTimeout(readyTimeoutRef.current)')
+    expect(settleReadyBlock).toContain('readyPromiseRef.current = null')
+
     const readyBlock = sliceBetween('async awaitReady()', '})')
-    expect(readyBlock).toContain('clearTimeout(timeout)')
-    expect(readyBlock).toContain('void p.finally')
+    expect(readyBlock).toContain('await p')
+    expect(readyBlock).not.toContain('setTimeout')
   })
 
   it('hides xterm scrollbars and drives the mobile scroll indicator from committed rows', () => {

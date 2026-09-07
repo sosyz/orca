@@ -13,6 +13,11 @@ import { useOpenNotificationRoute } from '../src/notifications/use-open-notifica
 import { loadHostCatalog } from '../src/transport/host-store'
 import { extractPairingCodeFromUrl } from '../src/transport/pairing'
 import { recoverMobileRelayPairing } from '../src/transport/mobile-relay-pairing-recovery'
+import { createInitialPairingUrlConsumer } from '../src/transport/initial-pairing-url-consumer'
+
+// RNOH retains the launch URI for the JS runtime, so consume it once even if
+// Expo Router remounts this layout or replaces the effect subscriber.
+const consumeInitialPairingUrl = createInitialPairingUrlConsumer(() => Linking.getInitialURL())
 
 // Why: keeps the native splash screen visible until the React tree is mounted
 // and ready to render. Without this the user sees a blank white/black frame
@@ -60,14 +65,13 @@ export default function RootLayout() {
       }
     }
 
-    void Linking.getInitialURL().then((url) => {
-      if (url) {
-        handleUrl(url)
-      }
-    })
+    const stopConsumingInitialUrl = consumeInitialPairingUrl(handleUrl)
 
     const sub = Linking.addEventListener('url', ({ url }) => handleUrl(url))
-    return () => sub.remove()
+    return () => {
+      stopConsumingInitialUrl()
+      sub.remove()
+    }
   }, [router])
 
   // ─── Notification tap routing ───

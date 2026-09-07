@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, type RefObject } from 'react'
 import { AppState, Platform, useWindowDimensions, type AppStateStatus } from 'react-native'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
-import type { TerminalWebViewHandle } from './TerminalWebView'
+import type { TerminalWebViewHandle } from './terminal-webview-contract'
 import { shouldRecoverTerminalOnAppStateChange } from './terminal-foreground-recovery'
+import { getTerminalWebViewPlatformPolicy } from './terminal-webview-platform-policy'
 import {
   isTerminalUpdateViewportApplied,
   isTerminalUpdateViewportUpdated,
@@ -265,7 +266,8 @@ export function useTerminalViewportRefit(
   )
 
   useEffect(() => {
-    if (Platform.OS !== 'ios') {
+    const platform = Platform.OS as string
+    if (getTerminalWebViewPlatformPolicy(platform).foregroundRecovery === 'none') {
       return
     }
     let previousAppState: AppStateStatus | null = AppState.currentState
@@ -273,7 +275,7 @@ export function useTerminalViewportRefit(
       const shouldRefit = shouldRecoverTerminalOnAppStateChange(
         previousAppState,
         nextAppState,
-        Platform.OS
+        platform
       )
       previousAppState = nextAppState
       if (!shouldRefit) {

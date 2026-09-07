@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const withTimingCalls = vi.hoisted(() => [] as { to: number; duration: number | undefined }[])
 const sharedWrites = vi.hoisted(() => [] as { key: string; value: unknown }[])
+const mockPlatform = vi.hoisted(() => ({ OS: 'ios' }))
 
 vi.mock('react-native', () => ({
   BackHandler: { addEventListener: () => ({ remove: () => {} }) },
@@ -13,7 +14,12 @@ vi.mock('react-native', () => ({
     metrics: () => null
   },
   Modal: 'Modal',
-  Platform: { OS: 'ios', select: (options: { ios?: unknown }) => options.ios },
+  Platform: {
+    get OS() {
+      return mockPlatform.OS
+    },
+    select: (options: { ios?: unknown }) => options.ios
+  },
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
   StyleSheet: {
@@ -58,7 +64,10 @@ vi.mock('react-native-reanimated', () => {
   }
   let sharedIndex = 0
   return {
-    default: { View: 'AnimatedView', ScrollView: 'AnimatedScrollView' },
+    default: {
+      View: 'AnimatedView',
+      createAnimatedComponent: (component: unknown) => component
+    },
     useSharedValue: (initial: number) => makeShared(`shared-${sharedIndex++}`, initial),
     useAnimatedStyle: () => ({}),
     useAnimatedScrollHandler: () => () => {},
@@ -118,6 +127,7 @@ describe('bottom drawer window hand-back', () => {
     withTimingCalls.length = 0
     sharedWrites.length = 0
     sheetBodyMounts.count = 0
+    mockPlatform.OS = 'ios'
   })
 
   it('re-asserts the enter transform when a pinned sheet takes the window back', () => {
@@ -129,6 +139,14 @@ describe('bottom drawer window hand-back', () => {
 
     expect(withTimingCalls.filter((call) => call.to === 1).length).toBe(beforeHandback + 1)
     act(() => renderer.unmount())
+  })
+
+  it('avoids the unsupported native GestureDetector fallback on Harmony', () => {
+    mockPlatform.OS = 'harmony'
+    const renderer = render(true)
+
+    expect(renderer.root.findAllByType('GestureDetector')).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Dismiss drawer' })).toHaveLength(1)
   })
 
   // Shared-value writes cannot heal a sheet whose native view was rebuilt under

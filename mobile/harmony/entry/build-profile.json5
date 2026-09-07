@@ -1,0 +1,32 @@
+{
+  apiType: 'stageMode',
+  buildOption: {
+    externalNativeOptions: {
+      path: './src/main/cpp/CMakeLists.txt',
+      arguments: '',
+      abiFilters: ['arm64-v8a']
+    }
+  },
+  buildOptionSet: [
+    {
+      name: 'release',
+      nativeLib: {
+        filter: {
+          excludes: ['**/x86_64/*.so']
+        },
+        debugSymbol: {
+          strip: true
+        }
+      },
+      resOptions: {
+        ignoreResourcePattern: ['rnoh.profdata']
+      }
+    }
+  ],
+  targets: [
+    {
+      name: 'default',
+      runtimeOS: 'HarmonyOS'
+    }
+  ]
+}

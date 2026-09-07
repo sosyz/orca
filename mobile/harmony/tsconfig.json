@@ -1,0 +1,31 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0",
+    "lib": ["ES2023", "DOM"],
+    "moduleResolution": "bundler",
+    "paths": {
+      "*": ["./node_modules/@types/*", "./node_modules/*"],
+      "@orca/expo-two-way-audio": ["./src/compat/expo-two-way-audio.ts"],
+      "expo-*": ["./src/compat/expo-*.ts", "./src/compat/expo-*.tsx"],
+      "expo-router": ["./src/navigation/harmony-router.tsx"]
+    },
+    "strict": true,
+    "types": ["react", "node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../src/**/*.ts",
+    "../src/**/*.tsx",
+    "../app/**/*.tsx"
+  ],
+  "exclude": [
+    "../**/*.test.ts",
+    "../**/*.test.tsx",
+    "../src/**/*test-fakes.ts",
+    "../src/**/*test-harness.ts",
+    "node_modules",
+    "entry/build"
+  ]
+}

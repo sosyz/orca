@@ -9,6 +9,10 @@ const liveInputStatusSource = readFileSync(
   new URL('../session/MobileTerminalLiveInputStatus.tsx', import.meta.url),
   'utf8'
 )
+const liveInputBarSource = readFileSync(
+  new URL('../session/MobileTerminalLiveInputBar.tsx', import.meta.url),
+  'utf8'
+)
 const commandInputStylesSource = readFileSync(
   new URL('../session/mobile-session-command-input-styles.ts', import.meta.url),
   'utf8'
@@ -34,16 +38,22 @@ describe('terminal live input affordance', () => {
   it('keeps the live status row wired as the keyboard focus control', () => {
     const block = liveInputBarBlock()
 
-    expect(block).toContain('onPress={focusLiveInput}')
-    expect(block).toContain('accessibilityRole="button"')
-    expect(block).toContain('accessibilityLabel="Show keyboard for live terminal input"')
-    expect(block).toContain(
+    expect(block).toContain('<MobileTerminalLiveInputBar')
+    expect(block).toContain('ref={liveInputBarRef}')
+    expect(block).toContain('inputRef={liveInputRef}')
+    expect(block).toContain('onFocusLiveInput={focusLiveInput}')
+    expect(liveInputBarSource).toContain('onPress={onFocusLiveInput}')
+    expect(liveInputBarSource).toContain('accessibilityRole="button"')
+    expect(liveInputBarSource).toContain(
+      'accessibilityLabel="Show keyboard for live terminal input"'
+    )
+    expect(liveInputBarSource).toContain(
       'accessibilityHint="Typed text is sent directly to the active terminal"'
     )
-    expect(block).toContain('pressed && styles.liveInputFocusTargetPressed')
-    expect(block).toContain('!canSend && styles.liveInputFocusTargetDisabled')
-    expect(block).toContain('showSoftInputOnFocus')
-    expect(block).toContain('liveInputText={liveInputCapture}')
+    expect(liveInputBarSource).toContain('pressed && styles.liveInputFocusTargetPressed')
+    expect(liveInputBarSource).toContain('!canSend && styles.liveInputFocusTargetDisabled')
+    expect(liveInputBarSource).toContain('showSoftInputOnFocus')
+    expect(liveInputBarSource).toContain('liveInputText={liveInputText}')
     expect(sessionRouteSource).toContain('useTerminalLiveInputFocus({')
     expect(sessionRouteSource).toContain('useMobileSendCompletionGeneration({')
     expect(sessionRouteSource).toContain('onBlur: resetLiveInputFocus')

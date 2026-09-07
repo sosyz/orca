@@ -16,7 +16,6 @@ import {
   Pressable,
   Check,
   TextInput,
-  Linking,
   ExternalLink
 } from './mobile-tasks-dependencies'
 import { styles } from './mobile-tasks-legacy-styles'
@@ -166,7 +165,7 @@ export function renderMobileTasksProjectReviewPanels(model: ConnectionPresentati
                 disabled={!check.url}
                 onPress={() => {
                   if (check.url) {
-                    void Linking.openURL(check.url)
+                    void model.openExternalTaskUrl(check.url)
                   }
                 }}
               >

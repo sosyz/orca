@@ -35,6 +35,7 @@ type MobileImageFileHandle = {
 
 type MobileImageFile = {
   readonly size: number
+  delete(): void
   open(): MobileImageFileHandle
 }
 
@@ -47,39 +48,71 @@ function defaultMobileImageFileFactory(uri: string): MobileImageFile {
 async function readUriAsBase64(
   uri: string,
   declaredSize: number | undefined,
-  createFile: MobileImageFileFactory
+  createFile: MobileImageFileFactory,
+  deleteAfterRead = false
 ): Promise<string> {
-  if (typeof declaredSize === 'number' && Number.isFinite(declaredSize)) {
+  if (!deleteAfterRead && typeof declaredSize === 'number' && Number.isFinite(declaredSize)) {
     assertClipboardImageByteLengthWithinLimit(declaredSize)
   }
 
   const file = createFile(uri)
-  assertClipboardImageByteLengthWithinLimit(file.size)
-  const handle = file.open()
   try {
-    if (handle.size !== null) {
-      assertClipboardImageByteLengthWithinLimit(handle.size)
+    if (typeof declaredSize === 'number' && Number.isFinite(declaredSize)) {
+      assertClipboardImageByteLengthWithinLimit(declaredSize)
     }
-    const accumulator = new MobileImageBase64Accumulator()
-    let bytesRead = 0
-    while (bytesRead <= CLIPBOARD_IMAGE_MAX_SOURCE_BYTES) {
-      const requested = Math.min(
-        MOBILE_IMAGE_READ_CHUNK_BYTES,
-        CLIPBOARD_IMAGE_MAX_SOURCE_BYTES - bytesRead + 1
-      )
-      const bytes = handle.readBytes(requested)
-      if (bytes.byteLength === 0) {
-        break
+    assertClipboardImageByteLengthWithinLimit(file.size)
+    const handle = file.open()
+    try {
+      if (handle.size !== null) {
+        assertClipboardImageByteLengthWithinLimit(handle.size)
       }
-      bytesRead += bytes.byteLength
-      assertClipboardImageByteLengthWithinLimit(bytesRead)
-      accumulator.append(bytes)
+      const accumulator = new MobileImageBase64Accumulator()
+      let bytesRead = 0
+      while (bytesRead <= CLIPBOARD_IMAGE_MAX_SOURCE_BYTES) {
+        const requested = Math.min(
+          MOBILE_IMAGE_READ_CHUNK_BYTES,
+          CLIPBOARD_IMAGE_MAX_SOURCE_BYTES - bytesRead + 1
+        )
+        const bytes = handle.readBytes(requested)
+        if (bytes.byteLength === 0) {
+          break
+        }
+        bytesRead += bytes.byteLength
+        assertClipboardImageByteLengthWithinLimit(bytesRead)
+        accumulator.append(bytes)
+      }
+      const base64 = accumulator.finish()
+      assertClipboardImageBase64LengthWithinLimit(base64.length)
+      return base64
+    } finally {
+      handle.close()
     }
-    const base64 = accumulator.finish()
-    assertClipboardImageBase64LengthWithinLimit(base64.length)
-    return base64
   } finally {
-    handle.close()
+    if (deleteAfterRead) {
+      file.delete()
+    }
+  }
+}
+
+function isTemporaryAsset(asset: unknown): boolean {
+  return (asset as { readonly isTemporary?: boolean }).isTemporary === true
+}
+
+function deleteUnconsumedTemporaryAssets(
+  assets: readonly unknown[],
+  startIndex: number,
+  createFile: MobileImageFileFactory
+): void {
+  for (let index = startIndex; index < assets.length; index += 1) {
+    const asset = assets[index] as { readonly isTemporary?: boolean; readonly uri?: unknown }
+    if (asset.isTemporary !== true || typeof asset.uri !== 'string' || !asset.uri) {
+      continue
+    }
+    try {
+      createFile(asset.uri).delete()
+    } catch {
+      // Best effort: cleanup must not replace the picker/read error.
+    }
   }
 }
 
@@ -104,14 +137,22 @@ async function* pickFromLibrary(
   if (result.canceled) {
     return
   }
-  for (const asset of result.assets) {
-    if (!asset.uri) {
-      continue
+  let nextAssetIndex = 0
+  try {
+    while (nextAssetIndex < result.assets.length) {
+      const asset = result.assets[nextAssetIndex]
+      nextAssetIndex += 1
+      if (!asset.uri) {
+        continue
+      }
+      const temporary = isTemporaryAsset(asset)
+      const base64 = await readUriAsBase64(asset.uri, asset.fileSize, createFile, temporary)
+      if (base64) {
+        yield temporary ? { base64 } : { base64, uri: asset.uri }
+      }
     }
-    const base64 = await readUriAsBase64(asset.uri, asset.fileSize, createFile)
-    if (base64) {
-      yield { base64, uri: asset.uri }
-    }
+  } finally {
+    deleteUnconsumedTemporaryAssets(result.assets, nextAssetIndex, createFile)
   }
 }
 
@@ -128,14 +169,22 @@ async function* pickFromFiles(
   if (result.canceled) {
     return
   }
-  for (const asset of result.assets) {
-    if (!asset.uri) {
-      continue
+  let nextAssetIndex = 0
+  try {
+    while (nextAssetIndex < result.assets.length) {
+      const asset = result.assets[nextAssetIndex]
+      nextAssetIndex += 1
+      if (!asset.uri) {
+        continue
+      }
+      const temporary = isTemporaryAsset(asset)
+      const base64 = await readUriAsBase64(asset.uri, asset.size, createFile, temporary)
+      if (base64) {
+        yield temporary ? { base64 } : { base64, uri: asset.uri }
+      }
     }
-    const base64 = await readUriAsBase64(asset.uri, asset.size, createFile)
-    if (base64) {
-      yield { base64, uri: asset.uri }
-    }
+  } finally {
+    deleteUnconsumedTemporaryAssets(result.assets, nextAssetIndex, createFile)
   }
 }
 

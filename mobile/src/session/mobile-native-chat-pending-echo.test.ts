@@ -22,6 +22,7 @@ function sendOrigin(
     draftKey: 'host\0worktree\0tab',
     draftEditGeneration: 0,
     pendingKey: 'host\0worktree\0tab\0session',
+    scopeGeneration: 1,
     normalizedText,
     // Use production's counter so the test cannot mirror its normalization drift.
     baselineOccurrences: countUserTextOccurrences(messages, normalizedText),

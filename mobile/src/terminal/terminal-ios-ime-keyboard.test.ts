@@ -5,6 +5,10 @@ const sessionRouteSource = readFileSync(
   new URL('../../app/h/[hostId]/session/[worktreeId].tsx', import.meta.url),
   'utf8'
 )
+const liveInputBarSource = readFileSync(
+  new URL('../session/MobileTerminalLiveInputBar.tsx', import.meta.url),
+  'utf8'
+)
 
 describe('terminal iOS IME keyboard', () => {
   it('does not force terminal inputs onto the ASCII-only iOS keyboard', () => {
@@ -16,7 +20,9 @@ describe('terminal iOS IME keyboard', () => {
     // onChangeText hands over only a string, discarding the preedit report that
     // decides whether the text may reach the PTY at all.
     expect(sessionRouteSource).toContain('onChange={handleLiveInputChange}')
+    expect(liveInputBarSource).toContain('onChange={onChange}')
     expect(sessionRouteSource).not.toContain('onChangeText={handleLiveInputChange}')
+    expect(liveInputBarSource).not.toContain('onChangeText=')
   })
 
   it('does not put terminal keyboard capture behind iOS textContentType semantics', () => {

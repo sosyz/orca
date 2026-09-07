@@ -4,9 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MobileNativeChatView } from './MobileNativeChatView'
 
+const mockPlatform = vi.hoisted(() => ({ OS: 'ios' }))
+
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
   FlatList: 'FlatList',
+  Platform: mockPlatform,
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
   Text: 'Text',
@@ -100,6 +103,7 @@ describe('MobileNativeChatView', () => {
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
+    mockPlatform.OS = 'ios'
   })
 
   async function render(overrides: Overrides = {}): Promise<void> {
@@ -134,6 +138,16 @@ describe('MobileNativeChatView', () => {
   function composer(): ReactTestInstance {
     return renderer!.root.find((node) => node.type === 'Composer')
   }
+
+  it('renders the conversation without GestureDetector on Harmony', async () => {
+    mockPlatform.OS = 'harmony'
+
+    await render({ folded: [assistantTurn('a1', 'Connected')] })
+
+    expect(renderer!.root.findAllByType('GestureDetector')).toHaveLength(0)
+    expect(renderer!.root.findAllByType('FlatList')).toHaveLength(1)
+    expect(listIds()).toEqual(['a1'])
+  })
 
   function bannerText(): string {
     const [alert, ...rest] = banners()

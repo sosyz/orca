@@ -6,10 +6,11 @@ import {
   Platform,
   useWindowDimensions,
   Keyboard,
-  BackHandler
+  BackHandler,
+  ScrollView
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
+import { Gesture, GestureHandlerRootView } from 'react-native-gesture-handler'
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -26,6 +27,8 @@ import { colors, spacing } from '../theme/mobile-theme'
 import { resolveBottomDrawerMounted } from './bottom-drawer-mount-state'
 import { resolveRightDrawerPanelWidth } from './right-drawer-panel-width'
 import { useResponsiveLayout } from '../layout/responsive-layout'
+import { ReanimatedScrollView } from './reanimated-scroll-view'
+import { PlatformSafeGestureDetector } from './platform-safe-gesture-detector'
 
 const DISMISS_THRESHOLD = 80
 const SPRING_CONFIG = { damping: 28, stiffness: 400 }
@@ -91,6 +94,7 @@ function MountedRightDrawer({
   const insets = useSafeAreaInsets()
   const { isWideLayout } = useResponsiveLayout()
   const panelWidth = resolveRightDrawerPanelWidth(screenWidth, isWideLayout, widthPx)
+  const drawerGesturesSupported = (Platform.OS as string) !== 'harmony'
 
   useEffect(() => {
     if (visible) {
@@ -168,6 +172,45 @@ function MountedRightDrawer({
     return { opacity: progress.value * dragFade }
   })
 
+  const scrollContent = drawerGesturesSupported ? (
+    <PlatformSafeGestureDetector gesture={scrollGesture}>
+      <ReanimatedScrollView
+        bounces={false}
+        keyboardShouldPersistTaps="handled"
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+      >
+        {children}
+      </ReanimatedScrollView>
+    </PlatformSafeGestureDetector>
+  ) : (
+    <ScrollView
+      bounces={false}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {children}
+    </ScrollView>
+  )
+
+  const drawerContent = (
+    <Animated.View
+      style={[
+        styles.drawer,
+        {
+          width: panelWidth,
+          paddingTop: insets.top + spacing.md,
+          paddingBottom: insets.bottom + spacing.lg,
+          paddingRight: insets.right
+        },
+        drawerStyle
+      ]}
+    >
+      {scrollContent}
+    </Animated.View>
+  )
+
   return (
     <Animated.View
       pointerEvents={visible ? 'auto' : 'none'}
@@ -181,32 +224,13 @@ function MountedRightDrawer({
         </Animated.View>
 
         <View style={styles.anchor} pointerEvents="box-none">
-          <GestureDetector gesture={panGesture}>
-            <Animated.View
-              style={[
-                styles.drawer,
-                {
-                  width: panelWidth,
-                  paddingTop: insets.top + spacing.md,
-                  paddingBottom: insets.bottom + spacing.lg,
-                  paddingRight: insets.right
-                },
-                drawerStyle
-              ]}
-            >
-              <GestureDetector gesture={scrollGesture}>
-                <Animated.ScrollView
-                  bounces={false}
-                  keyboardShouldPersistTaps="handled"
-                  onScroll={scrollHandler}
-                  scrollEventThrottle={16}
-                  showsVerticalScrollIndicator={false}
-                >
-                  {children}
-                </Animated.ScrollView>
-              </GestureDetector>
-            </Animated.View>
-          </GestureDetector>
+          {drawerGesturesSupported ? (
+            <PlatformSafeGestureDetector gesture={panGesture}>
+              {drawerContent}
+            </PlatformSafeGestureDetector>
+          ) : (
+            drawerContent
+          )}
         </View>
       </GestureHandlerRootView>
     </Animated.View>

@@ -1,0 +1,108 @@
+diff --git a/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.cpp b/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.cpp
+index 4465c30..7ea82e4 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.cpp
++++ b/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.cpp
+@@ -18,7 +18,7 @@ ReanimatedMountHook::~ReanimatedMountHook() noexcept {
+ 
+ void ReanimatedMountHook::shadowTreeDidMount(
+     RootShadowNode::Shared const &,
+-    double) noexcept {
++    HighResTimeStamp) noexcept {
+   // When commit from React Native has finished, we reset the skip commit flag
+   // in order to allow Reanimated to commit its tree
+   if (!ReanimatedCommitMarker::isReanimatedCommit()) {
+diff --git a/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.h b/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.h
+index f5b8976..f5a23f5 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.h
++++ b/node_modules/react-native-reanimated/Common/cpp/Fabric/ReanimatedMountHook.h
+@@ -21,7 +21,7 @@ class ReanimatedMountHook : public UIManagerMountHook {
+ 
+   void shadowTreeDidMount(
+       RootShadowNode::Shared const &rootShadowNode,
+-      double mountTime) noexcept override;
++      HighResTimeStamp mountTime) noexcept override;
+ 
+  private:
+   const std::shared_ptr<PropsRegistry> propsRegistry_;
+diff --git a/node_modules/react-native-reanimated/Common/cpp/Fabric/ShadowTreeCloner.cpp b/node_modules/react-native-reanimated/Common/cpp/Fabric/ShadowTreeCloner.cpp
+index f913ceb..6d0ccc4 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/Fabric/ShadowTreeCloner.cpp
++++ b/node_modules/react-native-reanimated/Common/cpp/Fabric/ShadowTreeCloner.cpp
+@@ -22,7 +22,7 @@ ShadowNode::Unshared cloneShadowTreeWithNewProps(
+   PropsParserContext propsParserContext{
+       source->getSurfaceId(), *source->getContextContainer()};
+   const auto props = source->getComponentDescriptor().cloneProps(
+-      propsParserContext, source->getProps(), rawProps);
++      propsParserContext, source->getProps(), std::move(rawProps));
+ 
+   auto newChildNode = source->clone({/* .props = */ props});
+ 
+diff --git a/node_modules/react-native-reanimated/Common/cpp/NativeModules/NativeReanimatedModule.cpp b/node_modules/react-native-reanimated/Common/cpp/NativeModules/NativeReanimatedModule.cpp
+index 2a1bd4c..1c3362e 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/NativeModules/NativeReanimatedModule.cpp
++++ b/node_modules/react-native-reanimated/Common/cpp/NativeModules/NativeReanimatedModule.cpp
+@@ -2,13 +2,9 @@
+ 
+ #ifdef RCT_NEW_ARCH_ENABLED
+ #if REACT_NATIVE_MINOR_VERSION >= 72
+-#include <react/renderer/core/TraitCast.h>
+ #endif
+ #include <react/renderer/uimanager/UIManagerBinding.h>
+ #include <react/renderer/uimanager/primitives.h>
+-#if REACT_NATIVE_MINOR_VERSION >= 73 && defined(RCT_NEW_ARCH_ENABLED)
+-#include <react/utils/CoreFeatures.h>
+-#endif
+ #endif
+ 
+ #include <functional>
+@@ -37,11 +33,6 @@
+ 
+ using namespace facebook;
+ 
+-#if REACT_NATIVE_MINOR_VERSION >= 73 && defined(RCT_NEW_ARCH_ENABLED)
+-// Android can't find the definition of this static field
+-bool CoreFeatures::useNativeState;
+-#endif
+-
+ namespace reanimated {
+ 
+ NativeReanimatedModule::NativeReanimatedModule(
+@@ -620,9 +611,7 @@ void NativeReanimatedModule::performOperations() {
+ #if REACT_NATIVE_MINOR_VERSION >= 72
+               /* .mountSynchronously = */ true,
+ #endif
+-              /* .shouldYield = */ [this]() {
+-                return propsRegistry_->shouldReanimatedSkipCommit();
+-              }
++              /* .source = */ ShadowTreeCommitSource::Unknown
+         });
+   });
+ }
+@@ -667,7 +656,7 @@ jsi::Value NativeReanimatedModule::measure(
+       uiManager_->getNewestCloneOfShadowNode(*shadowNode);
+ 
+   auto layoutableShadowNode =
+-      traitCast<LayoutableShadowNode const *>(newestCloneOfShadowNode.get());
++      dynamic_cast<LayoutableShadowNode const *>(newestCloneOfShadowNode.get());
+   facebook::react::Point originRelativeToParent =
+       layoutableShadowNode != nullptr
+       ? layoutableShadowNode->getLayoutMetrics().frame.origin
+diff --git a/node_modules/react-native-reanimated/Common/cpp/ReanimatedRuntime/ReanimatedHermesRuntime.h b/node_modules/react-native-reanimated/Common/cpp/ReanimatedRuntime/ReanimatedHermesRuntime.h
+index 4657038..dad0184 100644
+--- a/node_modules/react-native-reanimated/Common/cpp/ReanimatedRuntime/ReanimatedHermesRuntime.h
++++ b/node_modules/react-native-reanimated/Common/cpp/ReanimatedRuntime/ReanimatedHermesRuntime.h
+@@ -27,12 +27,14 @@
+ #include <hermes/hermes.h>
+ #endif
+ 
++#if HERMES_ENABLE_DEBUGGER
+ #if REACT_NATIVE_MINOR_VERSION >= 73
+ #include <hermes/inspector-modern/chrome/Registration.h>
+ #else
+ #include <hermes/inspector/RuntimeAdapter.h>
+ #include <hermes/inspector/chrome/Registration.h>
+ #endif
++#endif
+ 
+ namespace reanimated {
+ 

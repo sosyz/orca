@@ -199,6 +199,19 @@ describe('terminal live accessory input commit hook', () => {
     expect(harness.sent).toEqual([])
   })
 
+  it('Given mirrored text When accessory Enter is pressed Then clears the field before sending Enter', async () => {
+    const harness = createAccessoryInputCommitHarness({
+      sentText: 'pwd',
+      pendingHandle: 'terminal-a'
+    })
+
+    const result = await harness.commit({ bytes: '\r' })
+
+    expect(harness.flushPendingLiveInputText).toHaveBeenCalledWith('terminal-a')
+    expect(harness.sent).toEqual(['\r'])
+    expect(result).toEqual({ kind: 'handled' })
+  })
+
   it('Given accessory backspace with reported composition When committed Then keeps the edited preedit held', async () => {
     // Given
     const harness = createAccessoryInputCommitHarness({

@@ -6,6 +6,11 @@ export const filePreviewStyles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bgBase
   },
+  body: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0
+  },
   header: {
     backgroundColor: colors.bgPanel,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -86,6 +91,11 @@ export const filePreviewStyles = StyleSheet.create({
   },
   scroll: {
     flex: 1,
+    backgroundColor: colors.editorSurface
+  },
+  codePreviewContainer: {
+    flex: 1,
+    minHeight: 0,
     backgroundColor: colors.editorSurface
   },
   textContent: {

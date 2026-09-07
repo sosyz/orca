@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
+import {
+  clearMobileNativeChatSendError,
+  readMobileNativeChatSendError,
+  recordMobileNativeChatSendError,
+  startMobileNativeChatSendErrorDisplay,
+  useMobileNativeChatRuntimeScopeToken
+} from './mobile-native-chat-runtime-store'
 
 const NATIVE_CHAT_SEND_ERROR_HOLD_MS = 4000
 const NATIVE_CHAT_SEND_ERROR_TOAST_MS = 1600
@@ -18,9 +25,9 @@ export function useMobileNativeChatSendError(args: {
   /** Set by the route each render; gates banner vs toast. */
   bannerMountedRef: MutableRefObject<boolean>
 } {
-  const [message, setMessage] = useState<string | null>(null)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const bannerMountedRef = useRef(false)
+  const mountedRef = useRef(false)
+  const lastDisplayKeyRef = useRef<string | null>(null)
   const showToastRef = useRef(args.showToast)
   showToastRef.current = args.showToast
   // Why: `show`/`clear` are handed to sends that resolve much later (a 20s
@@ -30,51 +37,64 @@ export function useMobileNativeChatSendError(args: {
   const liveScopeRef = useRef(args.scopeKey)
   liveScopeRef.current = args.scopeKey
   const scopeKey = args.scopeKey
-  const clearTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-  }, [])
+  const scopeToken = useMobileNativeChatRuntimeScopeToken(scopeKey)
+  const error = readMobileNativeChatSendError(scopeKey)
   const clear = useCallback(() => {
-    if (liveScopeRef.current !== scopeKey) {
+    if (!scopeToken || (mountedRef.current && liveScopeRef.current !== scopeToken.scopeKey)) {
       return
     }
-    clearTimer()
-    setMessage(null)
-  }, [clearTimer, scopeKey])
+    clearMobileNativeChatSendError(scopeToken)
+  }, [scopeToken])
   const show = useCallback(
     (next: string) => {
+      if (!scopeToken) {
+        if (mountedRef.current) {
+          showToastRef.current(next, NATIVE_CHAT_SEND_ERROR_TOAST_MS)
+        }
+        return
+      }
+      if (!mountedRef.current) {
+        recordMobileNativeChatSendError(scopeToken, next)
+        return
+      }
       // Why: deferred failures can land after the user left chat (banner unmounted)
       // or moved to another tab, where the banner belongs to a different terminal —
       // both must fall back to the toast instead of being swallowed or misattributed.
-      if (liveScopeRef.current !== scopeKey || !bannerMountedRef.current) {
+      if (liveScopeRef.current !== scopeToken.scopeKey || !bannerMountedRef.current) {
         showToastRef.current(next, NATIVE_CHAT_SEND_ERROR_TOAST_MS)
         return
       }
-      clearTimer()
-      setMessage(next)
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null
-        setMessage(null)
-      }, NATIVE_CHAT_SEND_ERROR_HOLD_MS)
+      recordMobileNativeChatSendError(scopeToken, next)
     },
-    [clearTimer, scopeKey]
+    [scopeToken]
   )
-  // A held failure describes the scope it was raised on; drop it when that changes.
+
   useEffect(() => {
-    clearTimer()
-    setMessage(null)
-  }, [clearTimer, scopeKey])
-  useEffect(
-    () => () => {
-      // Why: the route writes this ref during render, so an unmount leaves it stuck
-      // true and a pending send's late failure would target a banner that no longer
-      // exists — swallowing the one signal the toast fallback is here to carry.
+    mountedRef.current = true
+    return () => {
       bannerMountedRef.current = false
-      clearTimer()
-    },
-    [clearTimer]
-  )
-  return { message, show, clear, bannerMountedRef }
+      mountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!scopeToken || !error) {
+      lastDisplayKeyRef.current = null
+      return
+    }
+    const mode = bannerMountedRef.current ? 'banner' : 'toast'
+    const displayKey = `${scopeToken.scopeKey}:${scopeToken.generation}:${error.id}:${mode}`
+    if (lastDisplayKeyRef.current === displayKey) {
+      return
+    }
+    lastDisplayKeyRef.current = displayKey
+    if (bannerMountedRef.current) {
+      startMobileNativeChatSendErrorDisplay(scopeToken, error.id, NATIVE_CHAT_SEND_ERROR_HOLD_MS)
+      return
+    }
+    showToastRef.current(error.message, NATIVE_CHAT_SEND_ERROR_TOAST_MS)
+    clearMobileNativeChatSendError(scopeToken, error.id)
+  })
+
+  return { message: error?.message ?? null, show, clear, bannerMountedRef }
 }

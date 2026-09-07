@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from 'react'
 import { ScrollView, StyleSheet, Text, View } from 'react-native'
 import { WebView } from 'react-native-webview'
 import { colors, radii, spacing, typography } from '../../theme/mobile-theme'
+import { LOCAL_DOCUMENT_WEBVIEW_SECURITY_PROPS } from '../../webview/local-document-webview-security'
 import { MERMAID_ENGINE_JS } from './mermaid-webview-engine.generated'
 
 type Props = {
@@ -37,6 +38,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({ source, base }: Pro
         originWhitelist={['*']}
         source={{ html }}
         javaScriptEnabled
+        {...LOCAL_DOCUMENT_WEBVIEW_SECURITY_PROPS}
         scrollEnabled={false}
         // Diagram is self-contained; any navigation attempt means something is
         // wrong, so treat it as a render failure and fall back to source.

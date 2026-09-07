@@ -92,17 +92,84 @@ describe('useInitialSessionTerminalAutoCreate', () => {
       visibleTabCount: 0,
       worktreeId: 'new'
     })
-    expect(consumeCreationRoute).not.toHaveBeenCalled()
+    expect(consumeCreationRoute).toHaveBeenCalledOnce()
     expect(createTerminal).toHaveBeenCalledOnce()
+    expect(consumeCreationRoute.mock.invocationCallOrder[0]).toBeLessThan(
+      createTerminal.mock.invocationCallOrder[0]
+    )
 
     await render({
-      newlyCreatedWorkspace: true,
+      newlyCreatedWorkspace: false,
       terminalsLoaded: true,
       visibleTabCount: 1,
       worktreeId: 'new'
     })
     expect(consumeCreationRoute).toHaveBeenCalledOnce()
     expect(createTerminal).toHaveBeenCalledOnce()
+  })
+
+  it('consumes before a slow create so leaving and returning cannot duplicate it', async () => {
+    let createdRoute = true
+    consumeCreationRoute.mockImplementation(() => {
+      createdRoute = false
+    })
+
+    await render({
+      newlyCreatedWorkspace: createdRoute,
+      terminalsLoaded: true,
+      visibleTabCount: 0,
+      worktreeId: 'new'
+    })
+    expect(consumeCreationRoute).toHaveBeenCalledOnce()
+    expect(createTerminal).toHaveBeenCalledOnce()
+
+    act(() => renderer?.unmount())
+    renderer = null
+    stateRef = {
+      current: { autoCreatedForWorktree: null, sawSessionTabs: false }
+    }
+    await render({
+      newlyCreatedWorkspace: createdRoute,
+      terminalsLoaded: true,
+      visibleTabCount: 0,
+      worktreeId: 'new'
+    })
+    expect(createTerminal).toHaveBeenCalledOnce()
+  })
+
+  it('does not auto-create an ordinary empty workspace', async () => {
+    await render({
+      newlyCreatedWorkspace: false,
+      terminalsLoaded: true,
+      visibleTabCount: 0,
+      worktreeId: 'existing'
+    })
+    expect(consumeCreationRoute).not.toHaveBeenCalled()
+    expect(createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('leaves retry after a failed auto-create to an explicit create action', async () => {
+    let createdRoute = true
+    consumeCreationRoute.mockImplementation(() => {
+      createdRoute = false
+    })
+
+    await render({
+      newlyCreatedWorkspace: createdRoute,
+      terminalsLoaded: true,
+      visibleTabCount: 0,
+      worktreeId: 'new'
+    })
+    await render({
+      newlyCreatedWorkspace: createdRoute,
+      terminalsLoaded: true,
+      visibleTabCount: 0,
+      worktreeId: 'new'
+    })
+    expect(createTerminal).toHaveBeenCalledOnce()
+
+    createTerminal()
+    expect(createTerminal).toHaveBeenCalledTimes(2)
   })
 
   it('consumes a populated creation route before a later remount', async () => {
@@ -152,7 +219,7 @@ describe('useInitialSessionTerminalAutoCreate', () => {
         visibleTabCount: 0,
         worktreeId: 'new'
       })
-      expect(consumeCreationRoute).not.toHaveBeenCalled()
+      expect(consumeCreationRoute).toHaveBeenCalledOnce()
       expect(createTerminal).toHaveBeenCalledOnce()
     }
   )

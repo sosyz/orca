@@ -30,7 +30,7 @@ export function MobileHostCard(props: {
   const statusLabel = credentialMissing
     ? 'Pairing invalid'
     : credentialUnavailable
-      ? 'Pairing temporarily unavailable'
+      ? "Pairing credentials couldn't be read"
       : verdictDisplayLabel(props.verdict)
   const statusVerdict: ConnectionVerdict = credentialMissing
     ? { kind: 'auth-failed', label: statusLabel }
@@ -49,7 +49,7 @@ export function MobileHostCard(props: {
   const credentialHint = credentialMissing
     ? 'Tap to re-pair with your desktop'
     : credentialUnavailable
-      ? 'Unlock your phone, then tap to retry'
+      ? 'Tap to retry reading saved credentials'
       : null
   const accessibilityLabel = [
     `Open ${props.host.name}`,

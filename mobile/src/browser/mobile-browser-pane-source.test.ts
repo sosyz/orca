@@ -12,6 +12,19 @@ function sliceBetween(startPattern: string, endPattern: string): string {
 }
 
 describe('MobileBrowserPane source invariants', () => {
+  it('keys the frame boundary by paired host worktree and page identity', () => {
+    const boundaryBlock = sliceBetween(
+      'export function MobileBrowserPane(props: MobileBrowserPaneProps) {',
+      'function MobileBrowserPaneFrameBoundary({'
+    )
+
+    expect(boundaryBlock).toContain('key={makeMobileBrowserPaneBoundaryKey(')
+    expect(boundaryBlock).toContain('props.pairedHostId')
+    expect(boundaryBlock).toContain('props.worktreeId')
+    expect(boundaryBlock).toContain('props.tab.browserPageId')
+    expect(boundaryBlock).toContain('props.tab.id')
+  })
+
   it('mirrors handler refs in a layout effect instead of during render', () => {
     const mirrorBlock = sliceBetween(
       'useLayoutEffect(() => {',

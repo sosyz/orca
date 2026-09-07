@@ -11,12 +11,9 @@ export { normalizeNativeChatUserText as normalizeReconcileText } from './mobile-
 /** An ack-lost ('unknown' outcome) send held until its transcript echo lands or
  *  the deadline surfaces the uncertainty. */
 export type UnconfirmedSend = {
-  draftKey: string
-  pendingKey: string | null
-  text: string
   normalizedText: string
+  expectedOccurrence: number
   baselineTailMessageId: string | null
-  deadline: ReturnType<typeof setTimeout> | null
 }
 
 export function normalizedUserText(message: NativeChatMessage): string | null {
@@ -194,10 +191,10 @@ export function findLandedImagePreviewEchoes(
   return landed
 }
 
-export function findLandedUnconfirmedSends(
+export function findLandedUnconfirmedSends<T extends UnconfirmedSend>(
   messages: readonly NativeChatMessage[],
-  entries: readonly UnconfirmedSend[]
-): UnconfirmedSend[] {
+  entries: readonly T[]
+): T[] {
   // Why: pagination prepends old equal text; only unclaimed matches after each
   // captured tail prove new echoes. User turns are keyed by text; an image echo
   // (`[Image: source: …]` or no text) keys under '' so an empty-text send can
@@ -216,7 +213,7 @@ export function findLandedUnconfirmedSends(
   }
 
   const claimedMessageIds = new Set<string>()
-  const landed: UnconfirmedSend[] = []
+  const landed: T[] = []
   for (const entry of entries) {
     const tailIndex = entry.baselineTailMessageId
       ? messageIndexById.get(entry.baselineTailMessageId)
@@ -224,10 +221,22 @@ export function findLandedUnconfirmedSends(
     if (tailIndex === undefined) {
       continue
     }
-    const echo = userMessagesByText
-      .get(entry.normalizedText)
-      ?.find((message) => message.index > tailIndex && !claimedMessageIds.has(message.id))
+    let seen = 0
+    let echo: { id: string; index: number } | undefined
+    for (const message of userMessagesByText.get(entry.normalizedText) ?? []) {
+      if (message.index <= tailIndex) {
+        continue
+      }
+      seen += 1
+      if (seen === entry.expectedOccurrence) {
+        echo = message
+        break
+      }
+    }
     if (echo) {
+      if (claimedMessageIds.has(echo.id)) {
+        continue
+      }
       claimedMessageIds.add(echo.id)
       landed.push(entry)
     }

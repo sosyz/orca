@@ -175,6 +175,8 @@ export function useMobileTerminalPaste({
         showToast('Paste failed (disconnected)', 1500)
       } else if (err.message === 'Clipboard image is too large') {
         showToast('Image too large to paste', 1500)
+      } else if (err.message === 'Clipboard permission denied') {
+        showToast('Clipboard permission denied', 1500)
       } else {
         showToast('Paste failed', 1500)
       }

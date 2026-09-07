@@ -29,6 +29,7 @@ import {
 } from 'lucide-react-native'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
 import { colors, radii, spacing } from '../theme/mobile-theme'
+import { LOCAL_DOCUMENT_WEBVIEW_SECURITY_PROPS } from '../webview/local-document-webview-security'
 import { normalizeMobileRichMarkdownKeyboardInset } from './mobile-rich-markdown-editor-keyboard-inset-script'
 import {
   buildMobileRichMarkdownEditorHtml,
@@ -284,6 +285,7 @@ function MobileRichMarkdownEditorInner(
         originWhitelist={[EDITOR_DOCUMENT_ORIGIN, 'about:blank']}
         javaScriptEnabled
         domStorageEnabled={false}
+        {...LOCAL_DOCUMENT_WEBVIEW_SECURITY_PROPS}
         hideKeyboardAccessoryView
         keyboardDisplayRequiresUserAction={false}
         onMessage={handleMessage}

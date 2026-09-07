@@ -14,6 +14,7 @@ import {
 } from './markdown-inline-token-rules'
 import { isMobileMermaidLanguage } from './mobile-mermaid-language'
 import { parseMobileMarkdown } from './mobile-markdown-parser'
+import { markdownTableColumnWidths, markdownTableWidth } from './mobile-markdown-table-widths'
 import { MermaidDiagram } from './pr-sidebar/MermaidDiagram'
 
 type Props = {
@@ -246,12 +247,19 @@ function MobileMarkdownInner({ content, fallback = '', textScale = 1, onOpenFile
           const visibleRows = block.rows.slice(0, MAX_TABLE_ROWS)
           const hiddenRows = Math.max(0, block.rows.length - visibleRows.length)
           const hiddenColumns = Math.max(0, block.headers.length - visibleHeaders.length)
+          const columnWidths = markdownTableColumnWidths(visibleHeaders, visibleRows)
+          const columnWidthStyles = columnWidths.map((width) => ({ width }))
+          const tableWidthStyle = { width: markdownTableWidth(columnWidths) }
           return (
             <ScrollView key={index} horizontal showsHorizontalScrollIndicator={false}>
               <View style={styles.table}>
                 <View style={styles.tableRow}>
                   {visibleHeaders.map((header, cellIndex) => (
-                    <Text key={cellIndex} style={[styles.tableCell, styles.tableHeader]}>
+                    <Text
+                      key={cellIndex}
+                      selectable
+                      style={[styles.tableCell, columnWidthStyles[cellIndex], styles.tableHeader]}
+                    >
                       {renderInline(header, onOpenFile)}
                     </Text>
                   ))}
@@ -259,14 +267,18 @@ function MobileMarkdownInner({ content, fallback = '', textScale = 1, onOpenFile
                 {visibleRows.map((row, rowIndex) => (
                   <View key={rowIndex} style={styles.tableRow}>
                     {visibleHeaders.map((_, cellIndex) => (
-                      <Text key={cellIndex} style={styles.tableCell}>
+                      <Text
+                        key={cellIndex}
+                        selectable
+                        style={[styles.tableCell, columnWidthStyles[cellIndex]]}
+                      >
                         {renderInline(row[cellIndex] ?? '', onOpenFile)}
                       </Text>
                     ))}
                   </View>
                 ))}
                 {hiddenRows > 0 || hiddenColumns > 0 ? (
-                  <Text style={styles.tableTruncated}>
+                  <Text style={[styles.tableTruncated, tableWidthStyle]}>
                     {hiddenRows > 0 ? `${hiddenRows} more rows` : ''}
                     {hiddenRows > 0 && hiddenColumns > 0 ? ' · ' : ''}
                     {hiddenColumns > 0 ? `${hiddenColumns} more columns` : ''}

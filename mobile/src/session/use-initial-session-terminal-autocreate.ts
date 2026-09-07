@@ -77,6 +77,7 @@ export function useInitialSessionTerminalAutoCreate(
       return
     }
     stateRef.current.autoCreatedForWorktree = worktreeId
+    consumeCreationRoute()
     createTerminal()
   }, [
     activeHandle,

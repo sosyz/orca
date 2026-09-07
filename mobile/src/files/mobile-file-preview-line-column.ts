@@ -38,8 +38,11 @@ export function textOffsetForLineColumn(
   return Math.min(cappedLineEnd, lineStart + columnOffset)
 }
 
-export function scrollOffsetForPreviewLine(line: number): number {
-  return Math.max(0, line - 1) * MOBILE_FILE_PREVIEW_TEXT_LINE_HEIGHT
+export function scrollOffsetForPreviewLine(
+  line: number,
+  lineHeight = MOBILE_FILE_PREVIEW_TEXT_LINE_HEIGHT
+): number {
+  return Math.max(0, line - 1) * Math.max(0, lineHeight)
 }
 
 function parsePositiveInteger(value: string | undefined): number | null {

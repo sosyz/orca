@@ -16,6 +16,11 @@ import {
   loadMobileOnboardingSteps,
   mobileOnboardingDestination
 } from '../src/onboarding/mobile-onboarding-plan'
+import { formatUnknownErrorMessage } from '../src/transport/unknown-error-message'
+import {
+  redactConnectionLogEntry,
+  redactConnectionLogText
+} from '../src/diagnostics/connection-log-redaction'
 
 type Status = 'awaiting-confirm' | 'connecting' | 'error'
 
@@ -93,7 +98,7 @@ export default function PairConfirmScreen() {
           if (!mountedRef.current || activePairingAttemptRef.current !== attempt) {
             return
           }
-          logsRef.current = [...logsRef.current, entry]
+          logsRef.current = [...logsRef.current, redactConnectionLogEntry(entry)]
           setLogs(logsRef.current)
         }
       }
@@ -129,12 +134,15 @@ export default function PairConfirmScreen() {
       if (!mountedRef.current || !attemptIsCurrent) {
         return
       }
-      console.warn('[pair-confirm] connect failed', err)
+      const failureMessage = redactConnectionLogText(
+        formatUnknownErrorMessage(err, 'Unknown error')
+      )
+      console.warn('[pair-confirm] connect failed')
       setStatus('error')
       setErrorMessage(
         timedOut
           ? `Couldn't connect within ${PAIRING_OVERALL_TIMEOUT_MS / 1000}s — see log below for where it stalled`
-          : `Pairing failed: ${err instanceof Error ? err.message : String(err)}`
+          : `Pairing failed: ${failureMessage}`
       )
     }
   }
@@ -143,7 +151,12 @@ export default function PairConfirmScreen() {
 
   return (
     <View ref={setPairConfirmRootRef} style={[styles.container, containerPadding]}>
-      <Pressable style={styles.backButton} onPress={cancel}>
+      <Pressable
+        style={styles.backButton}
+        onPress={cancel}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+      >
         <ChevronLeft size={22} color={colors.textSecondary} />
       </Pressable>
 

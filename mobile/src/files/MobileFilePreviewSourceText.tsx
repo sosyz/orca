@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { ScrollView, Text } from 'react-native'
+import { ScrollView, Text, View } from 'react-native'
 import { MobileSyntaxSegments } from '../components/MobileSyntaxSegments'
 import { formatPreviewByteLength } from './mobile-file-preview-request'
 import { scrollOffsetForPreviewLine } from './mobile-file-preview-line-column'
 import { buildMobileFilePreviewSyntax } from './mobile-file-preview-syntax'
 import { filePreviewStyles as styles } from './mobile-file-preview-styles'
+import { MobileCodeScaleControls } from './MobileCodeScaleControls'
+import { scaledMobileCodeTextMetrics } from './mobile-code-text-scale'
+import { useMobileCodeTextScale } from './use-mobile-code-text-scale'
+
+const SOURCE_FONT_SIZE = 13
+const SOURCE_LINE_HEIGHT = 19
 
 export function MobileFilePreviewSourceText({
   relativePath,
@@ -21,6 +27,11 @@ export function MobileFilePreviewSourceText({
 }) {
   const scrollRef = useRef<ScrollView>(null)
   const revealedRef = useRef(false)
+  const { textScale, panHandlers, zoomOut, zoomIn, resetZoom } = useMobileCodeTextScale()
+  const textMetrics = useMemo(
+    () => scaledMobileCodeTextMetrics(SOURCE_FONT_SIZE, SOURCE_LINE_HEIGHT, textScale),
+    [textScale]
+  )
   const syntax = useMemo(
     () => buildMobileFilePreviewSyntax(relativePath, content),
     [content, relativePath]
@@ -36,25 +47,37 @@ export function MobileFilePreviewSourceText({
     }
     revealedRef.current = true
     scrollRef.current?.scrollTo({
-      y: scrollOffsetForPreviewLine(initialLine),
+      y: scrollOffsetForPreviewLine(initialLine, textMetrics.lineHeight),
       animated: false
     })
   }
 
   return (
-    <ScrollView
-      ref={scrollRef}
-      style={styles.scroll}
-      contentContainerStyle={styles.textContent}
-      onContentSizeChange={revealInitialLine}
-    >
-      {truncated ? (
-        <MobileFilePreviewTruncatedNote byteLength={byteLength ?? content.length} />
-      ) : null}
-      <Text selectable style={styles.textPreview} accessibilityLabel="File preview">
-        <MobileSyntaxSegments segments={syntax.segments} />
-      </Text>
-    </ScrollView>
+    <View style={styles.codePreviewContainer} {...panHandlers}>
+      <MobileCodeScaleControls
+        textScale={textScale}
+        onZoomOut={zoomOut}
+        onZoomIn={zoomIn}
+        onReset={resetZoom}
+      />
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.textContent}
+        onContentSizeChange={revealInitialLine}
+      >
+        {truncated ? (
+          <MobileFilePreviewTruncatedNote byteLength={byteLength ?? content.length} />
+        ) : null}
+        <Text
+          selectable
+          style={[styles.textPreview, textMetrics]}
+          accessibilityLabel="File preview"
+        >
+          <MobileSyntaxSegments segments={syntax.segments} />
+        </Text>
+      </ScrollView>
+    </View>
   )
 }
 

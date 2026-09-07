@@ -10,6 +10,7 @@ import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
 const sendWithOutcome = vi.fn()
 const clearInputWrite = vi.fn()
 const typeCommandWithOutcome = vi.fn()
+const healInput = vi.fn()
 vi.mock('./mobile-native-chat-send', () => ({
   sendMobileNativeChatMessageWithOutcome: (...args: unknown[]) => sendWithOutcome(...args),
   typeMobileNativeChatCommandWithOutcome: (...args: unknown[]) => typeCommandWithOutcome(...args),
@@ -19,7 +20,7 @@ vi.mock('./mobile-native-chat-send', () => ({
   MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS: 2_000
 }))
 vi.mock('./mobile-native-chat-stale-input', () => ({
-  healMobileNativeChatStaleInput: () => Promise.resolve(true)
+  healMobileNativeChatStaleInput: (...args: unknown[]) => healInput(...args)
 }))
 
 import { useMobileNativeChatMessageSend } from './use-mobile-native-chat-message-send'
@@ -29,16 +30,57 @@ import {
   resetMobileNativeChatTerminalWritesForTests
 } from './mobile-native-chat-terminal-write-lock'
 import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
+import {
+  clearMobileNativeChatRuntimeStoreForTests,
+  ensureMobileNativeChatRuntimeScope,
+  readMobileNativeChatPending,
+  readMobileNativeChatSendError
+} from './mobile-native-chat-runtime-store'
+import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
+import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 
 type Send = ReturnType<typeof useMobileNativeChatMessageSend>
+type Drafts = ReturnType<typeof useMobileNativeChatDrafts>
 
 const DRAFT = 'Linked Linear issue: ABC-123\nhttps://linear.app/x/issue/ABC-123'
+const COMBINED_SCOPE = 'host\0wt\0a'
+const COMBINED_PENDING = `${COMBINED_SCOPE}\0session-a`
+const UNCONFIRMED_MESSAGE = 'Delivery unconfirmed — check chat before sending again'
+
+function userTextMessage(id: string, text: string): NativeChatMessage {
+  return {
+    id,
+    role: 'user',
+    blocks: [{ type: 'text', text }],
+    timestamp: null,
+    source: 'transcript'
+  }
+}
+
+async function flushPromises(times = 5): Promise<void> {
+  for (let index = 0; index < times; index++) {
+    await Promise.resolve()
+  }
+}
 
 describe('useMobileNativeChatMessageSend', () => {
   let renderer: ReactTestRenderer | null = null
   let api: Send | null = null
+  let combinedApi: Send | null = null
+  let combinedDrafts: Drafts | null = null
   const acceptSend = vi.fn()
-  const captureSendOrigin = vi.fn(() => ({ draftKey: 'k', pendingKey: 'p' }) as never)
+  const captureSendOrigin = vi.fn(() => {
+    const scope = ensureMobileNativeChatRuntimeScope('k')
+    return {
+      draftKey: 'k',
+      pendingKey: 'p',
+      scopeGeneration: scope.generation,
+      normalizedText: 'ping',
+      baselineOccurrences: 0,
+      baselineTailMessageId: null,
+      baselineResolved: true
+    }
+  })
   const clearDraftForSend = vi.fn()
   const restoreRejectedDraft = vi.fn()
   const holdUnconfirmedSend = vi.fn()
@@ -75,6 +117,44 @@ describe('useMobileNativeChatMessageSend', () => {
     })
   }
 
+  function CombinedProbe({ messages }: { messages: NativeChatMessage[] }): null {
+    combinedDrafts = useMobileNativeChatDrafts({
+      hostId: 'host',
+      worktreeId: 'wt',
+      tabId: 'a',
+      sessionId: 'session-a',
+      messages,
+      transcriptSettled: true
+    })
+    agentRef.current = 'claude'
+    combinedApi = useMobileNativeChatMessageSend({
+      client: { sendRequest: vi.fn() } as never,
+      enabled: true,
+      handleRef: { current: 'term' },
+      deviceTokenRef: { current: 'device' },
+      agentRef,
+      commandSendRef,
+      captureSendOrigin: combinedDrafts.captureSendOrigin,
+      readSeededLaunchDraftSeed: combinedDrafts.readSeededLaunchDraftSeed,
+      clearDraftForSend: combinedDrafts.clearDraftForSend,
+      restoreRejectedDraft: combinedDrafts.restoreRejectedDraft,
+      acceptSend: combinedDrafts.acceptSend,
+      holdUnconfirmedSend: combinedDrafts.holdUnconfirmedSend,
+      onSendError
+    })
+    return null
+  }
+
+  async function mountCombined(messages: NativeChatMessage[] = []): Promise<void> {
+    await act(async () => {
+      renderer = create(createElement(CombinedProbe, { messages }))
+    })
+  }
+
+  async function updateCombined(messages: NativeChatMessage[]): Promise<void> {
+    await act(async () => renderer?.update(createElement(CombinedProbe, { messages })))
+  }
+
   const sentArgs = (): {
     text?: string
     resolvedLaunchDraft?: { text: string; createdAt: number }
@@ -87,10 +167,13 @@ describe('useMobileNativeChatMessageSend', () => {
     (clearInputWrite.mock.calls[0]?.[0] ?? {}) as { clearInput?: string }
 
   beforeEach(() => {
+    clearMobileNativeChatRuntimeStoreForTests()
     sendWithOutcome.mockReset()
     sendWithOutcome.mockResolvedValue('accepted')
     clearInputWrite.mockReset()
     clearInputWrite.mockResolvedValue(true)
+    healInput.mockReset()
+    healInput.mockResolvedValue(true)
     typeCommandWithOutcome.mockReset()
     typeCommandWithOutcome.mockResolvedValue('accepted')
     acceptSend.mockReset()
@@ -109,6 +192,9 @@ describe('useMobileNativeChatMessageSend', () => {
     })
     renderer = null
     api = null
+    combinedApi = null
+    combinedDrafts = null
+    clearMobileNativeChatRuntimeStoreForTests()
   })
 
   it('sizes the pre-clear to every line of a parked launch draft', async () => {
@@ -286,6 +372,129 @@ describe('useMobileNativeChatMessageSend', () => {
       await api!.send('hello')
     })
     expect(holdUnconfirmedSend).toHaveBeenCalledTimes(1)
+    expect(holdUnconfirmedSend).toHaveBeenCalledWith(
+      expect.anything(),
+      'Delivery unconfirmed — check chat before sending again'
+    )
+  })
+
+  it('reserves distinct unconfirmed occurrences while duplicate sends are in flight', async () => {
+    let resolveFirst!: (outcome: MobileNativeChatSendOutcome) => void
+    let resolveSecond!: (outcome: MobileNativeChatSendOutcome) => void
+    sendWithOutcome
+      .mockImplementationOnce(
+        () => new Promise<MobileNativeChatSendOutcome>((resolve) => (resolveFirst = resolve))
+      )
+      .mockImplementationOnce(
+        () => new Promise<MobileNativeChatSendOutcome>((resolve) => (resolveSecond = resolve))
+      )
+    mount(() => null)
+
+    await act(async () => {
+      const first = api!.send('ping')
+      const second = api!.send('ping')
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      resolveFirst('unknown')
+      resolveSecond('unknown')
+      await Promise.all([first, second])
+    })
+
+    expect(holdUnconfirmedSend.mock.calls.map((call) => call[0].unconfirmedOccurrence)).toEqual([
+      1, 2
+    ])
+  })
+
+  it('does not reuse a released lower occurrence while a higher duplicate is in flight', async () => {
+    let resolveFirst!: (outcome: MobileNativeChatSendOutcome) => void
+    let resolveSecond!: (outcome: MobileNativeChatSendOutcome) => void
+    let resolveThird!: (outcome: MobileNativeChatSendOutcome) => void
+    sendWithOutcome
+      .mockImplementationOnce(
+        () => new Promise<MobileNativeChatSendOutcome>((resolve) => (resolveFirst = resolve))
+      )
+      .mockImplementationOnce(
+        () => new Promise<MobileNativeChatSendOutcome>((resolve) => (resolveSecond = resolve))
+      )
+      .mockImplementationOnce(
+        () => new Promise<MobileNativeChatSendOutcome>((resolve) => (resolveThird = resolve))
+      )
+    mount(() => null)
+
+    await act(async () => {
+      const first = api!.send('ping')
+      const second = api!.send('ping')
+      await flushPromises()
+      resolveFirst('accepted')
+      await first
+      const third = api!.send('ping')
+      await flushPromises()
+      resolveSecond('unknown')
+      resolveThird('unknown')
+      await Promise.all([second, third])
+    })
+
+    expect(acceptSend.mock.calls[0]?.[0].unconfirmedOccurrence).toBe(1)
+    expect(holdUnconfirmedSend.mock.calls.map((call) => call[0].unconfirmedOccurrence)).toEqual([
+      2, 3
+    ])
+  })
+
+  it('keeps an accepted send from claiming an echo that landed during deferred clear', async () => {
+    await mountCombined()
+    const firstOrigin = combinedDrafts!.captureSendOrigin('ping')!
+    act(() => combinedDrafts!.acceptSend(firstOrigin, 'ping'))
+    let resolveClear!: (cleared: boolean) => void
+    clearInputWrite.mockReturnValueOnce(new Promise<boolean>((resolve) => (resolveClear = resolve)))
+    sendWithOutcome.mockResolvedValueOnce('accepted')
+
+    let sending!: Promise<boolean>
+    await act(async () => {
+      sending = combinedApi!.send('ping')
+      await flushPromises()
+    })
+    await updateCombined([userTextMessage('echo-1', 'ping')])
+    expect(readMobileNativeChatPending(COMBINED_SCOPE, COMBINED_PENDING)).toEqual([])
+
+    await act(async () => {
+      resolveClear(true)
+      await sending
+    })
+
+    expect(
+      readMobileNativeChatPending(COMBINED_SCOPE, COMBINED_PENDING).map((item) => item.text)
+    ).toEqual(['ping'])
+  })
+
+  it('keeps an unknown send from claiming an echo that landed during deferred heal', async () => {
+    vi.useFakeTimers()
+    try {
+      await mountCombined()
+      const firstOrigin = combinedDrafts!.captureSendOrigin('ping')!
+      act(() => combinedDrafts!.acceptSend(firstOrigin, 'ping'))
+      let resolveHeal!: (healed: boolean) => void
+      healInput.mockReturnValueOnce(new Promise<boolean>((resolve) => (resolveHeal = resolve)))
+      sendWithOutcome.mockResolvedValueOnce('unknown')
+
+      let sending!: Promise<boolean>
+      await act(async () => {
+        sending = combinedApi!.send('ping')
+        await flushPromises()
+      })
+      await updateCombined([userTextMessage('echo-1', 'ping')])
+      expect(readMobileNativeChatPending(COMBINED_SCOPE, COMBINED_PENDING)).toEqual([])
+
+      await act(async () => {
+        resolveHeal(true)
+        await sending
+      })
+      act(() => vi.advanceTimersByTime(30_000))
+
+      expect(readMobileNativeChatSendError(COMBINED_SCOPE)?.message).toBe(UNCONFIRMED_MESSAGE)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each(['claude', 'openclaude'] as const)(

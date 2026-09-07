@@ -1,0 +1,109 @@
+diff --git a/node_modules/@react-native-oh/react-native-harmony-cli/dist/commands/bundle-harmony.js b/node_modules/@react-native-oh/react-native-harmony-cli/dist/commands/bundle-harmony.js
+index 0db5bfb..3b31e91 100644
+--- a/node_modules/@react-native-oh/react-native-harmony-cli/dist/commands/bundle-harmony.js
++++ b/node_modules/@react-native-oh/react-native-harmony-cli/dist/commands/bundle-harmony.js
+@@ -32,7 +32,6 @@ var _a;
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.commandBundleHarmony = void 0;
+ const node_fs_1 = __importDefault(require("node:fs"));
+-const os_1 = __importDefault(require("os"));
+ const fs_extra_1 = __importDefault(require("fs-extra"));
+ const metro_1 = require("metro");
+ const path_1 = __importDefault(require("path"));
+@@ -40,7 +39,6 @@ const assetResolver_1 = require("../assetResolver");
+ const child_process_1 = require("child_process");
+ const io_1 = require("../io");
+ const core_1 = require("../core");
+-const node_crypto_1 = require("node:crypto");
+ const ENABLE_DEBUG_LOG = process.env.RNOH_BUNDLE_DEBUG === 'true';
+ function debugLog(message) {
+     if (ENABLE_DEBUG_LOG) {
+@@ -211,20 +209,22 @@ function saveHbcBundle(logger, bundleCode, bundleOutput, hermescPath, hermescOpt
+                 ],
+             });
+         }
+-        const tmpBundlePath = `${os_1.default.tmpdir()}${path_1.default.sep}b-${(0, node_crypto_1.randomUUID)()}.harmony.js`;
+-        debugLog('Writing temporary JS bundle...');
+-        yield fs_extra_1.default.writeFile(tmpBundlePath, bundleCode);
+         const hbcFilePath = bundleOutput.endsWith('.hbc')
+             ? bundleOutput
+             : path_1.default.join(path_1.default.dirname(bundleOutput), 'hermes_bundle.hbc');
+-        const hermescOptionsString = (hermescOptions === null || hermescOptions === void 0 ? void 0 : hermescOptions.map((e) => `-${e}`).join(' ')) || '';
++        const hermescArgs = [
++            ...((_a = hermescOptions === null || hermescOptions === void 0 ? void 0 : hermescOptions.map((option) => `-${option}`)) !== null && _a !== void 0 ? _a : []),
++            '--emit-binary',
++            '-out',
++            hbcFilePath,
++            '-',
++        ];
+         debugLog(`Executing hermesc compiler: ${resolvedHermescPath}`);
+-        (0, child_process_1.execSync)(`${resolvedHermescPath} ${hermescOptionsString} --emit-binary -out ${hbcFilePath} ${tmpBundlePath}`, {
+-            stdio: 'inherit',
++        (0, child_process_1.execFileSync)(resolvedHermescPath, hermescArgs, {
++            input: bundleCode,
++            stdio: ['pipe', 'inherit', 'inherit'],
+         });
+-        debugLog('Hermesc execution completed, cleaning up temp file...');
+-        node_fs_1.default.unlinkSync(tmpBundlePath);
+-        debugLog('Temp file deleted');
++        debugLog('Hermesc execution completed');
+         logger.info((s) => `Created ${hbcFilePath}`);
+     });
+ }
+diff --git a/node_modules/@react-native-oh/react-native-harmony-cli/src/commands/bundle-harmony.ts b/node_modules/@react-native-oh/react-native-harmony-cli/src/commands/bundle-harmony.ts
+index 063fec1..66658f7 100644
+--- a/node_modules/@react-native-oh/react-native-harmony-cli/src/commands/bundle-harmony.ts
++++ b/node_modules/@react-native-oh/react-native-harmony-cli/src/commands/bundle-harmony.ts
+@@ -7,15 +7,13 @@
+ 
+ import { Command } from './types';
+ import fs from 'node:fs';
+-import os from 'os';
+ import fse from 'fs-extra';
+ import {runBuild, loadConfig, AssetData, RunBuildOptions as BuildOptions} from 'metro';
+ import pathUtils from 'path';
+ import { copyAssets } from '../assetResolver';
+-import { execSync } from 'child_process';
++import { execFileSync } from 'child_process';
+ import { Logger } from '../io';
+ import { DescriptiveError } from '../core';
+-import { randomUUID } from 'node:crypto';
+ 
+ type MetroConfig = Awaited<ReturnType<typeof loadConfig>>;
+ 
+@@ -243,24 +241,22 @@ async function saveHbcBundle(
+     });
+   }
+ 
+-  const tmpBundlePath = `${os.tmpdir()}${pathUtils.sep}b-${randomUUID()}.harmony.js`;
+-  debugLog('Writing temporary JS bundle...');
+-  await fse.writeFile(tmpBundlePath, bundleCode);
+   const hbcFilePath = bundleOutput.endsWith('.hbc')
+     ? bundleOutput
+     : pathUtils.join(pathUtils.dirname(bundleOutput), 'hermes_bundle.hbc');
+-  const hermescOptionsString =
+-    hermescOptions?.map((e) => `-${e}`).join(' ') || '';
++  const hermescArgs = [
++    ...(hermescOptions?.map((option) => `-${option}`) ?? []),
++    '--emit-binary',
++    '-out',
++    hbcFilePath,
++    '-',
++  ];
+   debugLog(`Executing hermesc compiler: ${resolvedHermescPath}`);
+-  execSync(
+-    `${resolvedHermescPath} ${hermescOptionsString} --emit-binary -out ${hbcFilePath} ${tmpBundlePath}`,
+-    {
+-      stdio: 'inherit',
+-    }
++  execFileSync(resolvedHermescPath, hermescArgs, {
++    input: bundleCode,
++    stdio: ['pipe', 'inherit', 'inherit'],
+   );
+-  debugLog('Hermesc execution completed, cleaning up temp file...');
+-  fs.unlinkSync(tmpBundlePath);
+-  debugLog('Temp file deleted');
++  debugLog('Hermesc execution completed');
+   logger.info((s) => `Created ${hbcFilePath}`);
+ }
+ 

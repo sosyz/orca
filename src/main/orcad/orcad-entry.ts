@@ -139,6 +139,7 @@ async function startOrcadRuntime(
   const { getAppEnvironment } = await import('../../shared/app-environment')
   const { resolveAdvertisedPairingEndpoint } = await import('../runtime/pairing-endpoint')
   const { ServeReadinessPublisher } = await import('../server/serve-readiness')
+  const { HEADLESS_RUNTIME_WINDOW_ID } = await import('../../shared/runtime-types')
   const { Store } = await import('../persistence/loading-store/store')
   const { ensureActiveOrcaProfile, initOrcaProfilePaths } =
     await import('../orca-profiles/profile-index-store')
@@ -199,6 +200,9 @@ async function startOrcadRuntime(
 
   await runtime.refreshRestoredOrchestrationAuthority()
   await runtime.reconcileLegacyWorkerTerminals()
+  // Why: orcad has no renderer graph publisher; publish the same empty headless graph
+  // `--serve` publishes so mobile session-tab creates can take the runtime-owned path.
+  runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
 
   const bindHost = resolveOrcadBindHost(options.bind)
   const rpc = new OrcaRuntimeRpcServer({

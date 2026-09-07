@@ -2,6 +2,7 @@ import type { RuntimeMobileTerminalTheme } from '../../../src/shared/runtime-typ
 import type { TerminalOscLinkRange } from '../../../src/shared/terminal-osc-link-ranges'
 
 export type TerminalWebViewCommand =
+  | { type: 'bridge-ack'; id?: number; bridgeId: string }
   | { type: 'ping'; id?: number }
   | { type: 'write'; id?: number; data: string }
   | {
@@ -13,6 +14,8 @@ export type TerminalWebViewCommand =
       oscLinks?: TerminalOscLinkRange[]
       terminalTheme?: RuntimeMobileTerminalTheme
       fontScale?: number
+      // Harmony ArkWeb can create WebGL2 while failing to paint xterm's glyph atlas.
+      enableWebgl?: boolean
       // Why: width-reflow re-streams replay the same content rewrapped at new
       // cols; preserve the reader's scroll position instead of jumping to bottom.
       preserveScroll?: boolean

@@ -44,13 +44,13 @@ type Subscription = {
 
 let pageCounter = 0
 
-function makeFrame(): BrowserScreencastFrame {
+function makeFrame(label = 'frame'): BrowserScreencastFrame {
   return {
     opcode: BrowserScreencastOpcode.Frame,
     seq: 1,
     format: 'jpeg',
     metadata: { deviceWidth: 360, deviceHeight: 640, pageScaleFactor: 1 },
-    image: new TextEncoder().encode('frame')
+    image: new TextEncoder().encode(label)
   }
 }
 
@@ -58,7 +58,44 @@ function spinnerCount(renderer: ReactTestRenderer): number {
   return renderer.root.findAllByType('ActivityIndicator').length
 }
 
-async function renderPane(): Promise<{ renderer: ReactTestRenderer; stream: Subscription }> {
+function renderedImageUris(renderer: ReactTestRenderer): string[] {
+  return renderer.root
+    .findAllByType('Image')
+    .map((image) => (image.props.source as { uri?: string } | null)?.uri)
+    .filter((uri): uri is string => typeof uri === 'string')
+}
+
+type PaneRenderOptions = {
+  pairedHostId?: string
+  worktreeId?: string
+  tabId?: string
+  browserPageId?: string
+}
+
+function createPaneElement(
+  client: RpcClient,
+  tab: MobileBrowserTab,
+  options: Required<Pick<PaneRenderOptions, 'pairedHostId' | 'worktreeId'>>
+) {
+  return createElement(MobileBrowserPane, {
+    client,
+    pairedHostId: options.pairedHostId,
+    worktreeId: options.worktreeId,
+    tab,
+    screencastSupported: true,
+    keyboardLift: 0,
+    bottomInset: 0,
+    onToast: () => {}
+  })
+}
+
+async function renderPane(options: PaneRenderOptions = {}): Promise<{
+  client: RpcClient
+  renderer: ReactTestRenderer
+  stream: Subscription
+  tab: MobileBrowserTab
+  worktreeId: string
+}> {
   pageCounter += 1
   const subscriptions: Subscription[] = []
   const client = {
@@ -76,10 +113,10 @@ async function renderPane(): Promise<{ renderer: ReactTestRenderer; stream: Subs
 
   const tab: MobileBrowserTab = {
     type: 'browser',
-    id: `tab-${pageCounter}`,
+    id: options.tabId ?? `tab-${pageCounter}`,
     title: 'Dashboard',
     browserWorkspaceId: 'bw-1',
-    browserPageId: `page-${pageCounter}`,
+    browserPageId: options.browserPageId ?? `page-${pageCounter}`,
     url: 'https://dashboard.example',
     loading: false,
     canGoBack: false,
@@ -90,15 +127,10 @@ async function renderPane(): Promise<{ renderer: ReactTestRenderer; stream: Subs
   let renderer: ReactTestRenderer
   await act(async () => {
     renderer = create(
-      createElement(MobileBrowserPane, {
-        client,
+      createPaneElement(client, tab, {
+        pairedHostId: options.pairedHostId ?? `host-${pageCounter}`,
         // Why: unique worktree id keeps each test on a cold module-level frame cache.
-        worktreeId: `wt-${pageCounter}`,
-        tab,
-        screencastSupported: true,
-        keyboardLift: 0,
-        bottomInset: 0,
-        onToast: () => {}
+        worktreeId: options.worktreeId ?? `wt-${pageCounter}`
       }),
       { createNodeMock: () => ({ setNativeProps: () => {} }) }
     )
@@ -118,7 +150,13 @@ async function renderPane(): Promise<{ renderer: ReactTestRenderer; stream: Subs
   if (!stream) {
     throw new Error('browser.screencast subscription not created')
   }
-  return { renderer: mounted, stream }
+  return {
+    client,
+    renderer: mounted,
+    stream,
+    tab,
+    worktreeId: options.worktreeId ?? `wt-${pageCounter}`
+  }
 }
 
 describe('MobileBrowserPane with a stream that reports ready but sends no frames', () => {
@@ -145,10 +183,61 @@ describe('MobileBrowserPane with a stream that reports ready but sends no frames
     })
 
     expect(spinnerCount(renderer)).toBe(0)
-    const source = renderer.root
-      .findAllByType('Image')
-      .map((image) => (image.props.source as { uri?: string } | null)?.uri)
-      .find((uri) => typeof uri === 'string')
+    const source = renderedImageUris(renderer)[0]
     expect(source).toContain(Buffer.from(makeFrame().image).toString('base64'))
+  })
+
+  it('reuses a cached frame when the same host page remounts', async () => {
+    const options = {
+      pairedHostId: 'paired-cache-host',
+      worktreeId: 'repo::/cache-worktree',
+      browserPageId: 'browser-page-cache'
+    }
+    const first = await renderPane(options)
+    const cachedFrame = makeFrame('same-host-cache')
+
+    act(() => {
+      first.stream.onBinaryFrame?.(cachedFrame)
+    })
+    act(() => {
+      first.renderer.unmount()
+    })
+
+    const second = await renderPane({ ...options, tabId: 'tab-cache-remount' })
+
+    expect(renderedImageUris(second.renderer).join('\n')).toContain(
+      Buffer.from(cachedFrame.image).toString('base64')
+    )
+  })
+
+  it('resets rendered image layers when the same page switches paired hosts', async () => {
+    const first = await renderPane({
+      pairedHostId: 'paired-host-a',
+      worktreeId: 'repo::/shared-worktree',
+      browserPageId: 'browser-page-shared'
+    })
+    const oldFrame = makeFrame('host-a-only')
+
+    act(() => {
+      first.stream.onBinaryFrame?.(oldFrame)
+    })
+
+    expect(renderedImageUris(first.renderer).join('\n')).toContain(
+      Buffer.from(oldFrame.image).toString('base64')
+    )
+
+    act(() => {
+      first.renderer.update(
+        createPaneElement(first.client, first.tab, {
+          pairedHostId: 'paired-host-b',
+          worktreeId: first.worktreeId
+        })
+      )
+    })
+
+    expect(renderedImageUris(first.renderer).join('\n')).not.toContain(
+      Buffer.from(oldFrame.image).toString('base64')
+    )
+    expect(spinnerCount(first.renderer)).toBeGreaterThan(0)
   })
 })
