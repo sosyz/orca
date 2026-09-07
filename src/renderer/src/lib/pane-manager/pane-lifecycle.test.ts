@@ -76,6 +76,15 @@ function createPane(): ManagedPaneInternal {
 }
 
 describe('buildDefaultTerminalOptions', () => {
+  it('uses the canonical font chain and configured default weights before settings hydrate', () => {
+    const options = buildDefaultTerminalOptions()
+    expect(options.fontFamily).toContain('"Orca Nerd Font Symbols"')
+    expect(options.fontFamily).toContain('"MesloLGS NF"')
+    expect(options.fontFamily).not.toContain('MesloLGS Nerd Font')
+    expect(options.fontWeight).toBe(500)
+    expect(options.fontWeightBold).toBe(700)
+  })
+
   it('leaves macOS Option available for keyboard layout characters', () => {
     expect(buildDefaultTerminalOptions().macOptionIsMeta).toBe(false)
   })
