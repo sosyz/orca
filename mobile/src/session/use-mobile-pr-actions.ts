@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useReducer, useRef } from 'react'
+import { githubRepoIdentityKey } from '../../../src/shared/github/repository-identity-key'
 import type { ConnectionState } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
 import {
@@ -46,87 +47,133 @@ function realMutations(
 export function useMobilePrActions(input: PrActionsInput) {
   const { client, connState, worktreeId, prNumber, headSha, prRepo, refetch } = input
   const [, forceRender] = useReducer((n: number) => n + 1, 0)
-
-  // A no-op refetch until props provide one; lets the engine exist before ready.
-  const engineRef = useRef<PrActionsEngine | null>(null)
-  if (engineRef.current === null) {
-    engineRef.current = new PrActionsEngine({
+  const repoKey = prRepo ? githubRepoIdentityKey(prRepo) : ''
+  const source = useMemo(
+    () => ({ client, worktreeId, prNumber, repoKey }),
+    [client, worktreeId, prNumber, repoKey]
+  )
+  const committedSource = useRef<typeof source | null>(null)
+  const committedReady = useRef(false)
+  const pendingMerges = useRef(new Set<typeof source>())
+  const isCurrentSource = useCallback(() => committedSource.current === source, [source])
+  const canRun = useCallback(() => isCurrentSource() && committedReady.current, [isCurrentSource])
+  const hasPendingMerge = useCallback(
+    () =>
+      [...pendingMerges.current].some(
+        (pending) =>
+          pending.client === source.client &&
+          pending.worktreeId === source.worktreeId &&
+          pending.prNumber === source.prNumber &&
+          pending.repoKey === source.repoKey
+      ),
+    [source]
+  )
+  const config = useMemo(
+    () => ({
       mutations: input.mutations ?? (client ? realMutations(client, worktreeId) : noopMutations()),
       prNumber,
       headSha,
       prRepo,
-      refetch,
-      onChange: forceRender
-    })
-  }
-  const engine = engineRef.current
-
-  // Keep engine config in sync without recreating it (preserves in-flight guards).
-  useEffect(() => {
-    engine.updateConfig({
-      mutations: input.mutations ?? (client ? realMutations(client, worktreeId) : noopMutations()),
-      prNumber,
-      headSha,
-      prRepo,
-      refetch,
-      onChange: forceRender
-    })
-  }, [engine, input.mutations, client, worktreeId, prNumber, headSha, prRepo, refetch])
-
-  const ready = input.mutations !== undefined || (client !== null && connState === 'connected')
+      refetch: () => (isCurrentSource() ? refetch() : undefined),
+      onChange: () => {
+        if (isCurrentSource()) {
+          forceRender()
+        }
+      }
+    }),
+    [input.mutations, client, worktreeId, prNumber, headSha, prRepo, refetch, isCurrentSource]
+  )
+  // Optimism and in-flight receipts belong to one PR source, including its client.
+  const engine = useMemo(() => new PrActionsEngine(config), [source])
+  const ready =
+    prNumber > 0 &&
+    (input.mutations !== undefined || (client !== null && connState === 'connected'))
+  useLayoutEffect(() => {
+    committedSource.current = source
+    committedReady.current = ready
+    engine.updateConfig(config)
+    return () => {
+      if (committedSource.current === source) {
+        committedSource.current = null
+        committedReady.current = false
+      }
+    }
+  }, [config, engine, ready, source])
 
   return {
-    busy: engine.busy,
-    isBusy: useCallback((key: PrActionBusyKey) => engine.isBusy(key), [engine]),
+    source,
+    isCurrentSource,
+    busy: hasPendingMerge() ? { kind: 'merge' as const } : engine.busy,
+    isBusy: useCallback(
+      (key: PrActionBusyKey) => (key.kind === 'merge' ? hasPendingMerge() : engine.isBusy(key)),
+      [engine, hasPendingMerge]
+    ),
     error: engine.error,
     blocked: engine.blocked,
-    clearError: useCallback(() => engine.clearError(), [engine]),
-    clearBlocked: useCallback(() => engine.clearBlocked(), [engine]),
+    clearError: useCallback(() => {
+      if (isCurrentSource()) {
+        engine.clearError()
+      }
+    }, [engine, isCurrentSource]),
+    clearBlocked: useCallback(() => {
+      if (isCurrentSource()) {
+        engine.clearBlocked()
+      }
+    }, [engine, isCurrentSource]),
     merge: useCallback(
       (method?: Parameters<PrActionsEngine['merge']>[0]) => {
-        if (ready) {
-          void engine.merge(method)
+        if (!canRun() || hasPendingMerge()) {
+          return
         }
+        // A pending merge survives switching away and back to the same PR.
+        pendingMerges.current.add(source)
+        forceRender()
+        void engine.merge(method).finally(() => {
+          pendingMerges.current.delete(source)
+          if (committedSource.current) {
+            forceRender()
+          }
+        })
       },
-      [engine, ready]
+      [canRun, engine, hasPendingMerge, source]
     ),
     setAutoMerge: useCallback(
       (enabled: boolean, method?: Parameters<PrActionsEngine['setAutoMerge']>[1]) => {
-        if (ready) {
+        if (canRun()) {
           void engine.setAutoMerge(enabled, method)
         }
       },
-      [engine, ready]
+      [engine, canRun]
     ),
     updateState: useCallback(
       (state: 'open' | 'closed') => {
-        if (ready) {
+        if (canRun()) {
           void engine.updateState(state)
         }
       },
-      [engine, ready]
+      [engine, canRun]
     ),
     requestReviewer: useCallback(
       (login: string) => {
-        if (ready) {
+        if (canRun()) {
           void engine.requestReviewer(login)
         }
       },
-      [engine, ready]
+      [engine, canRun]
     ),
     removeReviewer: useCallback(
       (login: string) => {
-        if (ready) {
+        if (canRun()) {
           void engine.removeReviewer(login)
         }
       },
-      [engine, ready]
+      [engine, canRun]
     ),
     rerunFailingChecks: useCallback(() => {
-      if (ready) {
+      if (canRun()) {
         void engine.rerunFailingChecks()
       }
-    }, [engine, ready]),
+    }, [engine, canRun]),
     resolveAutoMerge: useCallback(
       (authoritative: boolean) => engine.resolveAutoMerge(authoritative),
       [engine]

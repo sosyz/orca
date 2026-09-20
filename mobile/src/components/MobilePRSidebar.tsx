@@ -89,7 +89,7 @@ export function MobilePRSidebar({
     prRepo,
     refetch
   })
-  const triage = useMobilePrAiTriage({ client, connState, worktreeId })
+  const triage = useMobilePrAiTriage({ client, connState, worktreeId, prNumber, prRepo })
   // Keyed on the PR payload identity so overrides re-fetch with each PR refetch
   // instead of staying a stale one-shot snapshot for the whole session.
   const botAuthorOverrides = usePRBotAuthorOverrides(

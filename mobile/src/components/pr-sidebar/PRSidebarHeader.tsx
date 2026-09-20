@@ -11,6 +11,7 @@ import { canEditPRTitle } from '../../session/pr-title-edit'
 import { openMobilePrUrl } from '../mobile-pr-url'
 import { mobilePrSidebarStyles as styles } from './mobile-pr-sidebar-styles'
 import { prCommentComposerStyles as composerStyles } from './pr-comment-composer-styles'
+import { githubRepoIdentityKey } from '../../../../src/shared/github/repository-identity-key'
 
 type Props = {
   pr: PRInfo
@@ -81,7 +82,12 @@ export function PRSidebarHeader({
           </Pressable>
         ) : null}
       </View>
-      <PRTitle title={title} editable={editable} titleAction={titleAction} />
+      <PRTitle
+        key={`${pr.number}:${pr.prRepo ? githubRepoIdentityKey(pr.prRepo) : ''}`}
+        title={title}
+        editable={editable}
+        titleAction={titleAction}
+      />
       {baseRef && headRef ? (
         <View style={styles.branchRow}>
           <Text style={styles.branchPill} numberOfLines={1}>

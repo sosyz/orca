@@ -20,9 +20,10 @@ type Props = {
   onUnlinked: () => void
 }
 
-type Confirm =
+type ConfirmAction =
   | { kind: 'merge'; method: GitHubPRMergeMethod }
   | { kind: 'state'; state: 'open' | 'closed' }
+type Confirm = ConfirmAction & { actions: MobilePrActions; prNumber: number }
 
 // Merge primary; Close/Reopen + Unlink share one secondary row. No section title —
 // button labels are self-explanatory and a header wasted a full row on mobile.
@@ -75,34 +76,38 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
     if (confirm?.kind === 'merge') {
       return {
         title: 'Merge pull request?',
-        message: `This will merge #${pr.number} into its base branch.`,
+        message: `This will merge #${confirm.prNumber} into its base branch.`,
         confirmLabel: 'Merge'
       }
     }
     if (confirm?.kind === 'state' && confirm.state === 'closed') {
       return {
         title: 'Close pull request?',
-        message: `#${pr.number} will be closed without merging.`,
+        message: `#${confirm.prNumber} will be closed without merging.`,
         confirmLabel: 'Close'
       }
     }
     return {
       title: 'Reopen pull request?',
-      message: `#${pr.number} will be reopened.`,
+      message: `#${confirm?.prNumber ?? pr.number} will be reopened.`,
       confirmLabel: 'Reopen'
     }
   }
 
   const runConfirmed = (): void => {
-    if (!confirm) {
+    if (
+      !confirm ||
+      confirm.actions.source !== actions.source ||
+      !confirm.actions.isCurrentSource()
+    ) {
       return
     }
     // Engine errors take over the shared error line after this; drop unlink text.
     setUnlinkError(null)
     if (confirm.kind === 'merge') {
-      actions.merge(confirm.method)
+      confirm.actions.merge(confirm.method)
     } else {
-      actions.updateState(confirm.state)
+      confirm.actions.updateState(confirm.state)
     }
   }
 
@@ -119,7 +124,7 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
           ]}
           onPress={() => {
             setUnlinkError(null)
-            setConfirm({ kind: 'merge', method: effectiveMethod })
+            setConfirm({ kind: 'merge', method: effectiveMethod, actions, prNumber: pr.number })
           }}
           disabled={mergeBusy}
           accessibilityRole="button"
@@ -172,7 +177,12 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
               ]}
               onPress={() => {
                 setUnlinkError(null)
-                setConfirm({ kind: 'state', state: avail.canClose ? 'closed' : 'open' })
+                setConfirm({
+                  kind: 'state',
+                  state: avail.canClose ? 'closed' : 'open',
+                  actions,
+                  prNumber: pr.number
+                })
               }}
               disabled={stateBusy}
               accessibilityRole="button"
@@ -215,13 +225,13 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
       {actionError ? <Text style={styles.actionError}>{actionError}</Text> : null}
 
       <ConfirmModal
-        visible={confirm !== null}
+        visible={confirm !== null && confirm.actions.source === actions.source}
         title={copy.title}
         message={copy.message}
         confirmLabel={copy.confirmLabel}
         destructive={confirm?.kind === 'state' && confirm.state === 'closed'}
         onConfirm={runConfirmed}
-        onCancel={() => setConfirm(null)}
+        onCancel={() => setConfirm((current) => (current === confirm ? null : current))}
       />
     </View>
   )

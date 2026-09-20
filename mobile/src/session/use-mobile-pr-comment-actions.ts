@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { githubRepoIdentityKey } from '../../../src/shared/github/repository-identity-key'
 import type { PRComment } from '../../../src/shared/github/comment-types'
 import type { ConnectionState } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
@@ -99,63 +100,116 @@ function deleteKey(commentId: number): string {
 }
 const ROOT_KEY = 'root'
 
+type PrCommentSource = {
+  client: RpcClient | null
+  worktreeId: string
+  prNumber: number
+  repoKey: string
+}
+
+function samePrCommentTarget(a: PrCommentSource, b: PrCommentSource): boolean {
+  return (
+    a.client === b.client &&
+    a.worktreeId === b.worktreeId &&
+    a.prNumber === b.prNumber &&
+    a.repoKey === b.repoKey
+  )
+}
+
 // React adapter for the three interactive comment actions. Tracks per-action
 // in-flight keys + a single error message, fires haptics, and refetches on success.
 export function useMobilePrCommentActions(input: PrCommentActionsInput) {
   const { client, connState, worktreeId, prNumber, prRepo, refetch } = input
-  const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set())
-  const [error, setError] = useState<string | null>(null)
-  // Guard against overlapping fires of the same key (double-tap before refetch).
-  const inFlightRef = useRef<Set<string>>(new Set())
+  const repoKey = prRepo ? githubRepoIdentityKey(prRepo) : ''
+  const source = useMemo(
+    () => ({ client, connState, worktreeId, prNumber, repoKey }),
+    [client, connState, worktreeId, prNumber, repoKey]
+  )
+  const committedSource = useRef<typeof source | null>(null)
+  const attempts = useRef(new Set<{ source: typeof source; key: string }>())
+  const [busyRevision, refreshBusy] = useReducer((revision: number) => revision + 1, 0)
+  const [failure, setFailure] = useState<{ source: typeof source; message: string } | null>(null)
+  const isCurrentSource = useCallback(() => committedSource.current === source, [source])
+
+  useLayoutEffect(() => {
+    committedSource.current = source
+    return () => {
+      if (committedSource.current === source) {
+        committedSource.current = null
+      }
+    }
+  }, [source])
 
   const mutations = useMemo(
     () => input.mutations ?? (client ? realMutations(client, worktreeId) : null),
     [input.mutations, client, worktreeId]
   )
-  const ready = mutations !== null && (input.mutations !== undefined || connState === 'connected')
-
-  const setBusy = useCallback((key: string, busy: boolean) => {
-    setBusyKeys((prev) => {
-      const next = new Set(prev)
-      if (busy) {
-        next.add(key)
-      } else {
-        next.delete(key)
+  const ready =
+    prNumber > 0 &&
+    mutations !== null &&
+    (input.mutations !== undefined || connState === 'connected')
+  const busyKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const attempt of attempts.current) {
+      if (
+        samePrCommentTarget(attempt.source, source) &&
+        attempt.source.connState === source.connState
+      ) {
+        keys.add(attempt.key)
       }
-      return next
-    })
-  }, [])
+    }
+    return keys
+  }, [source, busyRevision])
 
   const run = useCallback(
     async (key: string, mutate: () => Promise<GitHubPrMutationOutcome>): Promise<boolean> => {
-      if (!ready || inFlightRef.current.has(key)) {
+      if (!isCurrentSource() || !ready) {
         return false
       }
-      inFlightRef.current.add(key)
-      setBusy(key, true)
-      setError(null)
+      for (const attempt of attempts.current) {
+        if (attempt.key === key && samePrCommentTarget(attempt.source, source)) {
+          return false
+        }
+      }
+      const attempt = { source, key }
+      attempts.current.add(attempt)
+      refreshBusy()
+      setFailure(null)
       try {
         const outcome = await mutate()
+        if (!isCurrentSource()) {
+          return false
+        }
         if (outcome.ok) {
-          triggerSuccess()
           await refetch()
+          if (!isCurrentSource()) {
+            return false
+          }
+          triggerSuccess()
           return true
         }
         triggerError()
-        setError(outcome.error)
+        setFailure({ source, message: outcome.error })
         return false
       } catch (err) {
         // Why: if a mutation (or the refetch) throws, still honor the boolean
         // contract — error haptic + message, return false — rather than rejecting.
-        triggerError()
-        setError(err instanceof Error ? err.message : 'Comment action failed')
+        if (isCurrentSource()) {
+          triggerError()
+          setFailure({
+            source,
+            message: err instanceof Error ? err.message : 'Comment action failed'
+          })
+        }
         return false
       } finally {
-        inFlightRef.current.delete(key)
-        setBusy(key, false)
+        attempts.current.delete(attempt)
+        if (committedSource.current) {
+          refreshBusy()
+        }
       }
     },
-    [ready, refetch, setBusy]
+    [ready, isCurrentSource, source, refetch]
   )
 
   const reply = useCallback(
@@ -216,8 +270,12 @@ export function useMobilePrCommentActions(input: PrCommentActionsInput) {
 
   return {
     ready,
-    error,
-    clearError: useCallback(() => setError(null), []),
+    error: failure?.source === source ? failure.message : null,
+    clearError: useCallback(() => {
+      if (isCurrentSource()) {
+        setFailure(null)
+      }
+    }, [isCurrentSource]),
     isReplyBusy: useCallback((commentId: number) => busyKeys.has(replyKey(commentId)), [busyKeys]),
     isResolveBusy: useCallback(
       (threadId: string) => busyKeys.has(resolveKey(threadId)),

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { colors, radii, spacing, typography } from '../../theme/mobile-theme'
 import type { RpcClient } from '../../transport/rpc-client'
@@ -20,13 +20,15 @@ export function MobileLinkPrForm({ client, worktreeId, onCancel, onLinked }: Pro
   const [input, setInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const inFlightRef = useRef(false)
 
   const parsed = parseGitHubPrReference(input)
 
   const submit = useCallback(async () => {
-    if (!client || submitting || parsed === null) {
+    if (!client || inFlightRef.current || parsed === null) {
       return
     }
+    inFlightRef.current = true
     setSubmitting(true)
     setError(null)
     try {
@@ -39,9 +41,10 @@ export function MobileLinkPrForm({ client, worktreeId, onCancel, onLinked }: Pro
         setError(outcome.error)
       }
     } finally {
+      inFlightRef.current = false
       setSubmitting(false)
     }
-  }, [client, onLinked, parsed, submitting, worktreeId])
+  }, [client, onLinked, parsed, worktreeId])
 
   return (
     <View>
