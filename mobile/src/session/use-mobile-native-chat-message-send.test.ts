@@ -74,6 +74,7 @@ describe('useMobileNativeChatMessageSend', () => {
     return {
       draftKey: 'k',
       pendingKey: 'p',
+      draftEditGeneration: scope.draftEditGeneration,
       scopeGeneration: scope.generation,
       normalizedText: 'ping',
       baselineOccurrences: 0,

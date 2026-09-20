@@ -89,6 +89,7 @@ async function harness() {
     activeSessionTabIdRef: ref<string | null>(null),
     documentReadRequestsRef: ref({ file: new Map(), markdown: new Map() }),
     markdownSaveRequestsRef: ref(new Map()),
+    reconcileBufferedDraftsRef: ref(vi.fn()),
     initialSessionAutoCreateRef: ref({ sawSessionTabs: false }),
     terminalsRef: ref([]),
     lastKnownTerminalCountRef: ref(0),
@@ -193,10 +194,12 @@ it('keeps B tabs and terminal when A activation settles across a reused route', 
   const h = await harness()
   await h.update()
   expect(h.current().tabs.map((t) => t.id)).toEqual(['B'])
+  expect(h.persistent.reconcileBufferedDraftsRef.current).toHaveBeenCalledTimes(2)
   const before = h.calls.length
   await h.finish()
   expect(h.current().tabs.map((t) => t.id)).toEqual(['B'])
   expect(h.persistent.activeHandleRef.current).toBe('term-B')
+  expect(h.persistent.reconcileBufferedDraftsRef.current).toHaveBeenCalledTimes(2)
   expect(h.subscribed).toEqual(['term-A', 'term-B'])
   expect(h.timers).toEqual([])
   await act(async () => {

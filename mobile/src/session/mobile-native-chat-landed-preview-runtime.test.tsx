@@ -88,6 +88,7 @@ describe('landed image previews in the native-chat runtime', () => {
       {
         draftKey: a,
         pendingKey: sessionA,
+        draftEditGeneration: 0,
         scopeGeneration: tokenA.generation,
         normalizedText: '',
         baselineOccurrences: 0,
