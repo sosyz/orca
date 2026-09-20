@@ -94,15 +94,24 @@ export class HarmonyFileService {
       path,
       fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC,
     );
+    let writeError: Error | null = null;
     try {
       if (fileIo.writeSync(file.fd, data) !== data.byteLength) {
         throw new Error('Incomplete cache file write');
       }
     } catch (error) {
-      this.delete(uri);
-      throw error as Error;
-    } finally {
+      writeError = error as Error;
+    }
+    try {
       fileIo.closeSync(file);
+    } catch (error) {
+      if (!writeError) {
+        writeError = error as Error;
+      }
+    }
+    if (writeError) {
+      this.delete(uri);
+      throw writeError;
     }
   }
 
@@ -224,10 +233,10 @@ export class HarmonyFileService {
     return new picker.DocumentViewPicker(this.context).select(options);
   }
 
-  private describe(uri: string): HarmonyPickedFile {
+  private describe(uri: string, fileSize: number): HarmonyPickedFile {
     const result: HarmonyPickedFile = { uri: uri };
     result.fileName = this.fileName(uri);
-    result.fileSize = this.size(uri);
+    result.fileSize = fileSize;
     result.mimeType = this.mimeType(result.fileName);
     return result;
   }
@@ -238,25 +247,37 @@ export class HarmonyFileService {
       `orca-picked-${Date.now()}-${this.pickedFileSequence++}-${name}`,
     );
     const source = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+    let picked: HarmonyPickedFile | null = null;
+    let copyError: Error | null = null;
     try {
       this.assertByteLength(fileIo.statSync(source.fd).size);
       await fileIo.copyFile(source.fd, path);
-      this.assertByteLength(fileIo.statSync(path).size);
-      return this.describe(this.fileUri(path));
-    } catch (copyError) {
+      const fileSize = fileIo.statSync(path).size;
+      this.assertByteLength(fileSize);
+      picked = this.describe(this.fileUri(path), fileSize);
+    } catch (error) {
+      copyError = error as Error;
+    }
+    try {
+      fileIo.closeSync(source);
+    } catch (error) {
+      if (!copyError) {
+        copyError = error as Error;
+      }
+    }
+    if (copyError) {
       try {
         fileIo.unlinkSync(path);
       } catch (_) {
       }
-      throw copyError as Error;
-    } finally {
-      fileIo.closeSync(source);
+      throw copyError;
     }
+    return picked as HarmonyPickedFile;
   }
 
   private safePickedFileName(uri: string): string {
     const name = this.fileName(uri)
-      .replace(/[\\/]/gu, '_')
+      .replace(/[\\/?#]/gu, '_')
       .replaceAll('\0', '_')
       .slice(-128);
     return name && name !== '.' && name !== '..' ? name : 'image';
@@ -287,8 +308,11 @@ export class HarmonyFileService {
     if (extension === 'bmp') {
       return 'image/bmp';
     }
-    if (extension === 'heic' || extension === 'heif') {
+    if (extension === 'heic') {
       return 'image/heic';
+    }
+    if (extension === 'heif') {
+      return 'image/heif';
     }
     return 'image/jpeg';
   }

@@ -57,8 +57,9 @@ describe('Harmony native service safety contract', () => {
     expect(source).toContain('const file = fileIo.openSync(')
     expect(source).toContain('fileIo.readSync(file.fd, data, {')
     expect(source).toContain('await fileIo.copyFile(source.fd, path)')
-    expect(source).toContain('this.assertByteLength(fileIo.statSync(path).size)')
-    expect(source).toContain('return this.describe(this.fileUri(path))')
+    expect(source).toContain('const fileSize = fileIo.statSync(path).size')
+    expect(source).toContain('this.assertByteLength(fileSize)')
+    expect(source).toContain('picked = this.describe(this.fileUri(path), fileSize)')
     expect(source).toContain('fileIo.closeSync(source)')
     expect(source).toContain('fileIo.closeSync(file)')
     expect(source.indexOf('const name = this.safePickedFileName(uri)')).toBeLessThan(

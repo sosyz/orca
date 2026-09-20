@@ -87,11 +87,30 @@ describe('Harmony file service', () => {
 
   it('closes the descriptor and deletes the partial file after an incomplete write', () => {
     const { service, fileIo } = setup()
+    let closed = false
+    fileIo.closeSync.mockImplementation(() => {
+      closed = true
+    })
+    fileIo.unlinkSync.mockImplementation(() => {
+      expect(closed).toBe(true)
+    })
     fileIo.writeSync.mockReturnValueOnce(1)
     expect(() => service.writeBytes('file://orca-cache/test', new ArrayBuffer(4))).toThrow(
       'Incomplete cache file write'
     )
     expect(fileIo.closeSync).toHaveBeenCalledOnce()
+    expect(fileIo.unlinkSync).toHaveBeenCalledWith('/cache/test')
+  })
+
+  it('deletes the cache file if closing a completed write fails', () => {
+    const { service, fileIo } = setup()
+    fileIo.closeSync.mockImplementationOnce(() => {
+      throw new Error('close failed')
+    })
+
+    expect(() => service.writeBytes('file://orca-cache/test', new ArrayBuffer(4))).toThrow(
+      'close failed'
+    )
     expect(fileIo.unlinkSync).toHaveBeenCalledWith('/cache/test')
   })
 
@@ -127,7 +146,41 @@ describe('Harmony file service', () => {
     expect(fileIo.unlinkSync.mock.calls.map(([path]) => path)).toEqual(
       expect.arrayContaining(destinations)
     )
-    expect(fileIo.closeSync).toHaveBeenCalledTimes(3)
+    expect(fileIo.closeSync).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the verified copied file size without reopening the cache file', async () => {
+    const { service, fileIo } = setup(['content://one.png'])
+    fileIo.openSync.mockImplementationOnce((path: string) => {
+      expect(path).toBe('content://one.png')
+      return { fd: 1 }
+    })
+
+    await expect(service.pick('image', false)).resolves.toMatchObject([
+      { fileSize: 4, fileName: expect.stringContaining('one.png') }
+    ])
+    expect(fileIo.openSync).toHaveBeenCalledOnce()
+    expect(fileIo.closeSync).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the HEIF media type returned to the image picker', async () => {
+    const { service } = setup(['content://photo.heif'])
+    await expect(service.pick('image', false)).resolves.toMatchObject([
+      { fileName: expect.stringContaining('photo.heif'), mimeType: 'image/heif' }
+    ])
+  })
+
+  it('keeps URI delimiters in picked names from truncating file metadata', async () => {
+    const { service, fileIo } = setup(['content://photo%3Fset%23one.heif'])
+
+    await expect(service.pick('image', false)).resolves.toMatchObject([
+      {
+        fileName: expect.stringContaining('photo_set_one.heif'),
+        mimeType: 'image/heif',
+        uri: expect.stringContaining('photo_set_one.heif')
+      }
+    ])
+    expect(fileIo.copyFile.mock.calls[0][1]).toContain('photo_set_one.heif')
   })
 
   it('deletes a picker copy when the cached result exceeds the native bridge limit', async () => {
@@ -143,5 +196,28 @@ describe('Harmony file service', () => {
     const destination = fileIo.copyFile.mock.calls[0][1]
     expect(fileIo.unlinkSync).toHaveBeenCalledWith(destination)
     expect(fileIo.closeSync).toHaveBeenCalledOnce()
+  })
+
+  it('deletes a completed picker copy if closing its source fails', async () => {
+    const { service, fileIo, files } = setup(['content://one.png'])
+    fileIo.closeSync.mockImplementation((file: { fd: number }) => {
+      if (files.get(file.fd) === 'content://one.png') {
+        throw new Error('source close failed')
+      }
+    })
+
+    await expect(service.pick('image', false)).rejects.toThrow('source close failed')
+    expect(fileIo.unlinkSync).toHaveBeenCalledWith(fileIo.copyFile.mock.calls[0][1])
+  })
+
+  it('preserves the copy error when closing the source also fails', async () => {
+    const { service, fileIo } = setup(['content://one.png'])
+    fileIo.copyFile.mockRejectedValueOnce(new Error('copy failed'))
+    fileIo.closeSync.mockImplementationOnce(() => {
+      throw new Error('source close failed')
+    })
+
+    await expect(service.pick('image', false)).rejects.toThrow('copy failed')
+    expect(fileIo.unlinkSync).toHaveBeenCalledWith(fileIo.copyFile.mock.calls[0][1])
   })
 })
