@@ -1,6 +1,7 @@
 /* oxlint-disable react-doctor/no-adjust-state-on-prop-change -- Why: mobile browser state mirrors a remote desktop screencast session and CDP dialogs, which are external systems that cannot be derived during render. */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AppState, type Image, type View } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import type { RpcClient } from '../transport/rpc-client'
 import type {
   BrowserScreencastFrame,
@@ -21,12 +22,20 @@ import {
   type FrameLayer,
   type PinchGesture
 } from './mobile-browser-frame-state'
-import { displayBrowserUrl, normalizeBrowserUrl } from './browser-url'
+import type {
+  BrowserFrameDecodeRequest,
+  BrowserFramePresentationFrame
+} from './mobile-browser-frame-presentation'
+import { displayBrowserUrl } from './browser-url'
 import { resolveMobileBrowserAddressSync } from './mobile-browser-address-sync'
+import type { PanGesture } from './mobile-browser-interaction-contract'
+import { createMobileBrowserCopy } from './mobile-browser-copy'
+import type { BrowserDialogState } from './mobile-browser-stream-events'
 import { MobileBrowserPaneView } from './MobileBrowserPaneView'
 import { useMobileBrowserInteractions } from './use-mobile-browser-interactions'
 import { useMobileBrowserPaneLayers } from './use-mobile-browser-pane-layers'
 import { useMobileBrowserStream } from './use-mobile-browser-stream'
+import { useMobileBrowserHistoryControls } from './use-mobile-browser-history-controls'
 
 export type MobileBrowserTab = {
   type: 'browser'
@@ -49,19 +58,8 @@ type MobileBrowserPaneProps = {
   screencastSupported: boolean | null
   keyboardLift: number
   bottomInset: number
+  active?: boolean
   onToast: (message: string, durationMs?: number) => void
-}
-
-type PanGesture = {
-  x: number
-  y: number
-  offsetX: number
-  offsetY: number
-}
-
-type BrowserDialogState = {
-  dialogType: string
-  message: string
 }
 
 const DEFAULT_ZOOM: BrowserZoomState = { scale: 1, offsetX: 0, offsetY: 0 }
@@ -88,8 +86,14 @@ function MobileBrowserPaneFrameBoundary({
   screencastSupported,
   keyboardLift,
   bottomInset,
+  active = true,
   onToast
 }: MobileBrowserPaneProps) {
+  const { i18n, t } = useTranslation()
+  const copy = useMemo(
+    () => createMobileBrowserCopy((key, options) => t(key, options)),
+    [i18n.language, t]
+  )
   const [browserViewMode, setBrowserViewMode] = useState<MobileBrowserViewMode>(() =>
     getInitialMobileBrowserViewMode(worktreeId, tab.browserPageId, tab.url)
   )
@@ -100,6 +104,13 @@ function MobileBrowserPaneFrameBoundary({
     browserViewMode
   )
   const cachedInitialFrame = peekCachedBrowserFrame(cacheKey)
+  const initialFrame: BrowserFramePresentationFrame | null = cachedInitialFrame
+    ? {
+        cacheKey,
+        metadata: cachedInitialFrame.metadata,
+        uri: cachedInitialFrame.uri
+      }
+    : null
   const [addressValue, setAddressValue] = useState(displayBrowserUrl(tab.url))
   const [addressFocused, setAddressFocused] = useState(false)
   const [addressSyncState, setAddressSyncState] = useState({
@@ -111,8 +122,10 @@ function MobileBrowserPaneFrameBoundary({
   const [frameMetadata, setFrameMetadata] = useState<BrowserScreencastFrameMetadata | null>(
     cachedInitialFrame?.metadata ?? null
   )
+  const [frameInputReady, setFrameInputReady] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [streamError, setStreamError] = useState<string | null>(null)
+  const [commandError, setCommandError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<BrowserDialogState | null>(null)
   const [pointerModifiers, setPointerModifiers] = useState<BrowserPointerModifier[]>([])
   const [zoom, setZoom] = useState<BrowserZoomState>(DEFAULT_ZOOM)
@@ -127,7 +140,11 @@ function MobileBrowserPaneFrameBoundary({
   const frameMountedRef = useRef(cachedInitialFrame !== null)
   const browserImageRefs = useRef<[Image | null, Image | null]>([null, null])
   const browserLayerRefs = useRef<[View | null, View | null]>([null, null])
+  const frameLayerFrameRef = useRef<
+    [BrowserFramePresentationFrame | null, BrowserFramePresentationFrame | null]
+  >([initialFrame, null])
   const pendingFrameLayerRef = useRef<FrameLayer | null>(null)
+  const queuedFrameRef = useRef<BrowserFrameDecodeRequest | null>(null)
   const visibleFrameLayerRef = useRef<FrameLayer>(0)
   const busyRef = useRef(false)
   const lastAppliedFrameAtRef = useRef(0)
@@ -210,6 +227,7 @@ function MobileBrowserPaneFrameBoundary({
   }, [dialog, frameMetadata, layout, zoom])
 
   useEffect(() => {
+    setFrameInputReady(false)
     lastZoomResetUrlRef.current = tab.url || 'about:blank'
     resetBrowserZoomState()
   }, [resetBrowserZoomState, tab.browserPageId, tab.url])
@@ -218,7 +236,15 @@ function MobileBrowserPaneFrameBoundary({
     setBrowserViewMode(getInitialMobileBrowserViewMode(worktreeId, tab.browserPageId, tab.url))
   }, [tab.browserPageId, tab.url, worktreeId])
 
-  const { frameGeometry, pageParams, sendBrowserRequest } = useMobileBrowserStream({
+  const {
+    commitStreamFrame,
+    frameGeometry,
+    pageParams,
+    retirePendingFeedback,
+    retryStream,
+    sendBrowserRequest
+  } = useMobileBrowserStream({
+    active,
     appActive,
     browserImageRefs,
     browserLayerRefs,
@@ -226,6 +252,7 @@ function MobileBrowserPaneFrameBoundary({
     busyRef,
     cacheKey,
     client,
+    frameLayerFrameRef,
     frameMetadata,
     frameMetadataRef,
     frameMountedRef,
@@ -237,12 +264,16 @@ function MobileBrowserPaneFrameBoundary({
     layout,
     pendingFrameLayerRef,
     pendingThrottledFrameRef,
+    queuedFrameRef,
     resetBrowserZoomState,
     screencastSupported,
+    copy: copy.errors,
     setAddressValue,
     setBusy,
+    setCommandError,
     setDialog,
-    setError,
+    setError: setStreamError,
+    setFrameInputReady,
     setFrameMetadata,
     setFrameUri,
     setZoom,
@@ -253,49 +284,43 @@ function MobileBrowserPaneFrameBoundary({
     zoomRef
   })
 
-  const navigateToAddress = useCallback(async () => {
-    const url = normalizeBrowserUrl(addressValue)
-    if (!url) {
-      setError('Enter a valid URL.')
-      return
-    }
-    const result = (await sendBrowserRequest(
-      'browser.goto',
-      { url },
-      { showBusy: true, timeoutMs: 30_000 }
-    )) as { url?: string } | null
-    if (typeof result?.url === 'string') {
-      setAddressValue(displayBrowserUrl(result.url))
-      lastZoomResetUrlRef.current = result.url
-      resetBrowserZoomState()
-    }
-  }, [addressValue, resetBrowserZoomState, sendBrowserRequest])
-
-  const { panResponder, sendDialogCommand, sendKeyboardText, sendKeypress, togglePointerModifier } =
-    useMobileBrowserInteractions({
-      clearLongPressTimer,
-      client,
-      dialogRef,
-      frameGeometry,
-      frameMetadataRef,
-      keyboardValue,
-      layoutRef,
-      longPressTimerRef,
-      onToast,
-      pageParams,
-      panRef,
-      pinchRef,
-      pointerModifiers,
-      sendBrowserRequest,
-      scrollingRef,
-      startPointRef,
-      setDialog,
-      setError,
-      setKeyboardValue,
-      setPointerModifiers,
-      setZoom,
-      zoomRef
-    })
+  const controlsDisabled = !active || !client || !tab.browserPageId || screencastSupported !== true
+  const pageInputActive = !controlsDisabled && appActive && frameInputReady
+  const browserCommandActive = !controlsDisabled && appActive
+  const {
+    editKeyboardText,
+    panResponder,
+    sendDialogCommand,
+    sendKeyboardText,
+    sendKeypress,
+    togglePointerModifier
+  } = useMobileBrowserInteractions({
+    active: browserCommandActive,
+    clearLongPressTimer,
+    client,
+    dialogRef,
+    frameGeometry,
+    frameMetadataRef,
+    keyboardValue,
+    layoutRef,
+    longPressTimerRef,
+    onToast,
+    pageParams,
+    pageInputActive,
+    panRef,
+    pinchRef,
+    pointerModifiers,
+    sendBrowserRequest,
+    scrollingRef,
+    startPointRef,
+    toasts: copy.toasts,
+    setDialog,
+    setError: setCommandError,
+    setKeyboardValue,
+    setPointerModifiers,
+    setZoom,
+    zoomRef
+  })
 
   const {
     browserLayerRef,
@@ -306,30 +331,34 @@ function MobileBrowserPaneFrameBoundary({
   } = useMobileBrowserPaneLayers({
     browserImageRefs,
     browserLayerRefs,
+    frameLayerFrameRef,
+    frameMetadataRef,
+    frameMountedRef,
     frameUriRef,
+    onFrameCommit: commitStreamFrame,
     pendingFrameLayerRef,
+    queuedFrameRef,
+    setFrameMetadata,
+    setFrameUri,
     visibleFrameLayerRef
   })
 
-  const controlsDisabled = !client || !tab.browserPageId || screencastSupported !== true
-  const goBack = useCallback(() => {
-    if (controlsDisabled || !tab.canGoBack) {
-      return
-    }
-    void sendBrowserRequest('browser.back', {}, { suppressError: true })
-  }, [controlsDisabled, sendBrowserRequest, tab.canGoBack])
-  const goForward = useCallback(() => {
-    if (controlsDisabled || !tab.canGoForward) {
-      return
-    }
-    void sendBrowserRequest('browser.forward', {}, { suppressError: true })
-  }, [controlsDisabled, sendBrowserRequest, tab.canGoForward])
-  const reloadPage = useCallback(() => {
-    if (controlsDisabled) {
-      return
-    }
-    void sendBrowserRequest('browser.reload', {}, { suppressError: true })
-  }, [controlsDisabled, sendBrowserRequest])
+  const { editAddressValue, goBack, goForward, navigateToAddress, reloadPage } =
+    useMobileBrowserHistoryControls({
+      controlsDisabled,
+      canGoBack: tab.canGoBack,
+      canGoForward: tab.canGoForward,
+      retryStream,
+      setFrameInputReady,
+      sendBrowserRequest,
+      retirePendingFeedback,
+      addressValue,
+      invalidUrlMessage: copy.errors.invalidUrl,
+      lastZoomResetUrlRef,
+      resetBrowserZoomState,
+      setAddressValue,
+      setError: setCommandError
+    })
 
   const selectBrowserViewMode = useCallback(
     (mode: MobileBrowserViewMode) => {
@@ -344,8 +373,7 @@ function MobileBrowserPaneFrameBoundary({
     [browserViewMode, resetBrowserZoomState, tab.browserPageId, worktreeId]
   )
 
-  const renderedFrameSource =
-    frameUriRef.current || frameUri ? { uri: frameUriRef.current ?? frameUri! } : null
+  const hasRenderedFrame = frameMountedRef.current
 
   return (
     <MobileBrowserPaneView
@@ -356,8 +384,9 @@ function MobileBrowserPaneFrameBoundary({
       browserViewMode={browserViewMode}
       busy={busy}
       controlsDisabled={controlsDisabled}
+      copy={copy}
       dialog={dialog}
-      error={error}
+      error={streamError ?? commandError}
       frameGeometry={frameGeometry}
       frameLayerErrorHandler={frameLayerErrorHandler}
       frameLayerLoadHandler={frameLayerLoadHandler}
@@ -370,16 +399,18 @@ function MobileBrowserPaneFrameBoundary({
       layoutRef={layoutRef}
       navigateToAddress={navigateToAddress}
       panResponder={panResponder}
+      pageInputDisabled={!pageInputActive}
       pointerModifiers={pointerModifiers}
       reloadPage={reloadPage}
-      renderedFrameSource={renderedFrameSource}
+      hasFrameSource={Boolean(frameUriRef.current || frameUri)}
+      hasRenderedFrame={hasRenderedFrame}
       selectBrowserViewMode={selectBrowserViewMode}
       sendDialogCommand={sendDialogCommand}
       sendKeyboardText={sendKeyboardText}
       sendKeypress={sendKeypress}
       setAddressFocused={setAddressFocused}
-      setAddressValue={setAddressValue}
-      setKeyboardValue={setKeyboardValue}
+      setAddressValue={editAddressValue}
+      setKeyboardValue={editKeyboardText}
       setLayout={setLayout}
       setRootViewRef={setRootViewRef}
       tab={tab}

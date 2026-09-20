@@ -1,29 +1,38 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
-import type { Image } from 'react-native'
+import { useCallback, useMemo, type Dispatch, type SetStateAction } from 'react'
+import type { Image, View } from 'react-native'
 import type {
   BrowserScreencastFrame,
   BrowserScreencastFrameMetadata
 } from '../transport/browser-screencast-protocol'
 import { MOBILE_BROWSER_FRAME_MIN_INTERVAL_MS } from './browser-screencast-request'
 import {
-  browserFrameMetadataEqual,
-  cacheBrowserFrame,
-  createBrowserFrameDataUri,
-  updateBrowserImageSource,
-  type FrameLayer
-} from './mobile-browser-frame-state'
+  clearBrowserFramePresentationQueue,
+  mountCachedBrowserFramePresentation,
+  presentMobileBrowserFrame,
+  resetBrowserFramePresentation,
+  type BrowserFrameDecodeRequest,
+  type BrowserFramePresentationFrame,
+  type BrowserFramePresentationRefs
+} from './mobile-browser-frame-presentation'
+import type { BrowserFrameCacheEntry, FrameLayer } from './mobile-browser-frame-state'
 
 type PendingFrame = { frame: BrowserScreencastFrame; cacheKey: string }
 type BrowserFrameApplyArgs = {
   browserImageRefs: { current: [Image | null, Image | null] }
+  browserLayerRefs: { current: [View | null, View | null] }
   busyRef: { current: boolean }
+  frameLayerFrameRef: {
+    current: [BrowserFramePresentationFrame | null, BrowserFramePresentationFrame | null]
+  }
   frameMetadataRef: { current: BrowserScreencastFrameMetadata | null }
   frameMountedRef: { current: boolean }
   frameThrottleTimerRef: { current: ReturnType<typeof setTimeout> | null }
   frameUriRef: { current: string | null }
   lastAppliedFrameAtRef: { current: number }
+  onFrameCommit: () => void
   pendingFrameLayerRef: { current: FrameLayer | null }
   pendingThrottledFrameRef: { current: PendingFrame | null }
+  queuedFrameRef: { current: BrowserFrameDecodeRequest | null }
   setBusy: Dispatch<SetStateAction<boolean>>
   setFrameMetadata: Dispatch<SetStateAction<BrowserScreencastFrameMetadata | null>>
   setFrameUri: Dispatch<SetStateAction<string | null>>
@@ -32,50 +41,58 @@ type BrowserFrameApplyArgs = {
 export function useMobileBrowserFrameApply(args: BrowserFrameApplyArgs) {
   const {
     browserImageRefs,
+    browserLayerRefs,
     busyRef,
+    frameLayerFrameRef,
     frameMetadataRef,
     frameMountedRef,
     frameThrottleTimerRef,
     frameUriRef,
     lastAppliedFrameAtRef,
+    onFrameCommit,
     pendingFrameLayerRef,
     pendingThrottledFrameRef,
+    queuedFrameRef,
     setBusy,
     setFrameMetadata,
     setFrameUri,
     visibleFrameLayerRef
   } = args
-  const applyFrame = useCallback((frame: BrowserScreencastFrame, frameCacheKey: string): void => {
-    if (!browserFrameMetadataEqual(frameMetadataRef.current, frame.metadata)) {
-      frameMetadataRef.current = frame.metadata
-      setFrameMetadata(frame.metadata)
-    }
-    const nextFrameUri = createBrowserFrameDataUri(frame)
-    cacheBrowserFrame(frameCacheKey, { uri: nextFrameUri, metadata: frame.metadata })
-    if (!frameMountedRef.current) {
-      frameUriRef.current = nextFrameUri
-      frameMountedRef.current = true
-      setFrameUri(nextFrameUri)
-      updateBrowserImageSource(browserImageRefs.current[0], nextFrameUri)
-    } else if (pendingFrameLayerRef.current === null) {
-      // Why: decode the next frame offscreen and keep the previous layer visible
-      // until onLoad; replacing the visible Image directly flashes black.
-      const nextLayer: FrameLayer = visibleFrameLayerRef.current === 0 ? 1 : 0
-      frameUriRef.current = nextFrameUri
-      pendingFrameLayerRef.current = nextLayer
-      updateBrowserImageSource(browserImageRefs.current[nextLayer], nextFrameUri)
-    } else {
-      // Why: popovers/menus can settle in one final frame while the previous
-      // offscreen frame is still decoding. Keep the hidden layer pointed at
-      // the newest frame instead of dropping the final static state.
-      frameUriRef.current = nextFrameUri
-      updateBrowserImageSource(browserImageRefs.current[pendingFrameLayerRef.current], nextFrameUri)
-    }
-    if (busyRef.current) {
-      busyRef.current = false
-      setBusy(false)
-    }
-  }, [])
+  const presentationRefs = useMemo<BrowserFramePresentationRefs>(
+    () => ({
+      browserImageRefs,
+      browserLayerRefs,
+      frameLayerFrameRef,
+      frameMetadataRef,
+      frameMountedRef,
+      frameUriRef,
+      pendingFrameLayerRef,
+      queuedFrameRef,
+      visibleFrameLayerRef
+    }),
+    [
+      browserImageRefs,
+      browserLayerRefs,
+      frameLayerFrameRef,
+      frameMetadataRef,
+      frameMountedRef,
+      frameUriRef,
+      pendingFrameLayerRef,
+      queuedFrameRef,
+      visibleFrameLayerRef
+    ]
+  )
+  const applyFrame = useCallback(
+    (frame: BrowserScreencastFrame, frameCacheKey: string): void => {
+      presentMobileBrowserFrame(
+        presentationRefs,
+        { busyRef, onFrameCommit, setBusy, setFrameMetadata, setFrameUri },
+        frame,
+        frameCacheKey
+      )
+    },
+    [busyRef, onFrameCommit, presentationRefs, setBusy, setFrameMetadata, setFrameUri]
+  )
 
   const clearFrameThrottle = useCallback(() => {
     pendingThrottledFrameRef.current = null
@@ -83,7 +100,7 @@ export function useMobileBrowserFrameApply(args: BrowserFrameApplyArgs) {
       clearTimeout(frameThrottleTimerRef.current)
       frameThrottleTimerRef.current = null
     }
-  }, [])
+  }, [frameThrottleTimerRef, pendingThrottledFrameRef])
 
   const applyFrameThrottled = useCallback(
     (frame: BrowserScreencastFrame, frameCacheKey: string): void => {
@@ -118,5 +135,36 @@ export function useMobileBrowserFrameApply(args: BrowserFrameApplyArgs) {
     },
     [applyFrame, clearFrameThrottle]
   )
-  return { applyFrameThrottled, clearFrameThrottle }
+  const clearFramePresentationQueue = useCallback(() => {
+    clearBrowserFramePresentationQueue(presentationRefs, {
+      busyRef,
+      setBusy,
+      setFrameMetadata,
+      setFrameUri
+    })
+  }, [busyRef, presentationRefs, setBusy, setFrameMetadata, setFrameUri])
+
+  const mountCachedFramePresentation = useCallback(
+    (frameCacheKey: string | null, cachedFrame: BrowserFrameCacheEntry) => {
+      mountCachedBrowserFramePresentation(
+        presentationRefs,
+        { setFrameMetadata, setFrameUri },
+        frameCacheKey,
+        cachedFrame
+      )
+    },
+    [presentationRefs, setFrameMetadata, setFrameUri]
+  )
+
+  const resetFramePresentation = useCallback(() => {
+    resetBrowserFramePresentation(presentationRefs, { setFrameMetadata, setFrameUri })
+  }, [presentationRefs, setFrameMetadata, setFrameUri])
+
+  return {
+    applyFrameThrottled,
+    clearFramePresentationQueue,
+    clearFrameThrottle,
+    mountCachedFramePresentation,
+    resetFramePresentation
+  }
 }

@@ -1,20 +1,23 @@
 import { Pressable, StyleSheet, View } from 'react-native'
 import { Monitor, Smartphone, type LucideIcon } from 'lucide-react-native'
 import { colors, radii } from '../theme/mobile-theme'
+import type { MobileBrowserCopy } from './mobile-browser-copy'
 import type { MobileBrowserViewMode } from './browser-screencast-request'
 
 type Props = {
+  copy: MobileBrowserCopy['viewMode']
   disabled: boolean
   value: MobileBrowserViewMode
   onChange: (mode: MobileBrowserViewMode) => void
 }
 
-const VIEW_MODES: { id: MobileBrowserViewMode; label: string; icon: LucideIcon }[] = [
-  { id: 'web', label: 'Web', icon: Monitor },
-  { id: 'mobile', label: 'Mobile', icon: Smartphone }
+const VIEW_MODES: { id: MobileBrowserViewMode; icon: LucideIcon }[] = [
+  { id: 'web', icon: Monitor },
+  { id: 'mobile', icon: Smartphone }
 ]
 
 export function MobileBrowserViewModeSwitch({
+  copy,
   disabled,
   value,
   onChange
@@ -25,7 +28,7 @@ export function MobileBrowserViewModeSwitch({
         <ViewModeButton
           key={mode.id}
           Icon={mode.icon}
-          label={mode.label}
+          label={copy[mode.id].accessibilityLabel}
           selected={value === mode.id}
           disabled={disabled}
           onPress={() => onChange(mode.id)}
@@ -60,7 +63,7 @@ function ViewModeButton({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ selected, disabled }}
-      accessibilityLabel={`Show ${label.toLowerCase()} website view`}
+      accessibilityLabel={label}
     >
       <Icon size={14} color={selected ? colors.bgBase : colors.textSecondary} />
     </Pressable>

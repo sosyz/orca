@@ -1,68 +1,26 @@
-import { useCallback, useMemo, useRef, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   PanResponder,
   type GestureResponderEvent,
   type PanResponderGestureState
 } from 'react-native'
-import type { RpcClient } from '../transport/rpc-client'
 import {
   createPinchGesture,
   MAX_ZOOM,
   MIN_ZOOM,
-  updatePinchZoom,
-  type PinchGesture
+  updatePinchZoom
 } from './mobile-browser-frame-state'
-import {
-  clampBrowserZoomState,
-  readLocalTouchPoint,
-  type BrowserFrameGeometry,
-  type BrowserTouchLayout,
-  type BrowserZoomState
-} from './browser-touch-geometry'
-import type { BrowserPointerModifier } from './MobileBrowserPointerModifiers'
-import type { BrowserScreencastFrameMetadata } from '../transport/browser-screencast-protocol'
-
+import { clampBrowserZoomState, readLocalTouchPoint } from './browser-touch-geometry'
+import type { MobileBrowserInteractionArgs } from './mobile-browser-interaction-contract'
 import { useMobileBrowserCommands } from './use-mobile-browser-commands'
 const TAP_SLOP = 16
 const SCROLL_START_SLOP = 22
 const LONG_PRESS_MS = 550
-const WHEEL_INTERVAL_MS = 70
-
-type BrowserPageParams = { worktree: string; page: string }
-type PanGesture = { x: number; y: number; offsetX: number; offsetY: number }
-type SendBrowserRequest = (
-  method: string,
-  params?: Record<string, unknown>,
-  options?: { showBusy?: boolean; suppressError?: boolean; timeoutMs?: number }
-) => Promise<unknown | null>
-
-type MobileBrowserInteractionArgs = {
-  clearLongPressTimer: () => void
-  client: RpcClient | null
-  dialogRef: { current: { dialogType: string; message: string } | null }
-  frameGeometry: BrowserFrameGeometry | null
-  frameMetadataRef: { current: BrowserScreencastFrameMetadata | null }
-  keyboardValue: string
-  layoutRef: { current: BrowserTouchLayout | null }
-  longPressTimerRef: { current: ReturnType<typeof setTimeout> | null }
-  onToast: (message: string, durationMs?: number) => void
-  pageParams: () => BrowserPageParams | null
-  panRef: { current: PanGesture | null }
-  pinchRef: { current: PinchGesture | null }
-  pointerModifiers: BrowserPointerModifier[]
-  sendBrowserRequest: SendBrowserRequest
-  setDialog: Dispatch<SetStateAction<{ dialogType: string; message: string } | null>>
-  setError: Dispatch<SetStateAction<string | null>>
-  setKeyboardValue: Dispatch<SetStateAction<string>>
-  scrollingRef: { current: boolean }
-  startPointRef: { current: { x: number; y: number; t: number } | null }
-  setPointerModifiers: Dispatch<SetStateAction<BrowserPointerModifier[]>>
-  setZoom: Dispatch<SetStateAction<BrowserZoomState>>
-  zoomRef: { current: BrowserZoomState }
-}
+const WHEEL_MOVE_MIN_DELTA = 8
 
 export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs) {
   const {
+    active,
     clearLongPressTimer,
     client,
     dialogRef,
@@ -73,6 +31,7 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
     longPressTimerRef,
     onToast,
     pageParams,
+    pageInputActive,
     panRef,
     pinchRef,
     pointerModifiers,
@@ -84,37 +43,83 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
     setPointerModifiers,
     setZoom,
     startPointRef,
+    toasts,
     zoomRef
   } = args
   const rightClickSentRef = useRef(false)
-  const lastWheelRef = useRef({ dx: 0, dy: 0, at: 0 })
+  const lastWheelRef = useRef({ dx: 0, dy: 0 })
+  const remoteWheelScrollingRef = useRef(false)
   const wheelGestureIdRef = useRef(0)
-  const {
-    mapTouchPoint,
-    sendDialogCommand,
-    sendKeyboardText,
-    sendKeypress,
-    sendPointerClick,
-    sendWheel,
-    togglePointerModifier
-  } = useMobileBrowserCommands({
+  const commands = useMobileBrowserCommands({
+    active,
     client,
     frameMetadataRef,
     keyboardValue,
     layoutRef,
     onToast,
     pageParams,
+    pageInputActive,
     pointerModifiers,
     sendBrowserRequest,
     setDialog,
     setError,
     setKeyboardValue,
     setPointerModifiers,
+    toasts,
     zoomRef
   })
+  const { cancelWheelCommands, mapTouchPoint, sendPointerClick, sendWheel } = commands
+
+  const resetActiveGesture = useCallback(() => {
+    clearLongPressTimer()
+    pinchRef.current = null
+    panRef.current = null
+    remoteWheelScrollingRef.current = false
+    scrollingRef.current = false
+    startPointRef.current = null
+  }, [clearLongPressTimer])
+
+  const sendGestureWheelDelta = useCallback(
+    (
+      event: GestureResponderEvent,
+      gesture: PanResponderGestureState,
+      options: { force?: boolean } = {}
+    ) => {
+      const deltaX = gesture.dx - lastWheelRef.current.dx
+      const deltaY = gesture.dy - lastWheelRef.current.dy
+      if (!options.force && Math.abs(deltaX) + Math.abs(deltaY) < WHEEL_MOVE_MIN_DELTA) {
+        return
+      }
+      if (options.force && Math.abs(deltaX) + Math.abs(deltaY) < 1) {
+        return
+      }
+      const currentPoint = readLocalTouchPoint(event.nativeEvent)
+      if (!currentPoint) {
+        return
+      }
+      const point = mapTouchPoint(currentPoint.x, currentPoint.y)
+      if (!point) {
+        return
+      }
+      lastWheelRef.current = { dx: gesture.dx, dy: gesture.dy }
+      sendWheel(point, deltaX, deltaY, wheelGestureIdRef.current)
+    },
+    [mapTouchPoint, sendWheel]
+  )
+
+  useEffect(() => {
+    if (pageInputActive) {
+      return
+    }
+    resetActiveGesture()
+    cancelWheelCommands()
+  }, [cancelWheelCommands, pageInputActive, resetActiveGesture])
 
   const handleResponderGrant = useCallback(
     (event: GestureResponderEvent) => {
+      if (!pageInputActive) {
+        return
+      }
       const pinch = createPinchGesture(event, frameGeometry, zoomRef.current)
       if (pinch) {
         clearLongPressTimer()
@@ -129,9 +134,10 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
       }
       startPointRef.current = { x: startPoint.x, y: startPoint.y, t: Date.now() }
       rightClickSentRef.current = false
+      remoteWheelScrollingRef.current = false
       scrollingRef.current = false
       wheelGestureIdRef.current += 1
-      lastWheelRef.current = { dx: 0, dy: 0, at: 0 }
+      lastWheelRef.current = { dx: 0, dy: 0 }
       panRef.current =
         zoomRef.current.scale > MIN_ZOOM
           ? {
@@ -153,14 +159,25 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
         }
         rightClickSentRef.current = true
         void sendPointerClick(point, 'right')
-        onToast('Right click')
+        onToast(toasts.rightClick)
       }, LONG_PRESS_MS)
     },
-    [clearLongPressTimer, frameGeometry, mapTouchPoint, onToast, sendPointerClick]
+    [
+      clearLongPressTimer,
+      frameGeometry,
+      mapTouchPoint,
+      onToast,
+      pageInputActive,
+      sendPointerClick,
+      toasts.rightClick
+    ]
   )
 
   const handleResponderMove = useCallback(
     (event: GestureResponderEvent, gesture: PanResponderGestureState) => {
+      if (!pageInputActive) {
+        return
+      }
       const startedPinch = pinchRef.current
         ? null
         : createPinchGesture(event, frameGeometry, zoomRef.current)
@@ -195,6 +212,7 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
           return
         }
         scrollingRef.current = true
+        remoteWheelScrollingRef.current = false
         startPointRef.current = null
         const nextZoom = clampBrowserZoomState(
           {
@@ -215,29 +233,12 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
           return
         }
         scrollingRef.current = true
+        remoteWheelScrollingRef.current = true
         startPointRef.current = null
       }
-      const now = Date.now()
-      if (now - lastWheelRef.current.at < WHEEL_INTERVAL_MS) {
-        return
-      }
-      const deltaX = gesture.dx - lastWheelRef.current.dx
-      const deltaY = gesture.dy - lastWheelRef.current.dy
-      if (Math.abs(deltaX) + Math.abs(deltaY) < 8) {
-        return
-      }
-      const currentPoint = readLocalTouchPoint(event.nativeEvent)
-      if (!currentPoint) {
-        return
-      }
-      const point = mapTouchPoint(currentPoint.x, currentPoint.y)
-      if (!point) {
-        return
-      }
-      lastWheelRef.current = { dx: gesture.dx, dy: gesture.dy, at: now }
-      sendWheel(point, deltaX, deltaY, wheelGestureIdRef.current)
+      sendGestureWheelDelta(event, gesture)
     },
-    [clearLongPressTimer, frameGeometry, mapTouchPoint, sendWheel]
+    [clearLongPressTimer, frameGeometry, pageInputActive, sendGestureWheelDelta]
   )
 
   const handleResponderRelease = useCallback(
@@ -248,7 +249,12 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
       const start = startPointRef.current
       startPointRef.current = null
       const wasScrolling = scrollingRef.current
+      const wasRemoteScrolling = remoteWheelScrollingRef.current
       scrollingRef.current = false
+      remoteWheelScrollingRef.current = false
+      if (wasRemoteScrolling) {
+        sendGestureWheelDelta(event, gesture, { force: true })
+      }
       if (!start || rightClickSentRef.current || wasScrolling) {
         return
       }
@@ -263,28 +269,32 @@ export function useMobileBrowserInteractions(args: MobileBrowserInteractionArgs)
         }
       }
     },
-    [clearLongPressTimer, mapTouchPoint, sendPointerClick]
+    [clearLongPressTimer, mapTouchPoint, sendGestureWheelDelta, sendPointerClick]
   )
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => dialogRef.current === null,
-        onMoveShouldSetPanResponder: () => dialogRef.current === null,
+        onStartShouldSetPanResponder: () => pageInputActive && dialogRef.current === null,
+        onMoveShouldSetPanResponder: () => pageInputActive && dialogRef.current === null,
         onPanResponderGrant: handleResponderGrant,
         onPanResponderMove: handleResponderMove,
         onPanResponderRelease: handleResponderRelease,
         onPanResponderTerminate: () => {
-          clearLongPressTimer()
-          pinchRef.current = null
-          panRef.current = null
-          scrollingRef.current = false
-          startPointRef.current = null
+          resetActiveGesture()
+          cancelWheelCommands()
         },
         onPanResponderTerminationRequest: () => true
       }),
-    [clearLongPressTimer, handleResponderGrant, handleResponderMove, handleResponderRelease]
+    [
+      cancelWheelCommands,
+      handleResponderGrant,
+      handleResponderMove,
+      handleResponderRelease,
+      pageInputActive,
+      resetActiveGesture
+    ]
   )
 
-  return { panResponder, sendDialogCommand, sendKeyboardText, sendKeypress, togglePointerModifier }
+  return { ...commands, panResponder }
 }

@@ -3,20 +3,17 @@ import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 
 export type BrowserPointerModifier = 'cmd' | 'ctrl' | 'alt' | 'shift'
 
-const BROWSER_POINTER_MODIFIERS: { id: BrowserPointerModifier; label: string }[] = [
-  { id: 'cmd', label: 'Cmd' },
-  { id: 'ctrl', label: 'Ctrl' },
-  { id: 'alt', label: 'Alt' },
-  { id: 'shift', label: 'Shift' }
-]
+const BROWSER_POINTER_MODIFIERS: BrowserPointerModifier[] = ['cmd', 'ctrl', 'alt', 'shift']
 
 type Props = {
+  copy: Record<BrowserPointerModifier, { accessibilityLabel: string; label: string }>
   disabled: boolean
   selectedModifiers: BrowserPointerModifier[]
   onToggle: (modifier: BrowserPointerModifier) => void
 }
 
 export function MobileBrowserPointerModifiers({
+  copy,
   disabled,
   selectedModifiers,
   onToggle
@@ -24,10 +21,10 @@ export function MobileBrowserPointerModifiers({
   return (
     <View style={styles.modifierRow}>
       {BROWSER_POINTER_MODIFIERS.map((modifier) => {
-        const selected = selectedModifiers.includes(modifier.id)
+        const selected = selectedModifiers.includes(modifier)
         return (
           <Pressable
-            key={modifier.id}
+            key={modifier}
             style={({ pressed }) => [
               styles.keyButton,
               selected && styles.keyButtonSelected,
@@ -35,10 +32,10 @@ export function MobileBrowserPointerModifiers({
               disabled && styles.disabled
             ]}
             disabled={disabled}
-            onPress={() => onToggle(modifier.id)}
+            onPress={() => onToggle(modifier)}
             accessibilityRole="button"
             accessibilityState={{ selected, disabled }}
-            accessibilityLabel={`${modifier.label} click modifier`}
+            accessibilityLabel={copy[modifier].accessibilityLabel}
           >
             <Text
               style={[
@@ -47,7 +44,7 @@ export function MobileBrowserPointerModifiers({
                 disabled && styles.disabledText
               ]}
             >
-              {modifier.label}
+              {copy[modifier].label}
             </Text>
           </Pressable>
         )

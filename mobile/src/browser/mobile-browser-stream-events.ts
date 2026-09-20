@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
 import { displayBrowserUrl } from './browser-url'
+import type { MobileBrowserErrorCopy } from './mobile-browser-copy'
 import { shouldSurfaceBrowserError } from './mobile-browser-frame-state'
 
 export type BrowserDialogState = { dialogType: string; message: string }
@@ -16,6 +17,7 @@ type HandleScreencastEventArgs = {
   busyRef: { current: boolean }
   clearStartupTimer: () => void
   event: ScreencastEvent
+  copy: Pick<MobileBrowserErrorCopy, 'dialogFallbackMessage' | 'streamFailed'>
   lastZoomResetUrlRef: { current: string }
   resetBrowserZoomState: () => void
   setAddressValue: Dispatch<SetStateAction<string>>
@@ -28,6 +30,7 @@ export function handleBrowserScreencastEvent(args: HandleScreencastEventArgs): v
   const {
     busyRef,
     clearStartupTimer,
+    copy,
     event,
     lastZoomResetUrlRef,
     resetBrowserZoomState,
@@ -38,7 +41,6 @@ export function handleBrowserScreencastEvent(args: HandleScreencastEventArgs): v
   } = args
 
   if (event.type === 'ready') {
-    clearStartupTimer()
     if (busyRef.current) {
       busyRef.current = false
       setBusy(false)
@@ -52,6 +54,7 @@ export function handleBrowserScreencastEvent(args: HandleScreencastEventArgs): v
     }
   } else if (event.type === 'end') {
     clearStartupTimer()
+    setError(copy.streamFailed)
     if (busyRef.current) {
       busyRef.current = false
       setBusy(false)
@@ -59,18 +62,18 @@ export function handleBrowserScreencastEvent(args: HandleScreencastEventArgs): v
   } else if (event.type === 'dialog') {
     setDialog({
       dialogType: event.dialogType ?? 'alert',
-      message: event.message ?? 'Browser dialog'
+      message: event.message ?? copy.dialogFallbackMessage
     })
   } else if (event.type === 'dialogClosed') {
     setDialog(null)
   } else if (event.type === 'error') {
-    clearStartupTimer()
     if (busyRef.current) {
       busyRef.current = false
       setBusy(false)
     }
-    const message = event.message ?? event.error?.message ?? 'Browser stream failed.'
+    const message = event.message ?? event.error?.message ?? copy.streamFailed
     if (shouldSurfaceBrowserError(message)) {
+      clearStartupTimer()
       setError(message)
     }
   }

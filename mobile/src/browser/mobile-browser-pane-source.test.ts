@@ -28,7 +28,7 @@ describe('MobileBrowserPane source invariants', () => {
   it('mirrors handler refs in a layout effect instead of during render', () => {
     const mirrorBlock = sliceBetween(
       'useLayoutEffect(() => {',
-      '  useEffect(() => {\n    lastZoomResetUrlRef.current'
+      '  useEffect(() => {\n    setFrameInputReady(false)'
     )
 
     expect(mirrorBlock).toContain('frameMetadataRef.current = frameMetadata')

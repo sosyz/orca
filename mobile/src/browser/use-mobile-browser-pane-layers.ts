@@ -1,17 +1,31 @@
-import { useCallback } from 'react'
+import { useCallback, useMemo, type Dispatch, type SetStateAction } from 'react'
 import type { Image, View } from 'react-native'
+import type { BrowserScreencastFrameMetadata } from '../transport/browser-screencast-protocol'
 import {
-  updateBrowserImageSource,
-  updateBrowserLayerVisibility,
-  type FrameLayer
-} from './mobile-browser-frame-state'
+  handleBrowserFramePresentationError,
+  handleBrowserFramePresentationLoad,
+  syncBrowserFrameImageRef,
+  type BrowserFrameDecodeRequest,
+  type BrowserFramePresentationFrame,
+  type BrowserFramePresentationRefs
+} from './mobile-browser-frame-presentation'
+import { updateBrowserLayerVisibility, type FrameLayer } from './mobile-browser-frame-state'
 import { mobileBrowserPaneStyles as styles } from './mobile-browser-pane-styles'
 
 type BrowserLayerHandlersArgs = {
   browserImageRefs: { current: [Image | null, Image | null] }
   browserLayerRefs: { current: [View | null, View | null] }
+  frameLayerFrameRef: {
+    current: [BrowserFramePresentationFrame | null, BrowserFramePresentationFrame | null]
+  }
+  frameMetadataRef: { current: BrowserScreencastFrameMetadata | null }
+  frameMountedRef: { current: boolean }
   frameUriRef: { current: string | null }
+  onFrameCommit: () => void
   pendingFrameLayerRef: { current: FrameLayer | null }
+  queuedFrameRef: { current: BrowserFrameDecodeRequest | null }
+  setFrameMetadata: Dispatch<SetStateAction<BrowserScreencastFrameMetadata | null>>
+  setFrameUri: Dispatch<SetStateAction<string | null>>
   visibleFrameLayerRef: { current: FrameLayer }
 }
 
@@ -19,20 +33,47 @@ export function useMobileBrowserPaneLayers(args: BrowserLayerHandlersArgs) {
   const {
     browserImageRefs,
     browserLayerRefs,
+    frameLayerFrameRef,
+    frameMetadataRef,
+    frameMountedRef,
     frameUriRef,
+    onFrameCommit,
     pendingFrameLayerRef,
+    queuedFrameRef,
+    setFrameMetadata,
+    setFrameUri,
     visibleFrameLayerRef
   } = args
+  const presentationRefs = useMemo<BrowserFramePresentationRefs>(
+    () => ({
+      browserImageRefs,
+      browserLayerRefs,
+      frameLayerFrameRef,
+      frameMetadataRef,
+      frameMountedRef,
+      frameUriRef,
+      pendingFrameLayerRef,
+      queuedFrameRef,
+      visibleFrameLayerRef
+    }),
+    [
+      browserImageRefs,
+      browserLayerRefs,
+      frameLayerFrameRef,
+      frameMetadataRef,
+      frameMountedRef,
+      frameUriRef,
+      pendingFrameLayerRef,
+      queuedFrameRef,
+      visibleFrameLayerRef
+    ]
+  )
 
   const setBrowserImageRef = useCallback(
     (layer: FrameLayer, image: Image | null) => {
-      browserImageRefs.current[layer] = image
-      const currentFrameUri = frameUriRef.current
-      if (image && currentFrameUri) {
-        updateBrowserImageSource(image, currentFrameUri)
-      }
+      syncBrowserFrameImageRef(presentationRefs, layer, image)
     },
-    [browserImageRefs, frameUriRef]
+    [presentationRefs]
   )
 
   const setBrowserLayerRef = useCallback(
@@ -61,41 +102,49 @@ export function useMobileBrowserPaneLayers(args: BrowserLayerHandlersArgs) {
   )
 
   const handleBrowserImageLoad = useCallback(
-    (layer: FrameLayer) => {
+    (layer: FrameLayer, event?: unknown) => {
       if (pendingFrameLayerRef.current !== layer) {
         return
       }
-      pendingFrameLayerRef.current = null
-      visibleFrameLayerRef.current = layer
-      updateBrowserLayerVisibility(browserLayerRefs.current, layer)
+      handleBrowserFramePresentationLoad(
+        presentationRefs,
+        { onFrameCommit, setFrameMetadata, setFrameUri },
+        layer,
+        event
+      )
     },
-    [browserLayerRefs, pendingFrameLayerRef, visibleFrameLayerRef]
+    [onFrameCommit, pendingFrameLayerRef, presentationRefs, setFrameMetadata, setFrameUri]
   )
 
   const handleBrowserImageLayer0Load = useCallback(
-    () => handleBrowserImageLoad(0),
+    (event?: unknown) => handleBrowserImageLoad(0, event),
     [handleBrowserImageLoad]
   )
   const handleBrowserImageLayer1Load = useCallback(
-    () => handleBrowserImageLoad(1),
+    (event?: unknown) => handleBrowserImageLoad(1, event),
     [handleBrowserImageLoad]
   )
 
   const handleBrowserImageError = useCallback(
-    (layer: FrameLayer) => {
+    (layer: FrameLayer, event?: unknown) => {
       if (pendingFrameLayerRef.current === layer) {
-        pendingFrameLayerRef.current = null
+        handleBrowserFramePresentationError(
+          presentationRefs,
+          { onFrameCommit, setFrameMetadata, setFrameUri },
+          layer,
+          event
+        )
       }
     },
-    [pendingFrameLayerRef]
+    [onFrameCommit, pendingFrameLayerRef, presentationRefs, setFrameMetadata, setFrameUri]
   )
 
   const handleBrowserImageLayer0Error = useCallback(
-    () => handleBrowserImageError(0),
+    (event?: unknown) => handleBrowserImageError(0, event),
     [handleBrowserImageError]
   )
   const handleBrowserImageLayer1Error = useCallback(
-    () => handleBrowserImageError(1),
+    (event?: unknown) => handleBrowserImageError(1, event),
     [handleBrowserImageError]
   )
 

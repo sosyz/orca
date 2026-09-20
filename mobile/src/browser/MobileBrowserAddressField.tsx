@@ -9,6 +9,7 @@ type Props = {
   onChangeText: (value: string) => void
   onFocus: () => void
   onSubmit: () => void
+  placeholder: string
   value: string
 }
 
@@ -19,6 +20,7 @@ export function MobileBrowserAddressField({
   onChangeText,
   onFocus,
   onSubmit,
+  placeholder,
   value
 }: Props): React.JSX.Element {
   const fileLabel = focused ? null : compactMobileBrowserFileAddress(value)
@@ -40,7 +42,7 @@ export function MobileBrowserAddressField({
         keyboardType={Platform.OS === 'ios' ? 'url' : 'default'}
         numberOfLines={1}
         returnKeyType="go"
-        placeholder="URL"
+        placeholder={placeholder}
         placeholderTextColor={colors.textMuted}
         editable={!disabled}
       />
