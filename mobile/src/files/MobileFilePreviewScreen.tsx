@@ -46,6 +46,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
   const [savedContent, setSavedContent] = useState('')
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
   const draftContentRef = useRef(draftContent)
   const savedContentRef = useRef(savedContent)
   const draftSourceKeyRef = useRef<string | null>(null)
@@ -63,6 +64,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
     [routePreviewSource]
   )
   const previewSourceKeyRef = useRef(previewSourceKey)
+  const previewLoadRevisionRef = useRef(0)
   const lineColumn = useMemo(
     () =>
       previewParams
@@ -89,7 +91,11 @@ export function MobileFilePreviewScreen({ route }: Props) {
   }, [savedContent])
 
   const loadPreview = useCallback(async () => {
+    const loadRevision = ++previewLoadRevisionRef.current
     const loadSourceKey = previewSourceKey
+    const isCurrentLoad = () =>
+      previewLoadRevisionRef.current === loadRevision &&
+      previewSourceKeyRef.current === loadSourceKey
     if (!previewParams || !previewSource || loadSourceKey !== routePreviewSourceKey) {
       setPreview(previewError(route.ok ? 'Unable to load preview' : route.message))
       return
@@ -111,10 +117,14 @@ export function MobileFilePreviewScreen({ route }: Props) {
     setSaveError('')
     try {
       const result = await loadMobileFilePreview(client, previewSource, undefined, {
-        onTerminalArtifactSourceRefreshed: setPreviewSource,
+        onTerminalArtifactSourceRefreshed: (source) => {
+          if (isCurrentLoad()) {
+            setPreviewSource(source)
+          }
+        },
         refreshGrant: true
       })
-      if (previewSourceKeyRef.current !== loadSourceKey) {
+      if (!isCurrentLoad()) {
         return
       }
       if (shouldKeepDirtyDraftOnPreviewLoadResult(preserveDirtyDraft, result)) {
@@ -136,6 +146,9 @@ export function MobileFilePreviewScreen({ route }: Props) {
       }
       setPreview(result)
     } catch (err) {
+      if (!isCurrentLoad()) {
+        return
+      }
       const message = err instanceof Error ? err.message : 'Unable to load preview'
       if (preserveDirtyDraft) {
         setSaveError(message)
@@ -155,6 +168,10 @@ export function MobileFilePreviewScreen({ route }: Props) {
 
   useEffect(() => {
     void loadPreview()
+    return () => {
+      // Grant refresh can start another read of the same file while this one is pending.
+      previewLoadRevisionRef.current += 1
+    }
   }, [loadPreview])
 
   const retry = useCallback(async () => {
@@ -199,9 +216,15 @@ export function MobileFilePreviewScreen({ route }: Props) {
   })
 
   const saveArtifact = useCallback(async () => {
-    if (!client || previewSource?.source !== 'terminalArtifact' || !canSaveArtifact || saving) {
+    if (
+      !client ||
+      previewSource?.source !== 'terminalArtifact' ||
+      !canSaveArtifact ||
+      savingRef.current
+    ) {
       return
     }
+    savingRef.current = true
     setSaving(true)
     setSaveError('')
     try {
@@ -218,9 +241,10 @@ export function MobileFilePreviewScreen({ route }: Props) {
       const message = err instanceof Error ? err.message : 'Unable to save file'
       setSaveError(message)
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
-  }, [canSaveArtifact, client, draftContent, previewSource, savedContent, saving])
+  }, [canSaveArtifact, client, draftContent, previewSource, savedContent])
 
   const requestBack = useCallback(() => {
     if (!hasUnsavedTerminalArtifactDraft) {
