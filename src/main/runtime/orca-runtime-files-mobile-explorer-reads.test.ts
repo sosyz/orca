@@ -9,7 +9,10 @@ import {
   createRuntimeFileCommands,
   useRuntimeFileCommandsLifecycle
 } from './orca-runtime-files-test-harness'
-import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
+import {
+  getSshFilesystemProvider,
+  SSH_FILESYSTEM_PROVIDER_UNAVAILABLE_MESSAGE
+} from '../providers/ssh-filesystem-dispatch'
 
 vi.mock('fs', async () => (await import('./orca-runtime-files-mock-registry')).fsModuleMock())
 vi.mock('fs/promises', async () =>
@@ -52,6 +55,50 @@ function dirEntry(args: { name: string; directory?: boolean; symlink?: boolean }
 
 describe('RuntimeFileCommands', () => {
   useRuntimeFileCommandsLifecycle()
+
+  it('stats a local link only after canonical path authorization', async () => {
+    const { commands, store } = createRuntimeFileCommands()
+    resolveAuthorizedPathMock.mockResolvedValue('/repo/docs')
+    statMock.mockResolvedValue({ size: 0, mtimeMs: 2, isDirectory: () => true })
+    await expect(commands.statRuntimeFile('id:wt-1', 'linked-docs')).resolves.toEqual({
+      size: 0,
+      mtime: 2,
+      isDirectory: true
+    })
+    expect(resolveAuthorizedPathMock).toHaveBeenCalledWith('/repo/linked-docs', store)
+    expect(statMock).toHaveBeenCalledExactlyOnceWith('/repo/docs')
+  })
+
+  it('propagates link authorization denial without probing local metadata', async () => {
+    const { commands } = createRuntimeFileCommands()
+    resolveAuthorizedPathMock.mockRejectedValue(new Error('Access denied'))
+    await expect(commands.statRuntimeFile('id:wt-1', 'outside')).rejects.toThrow('Access denied')
+    expect(statMock).not.toHaveBeenCalled()
+  })
+
+  it('stats a remote folder workspace on its SSH provider and never substitutes local filesystem access', async () => {
+    const resolveRuntimeFileTarget = vi.fn(async () => ({
+      worktree: { id: 'folder-a', path: '/remote/folder' },
+      connectionId: 'ssh-a'
+    }))
+    const { commands } = createRuntimeFileCommands({ resolveRuntimeFileTarget })
+    const remoteStat = vi.fn().mockResolvedValue({ type: 'directory', size: 0, mtime: 3 })
+    vi.mocked(getSshFilesystemProvider).mockReturnValue({ stat: remoteStat } as never)
+    await expect(commands.statRuntimeFile('id:folder-a', 'linked')).resolves.toEqual({
+      size: 0,
+      mtime: 3,
+      isDirectory: true
+    })
+    expect(resolveRuntimeFileTarget).toHaveBeenCalledWith('id:folder-a')
+    expect(getSshFilesystemProvider).toHaveBeenCalledWith('ssh-a')
+    expect(remoteStat).toHaveBeenCalledWith('/remote/folder/linked')
+    vi.mocked(getSshFilesystemProvider).mockReturnValue(undefined)
+    await expect(commands.statRuntimeFile('id:folder-a', 'linked')).rejects.toThrow(
+      SSH_FILESYSTEM_PROVIDER_UNAVAILABLE_MESSAGE
+    )
+    expect(resolveAuthorizedPathMock).not.toHaveBeenCalled()
+    expect(statMock).not.toHaveBeenCalled()
+  })
 
   it('opens source control diffs through the renderer host (inheriting active runtime env)', async () => {
     const openDiff = vi.fn()

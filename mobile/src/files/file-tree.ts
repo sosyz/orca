@@ -23,9 +23,19 @@ export type DirectoryState = {
   entries: MobileDirEntry[]
   loading?: boolean
   error?: string
+  stale?: boolean
 }
 
 export type DirectoryCache = Record<string, DirectoryState | undefined>
+
+export function invalidateChildDirectoryCache(cache: DirectoryCache): DirectoryCache {
+  return Object.fromEntries(
+    Object.entries(cache).map(([path, state]) => [
+      path,
+      path !== '' && state ? { ...state, loading: false, stale: true } : state
+    ])
+  )
+}
 
 export type InlineStatusNode = {
   id: string

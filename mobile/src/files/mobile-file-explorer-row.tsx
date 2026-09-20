@@ -12,6 +12,7 @@ import { colors, spacing } from '../theme/mobile-theme'
 import { type FileExplorerRow, isMarkdownPath, type TreeNode } from './file-tree'
 import { fileExplorerStyles as styles } from './mobile-file-explorer-styles'
 import { canPreviewMobileFileRow } from './mobile-file-preview-navigation'
+import type { SymlinkActivationState } from './use-mobile-file-symlink-activation'
 
 type Props = {
   item: FileExplorerRow
@@ -19,6 +20,8 @@ type Props = {
   onPreviewFile: (relativePath: string, displayName: string) => void
   onRetryDirectory: (relativePath: string) => void
   onToggleDirectory: (relativePath: string) => void
+  onActivateSymlink: (node: TreeNode) => void
+  activationState?: SymlinkActivationState
 }
 
 export function MobileFileExplorerRow(props: Props) {
@@ -62,6 +65,8 @@ export function MobileFileExplorerRow(props: Props) {
         expanded={expanded}
         onPreviewFile={onPreviewFile}
         onToggleDirectory={onToggleDirectory}
+        onActivateSymlink={props.onActivateSymlink}
+        activationState={props.activationState}
       />
     )
   }
@@ -78,6 +83,8 @@ function TreeRow(props: {
   expanded: ReadonlySet<string>
   onPreviewFile: (relativePath: string, displayName: string) => void
   onToggleDirectory: (relativePath: string) => void
+  onActivateSymlink: (node: TreeNode) => void
+  activationState?: SymlinkActivationState
 }) {
   const { item, expanded, onPreviewFile, onToggleDirectory } = props
   const isDirectory = item.kind === 'directory'
@@ -88,7 +95,7 @@ function TreeRow(props: {
     item.kind !== 'directory' &&
     canPreviewMobileFileRow({ kind: item.kind, relativePath: item.relativePath })
   const isImage = item.kind === 'binary' && previewable
-  const disabled = item.kind === 'binary' && !previewable
+  const disabled = item.kind === 'binary' && !previewable && !item.isSymlink
   const markdown = item.kind === 'text' && isMarkdownPath(item.relativePath)
 
   return (
@@ -104,6 +111,8 @@ function TreeRow(props: {
         triggerSelection()
         if (isDirectory) {
           onToggleDirectory(item.relativePath)
+        } else if (item.isSymlink) {
+          props.onActivateSymlink(item)
         } else if (!disabled) {
           onPreviewFile(item.relativePath, item.name)
         }
@@ -111,9 +120,11 @@ function TreeRow(props: {
       accessibilityLabel={
         isDirectory
           ? `Open folder ${item.name}`
-          : disabled
-            ? `${item.name} unavailable on mobile`
-            : `Preview file ${item.name}`
+          : item.isSymlink
+            ? `Open link ${item.name}`
+            : disabled
+              ? `${item.name} unavailable on mobile`
+              : `Preview file ${item.name}`
       }
     >
       {isDirectory ? (
@@ -139,6 +150,12 @@ function TreeRow(props: {
           {item.name}
         </Text>
         {disabled ? <Text style={styles.rowMeta}>Unavailable on mobile</Text> : null}
+        {props.activationState?.loading ? (
+          <Text style={styles.inlineStatusText}>Loading...</Text>
+        ) : null}
+        {props.activationState?.error ? (
+          <Text style={styles.inlineErrorText}>{props.activationState.error}</Text>
+        ) : null}
       </View>
     </Pressable>
   )

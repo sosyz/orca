@@ -272,6 +272,265 @@ describe('MobileFileExplorerPanel', () => {
     expect(renderedText(renderer)).not.toContain('refresh failed')
   })
 
+  it('refreshes expanded directories after reconnect and leaves collapsed directories lazy', async () => {
+    mockTransport.client = createMockClient({
+      '': [entry('src', true), entry('docs', true), entry('unopened', true)],
+      src: [entry('old.ts')],
+      docs: [entry('old.md')]
+    })
+    const renderer = await renderExplorer()
+    await pressByLabel(renderer, 'Open folder src')
+    await pressByLabel(renderer, 'Open folder docs')
+    await pressByLabel(renderer, 'Open folder docs')
+    mockTransport.connectionState = 'disconnected'
+    await updateExplorer(renderer)
+
+    const reconnectedClient = createMockClient({
+      '': [entry('src', true), entry('docs', true), entry('unopened', true)],
+      src: [entry('new.ts')],
+      docs: [entry('new.md')]
+    })
+    mockTransport.client = reconnectedClient
+    mockTransport.connectionState = 'connected'
+    await updateExplorer(renderer)
+
+    expect(renderedText(renderer)).toContain('new.ts')
+    expect(renderedText(renderer)).not.toContain('old.ts')
+    expect(reconnectedClient.sendRequest.mock.calls.map((call) => call[1].relativePath)).toEqual([
+      '',
+      'src'
+    ])
+    await pressByLabel(renderer, 'Open folder docs')
+    expect(renderedText(renderer)).toContain('new.md')
+    expect(reconnectedClient.sendRequest.mock.calls.map((call) => call[1].relativePath)).toEqual([
+      '',
+      'src',
+      'docs'
+    ])
+    act(() => renderer.unmount())
+  })
+
+  it.each(['offline', 'after refresh'] as const)(
+    'rejects an old directory response arriving %s',
+    async (completion) => {
+      let resolveOld!: (response: RpcResponse) => void
+      const oldDirectory = new Promise<RpcResponse>((resolve) => {
+        resolveOld = resolve
+      })
+      mockTransport.client = {
+        sendRequest: vi.fn(async (_method, params) =>
+          params.relativePath === '' ? ok([entry('src', true)]) : oldDirectory
+        )
+      }
+      const renderer = await renderExplorer()
+      await pressByLabel(renderer, 'Open folder src')
+      mockTransport.connectionState = 'disconnected'
+      await updateExplorer(renderer)
+      if (completion === 'offline') {
+        await act(async () => resolveOld(ok([entry('stale.ts')])))
+        expect(renderedText(renderer)).not.toContain('stale.ts')
+      }
+      const freshClient = createMockClient({
+        '': [entry('src', true)],
+        src: [entry('fresh.ts')]
+      })
+      mockTransport.client = freshClient
+      mockTransport.connectionState = 'connected'
+      await updateExplorer(renderer)
+      if (completion === 'after refresh') {
+        await act(async () => resolveOld(ok([entry('stale.ts')])))
+      }
+      expect(renderedText(renderer)).toContain('fresh.ts')
+      expect(renderedText(renderer)).not.toContain('stale.ts')
+      expect(freshClient.sendRequest.mock.calls.map((call) => call[1].relativePath)).toEqual([
+        '',
+        'src'
+      ])
+      act(() => renderer.unmount())
+    }
+  )
+
+  it('lets a failed directory refresh retry without continuously reloading it', async () => {
+    mockTransport.client = createMockClient({ '': [entry('src', true)], src: [entry('old.ts')] })
+    const renderer = await renderExplorer()
+    await pressByLabel(renderer, 'Open folder src')
+    mockTransport.connectionState = 'disconnected'
+    await updateExplorer(renderer)
+    let fail = true
+    const sendRequest = vi.fn(async (_method: string, params: { relativePath: string }) => {
+      if (params.relativePath === '') {
+        return ok([entry('src', true)])
+      }
+      if (fail) {
+        throw new Error('SSH directory unavailable')
+      }
+      return ok([entry('fresh.ts')])
+    })
+    mockTransport.client = { sendRequest }
+    mockTransport.connectionState = 'connected'
+    await updateExplorer(renderer)
+    expect(renderedText(renderer)).toContain('SSH directory unavailable')
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    fail = false
+    await pressByLabel(renderer, 'Retry loading src')
+    expect(renderedText(renderer)).toContain('fresh.ts')
+    expect(sendRequest).toHaveBeenCalledTimes(3)
+    act(() => renderer.unmount())
+  })
+
+  it('does not request expanded directories again after a legacy root refresh fills the cache', async () => {
+    mockTransport.client = createMockClient({ '': [entry('src', true)], src: [entry('old.ts')] })
+    const renderer = await renderExplorer()
+    await pressByLabel(renderer, 'Open folder src')
+    mockTransport.connectionState = 'disconnected'
+    await updateExplorer(renderer)
+    const sendRequest = vi.fn(async (method: string): Promise<RpcResponse> =>
+      method === 'files.readDir'
+        ? {
+            id: 'unavailable',
+            ok: false,
+            error: { code: 'method_not_found', message: 'Unknown method' },
+            _meta: { runtimeId: 'runtime' }
+          }
+        : {
+            id: 'list',
+            ok: true,
+            result: { files: [{ relativePath: 'src/fresh.ts' }], truncated: false },
+            _meta: { runtimeId: 'runtime' }
+          }
+    )
+    mockTransport.client = { sendRequest }
+    mockTransport.connectionState = 'connected'
+    await updateExplorer(renderer)
+    expect(renderedText(renderer)).toContain('fresh.ts')
+    expect(sendRequest.mock.calls.map(([method]) => method)).toEqual([
+      'files.readDir',
+      'files.list'
+    ])
+    act(() => renderer.unmount())
+  })
+
+  it('keeps offline directory Retry usable and coalesces it with reconnect refresh', async () => {
+    const offlineClient: MockClient = {
+      sendRequest: vi.fn(async (_method, params) => {
+        if (params.relativePath === '') {
+          return ok([entry('src', true)])
+        }
+        throw new Error('Directory unavailable')
+      })
+    }
+    mockTransport.client = offlineClient
+    const renderer = await renderExplorer()
+    await pressByLabel(renderer, 'Open folder src')
+    mockTransport.connectionState = 'disconnected'
+    await updateExplorer(renderer)
+    await pressByLabel(renderer, 'Retry loading src')
+    expect(mockTransport.forceReconnect).toHaveBeenCalledExactlyOnceWith('host-a')
+    expect(offlineClient.sendRequest).toHaveBeenCalledTimes(2)
+
+    const freshClient = createMockClient({ '': [entry('src', true)], src: [entry('fresh.ts')] })
+    mockTransport.client = freshClient
+    mockTransport.connectionState = 'connected'
+    await updateExplorer(renderer)
+    expect(renderedText(renderer)).toContain('fresh.ts')
+    expect(freshClient.sendRequest.mock.calls.map((call) => call[1].relativePath)).toEqual([
+      '',
+      'src'
+    ])
+    act(() => renderer.unmount())
+  })
+
+  it('does not pre-read expanded descendants hidden under a collapsed directory', async () => {
+    const entries = {
+      '': [entry('src', true)],
+      src: [entry('deep', true)],
+      'src/deep': [entry('old.ts')]
+    }
+    mockTransport.client = createMockClient(entries)
+    const renderer = await renderExplorer()
+    await pressByLabel(renderer, 'Open folder src')
+    await pressByLabel(renderer, 'Open folder deep')
+    await pressByLabel(renderer, 'Open folder src')
+    mockTransport.connectionState = 'disconnected'
+    await updateExplorer(renderer)
+
+    const freshClient = createMockClient({ ...entries, 'src/deep': [entry('fresh.ts')] })
+    mockTransport.client = freshClient
+    mockTransport.connectionState = 'connected'
+    await updateExplorer(renderer)
+    expect(freshClient.sendRequest.mock.calls.map((call) => call[1].relativePath)).toEqual([''])
+    await pressByLabel(renderer, 'Open folder src')
+    expect(renderedText(renderer)).toContain('fresh.ts')
+    expect(freshClient.sendRequest.mock.calls.map((call) => call[1].relativePath)).toEqual([
+      '',
+      'src',
+      'src/deep'
+    ])
+    act(() => renderer.unmount())
+  })
+
+  it.each([false, true])(
+    'defers expanding an uncached folder until the pending root refresh completes (legacy: %s)',
+    async (legacy) => {
+      mockTransport.client = createMockClient({ '': [entry('src', true)] })
+      const renderer = await renderExplorer()
+      mockTransport.connectionState = 'disconnected'
+      await updateExplorer(renderer)
+      let resolveRoot!: (response: RpcResponse) => void
+      const root = new Promise<RpcResponse>((resolve) => {
+        resolveRoot = resolve
+      })
+      let resolveChild!: (response: RpcResponse) => void
+      const child = new Promise<RpcResponse>((resolve) => {
+        resolveChild = resolve
+      })
+      const unavailable: RpcResponse = {
+        id: 'unavailable',
+        ok: false,
+        error: { code: 'method_not_found', message: 'Unknown method' },
+        _meta: { runtimeId: 'runtime' }
+      }
+      const sendRequest = vi.fn(async (method: string, params: { relativePath?: string }) => {
+        if (method === 'files.list') {
+          return {
+            id: 'list',
+            ok: true,
+            result: { files: [{ relativePath: 'src/fresh.ts' }], truncated: false },
+            _meta: { runtimeId: 'runtime' }
+          }
+        }
+        if (params.relativePath === '') {
+          return root
+        }
+        return legacy ? child : ok([entry('fresh.ts')])
+      })
+      mockTransport.client = { sendRequest }
+      mockTransport.connectionState = 'connected'
+      await updateExplorer(renderer)
+      await pressByLabel(renderer, 'Open folder src')
+      expect(sendRequest).toHaveBeenCalledTimes(1)
+
+      await act(async () => resolveRoot(legacy ? unavailable : ok([entry('src', true)])))
+      await act(async () => resolveChild(unavailable))
+      expect(renderedText(renderer)).toContain('fresh.ts')
+      expect(renderedText(renderer)).not.toContain('Unknown method')
+      expect(
+        sendRequest.mock.calls.map(([method, params]) => [method, params.relativePath])
+      ).toEqual(
+        legacy
+          ? [
+              ['files.readDir', ''],
+              ['files.list', undefined]
+            ]
+          : [
+              ['files.readDir', ''],
+              ['files.readDir', 'src']
+            ]
+      )
+      act(() => renderer.unmount())
+    }
+  )
+
   it('falls back to the capped files.list against desktops without files.readDir', async () => {
     const legacyClient: MockClient = {
       sendRequest: vi.fn(async (method: string): Promise<RpcResponse> => {

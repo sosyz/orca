@@ -345,6 +345,31 @@ describe('filesystem-auth path containment', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
+    'follows internal folder workspace links but denies ungranted external targets',
+    async () => {
+      const tempRoot = await mkdtemp(join(tmpdir(), 'orca-auth-folder-links-'))
+      try {
+        const folderPath = join(tempRoot, 'workspace')
+        const internalPath = join(folderPath, 'docs')
+        const externalPath = join(tempRoot, 'external')
+        await mkdir(internalPath, { recursive: true })
+        await mkdir(externalPath)
+        await symlink(internalPath, join(folderPath, 'linked-docs'), 'dir')
+        await symlink(externalPath, join(folderPath, 'outside'), 'dir')
+        const store = makeStore([], { folderWorkspaces: [makeFolderWorkspace({ folderPath })] })
+        await expect(resolveAuthorizedPath(join(folderPath, 'linked-docs'), store)).resolves.toBe(
+          await realpath(internalPath)
+        )
+        await expect(resolveAuthorizedPath(join(folderPath, 'outside'), store)).rejects.toThrow(
+          'Access denied'
+        )
+      } finally {
+        await rm(tempRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
     'rejects missing descendants under a symlinked ancestor outside the repo',
     async () => {
       const tempRoot = await mkdtemp(join(tmpdir(), 'orca-auth-symlink-'))

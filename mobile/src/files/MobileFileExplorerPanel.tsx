@@ -15,6 +15,7 @@ import { getWorktreeLabel } from '../session/worktree-label'
 import {
   flattenDirectoryCache,
   getDirectoryCacheState,
+  invalidateChildDirectoryCache,
   type DirectoryCache,
   type FileExplorerRow,
   type MobileDirEntry
@@ -36,6 +37,7 @@ import {
 import { fileExplorerStyles as styles } from './mobile-file-explorer-styles'
 import { MobileFileExplorerRow } from './mobile-file-explorer-row'
 import { navigateToMobileFilePreview } from './mobile-file-preview-navigation'
+import { useMobileFileSymlinkActivation } from './use-mobile-file-symlink-activation'
 
 export function MobileFileExplorerPanel(props: {
   hostId: string
@@ -52,7 +54,7 @@ export function MobileFileExplorerPanel(props: {
   const scope = `${hostId}:${worktreeId}`
   scopeRef.current = scope
   const directoryLoadRevisionsRef = useRef<DirectoryLoadRevisions>(createDirectoryLoadRevisions())
-  const pendingDirectoryRetriesRef = useRef<Set<string>>(new Set())
+  const rootLoadInFlightRef = useRef(false)
   const directoryCacheRef = useRef<DirectoryCache>({})
   const [directoryCache, setDirectoryCache] = useState<DirectoryCache>({})
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
@@ -64,8 +66,13 @@ export function MobileFileExplorerPanel(props: {
   const loadDirectory = useCallback(
     async (relativePath: string) => {
       const scope = scopeRef.current
-      const loadToken = beginDirectoryLoad(directoryLoadRevisionsRef.current, scope, relativePath)
       const rootLoad = relativePath === ''
+      if (rootLoad) {
+        rootLoadInFlightRef.current = client !== null && connState === 'connected'
+        resetDirectoryLoadRevisions(directoryLoadRevisionsRef.current)
+        setDirectoryCache(invalidateChildDirectoryCache)
+      }
+      const loadToken = beginDirectoryLoad(directoryLoadRevisionsRef.current, scope, relativePath)
 
       if (!client || connState !== 'connected') {
         const message =
@@ -183,7 +190,12 @@ export function MobileFileExplorerPanel(props: {
           rootLoad &&
           isCurrentDirectoryLoad(directoryLoadRevisionsRef.current, scopeRef.current, loadToken)
         ) {
+          rootLoadInFlightRef.current = false
           setLoading(false)
+          setDirectoryCache((prev) => ({
+            ...prev,
+            '': { entries: [], ...getDirectoryCacheState(prev, ''), loading: false }
+          }))
         }
       }
     },
@@ -193,7 +205,6 @@ export function MobileFileExplorerPanel(props: {
   useEffect(() => {
     scopeRef.current = scope
     resetDirectoryLoadRevisions(directoryLoadRevisionsRef.current)
-    pendingDirectoryRetriesRef.current.clear()
     directoryCacheRef.current = {}
     setDirectoryCache({})
     setExpanded(new Set())
@@ -210,21 +221,23 @@ export function MobileFileExplorerPanel(props: {
     void loadDirectory('')
   }, [hostId, loadDirectory])
 
-  useEffect(() => {
-    if (connState !== 'connected' || pendingDirectoryRetriesRef.current.size === 0) {
-      return
-    }
-    const pending = [...pendingDirectoryRetriesRef.current]
-    pendingDirectoryRetriesRef.current.clear()
-    for (const relativePath of pending) {
-      void loadDirectory(relativePath)
-    }
-  }, [connState, loadDirectory])
-
   const rows = useMemo(
     () => flattenDirectoryCache(directoryCache, expanded),
     [directoryCache, expanded]
   )
+
+  useEffect(() => {
+    // Wait for root: legacy files.list refreshes the entire cache in one response.
+    if (!client || connState !== 'connected' || rootLoadInFlightRef.current) {
+      return
+    }
+    for (const row of rows) {
+      const state = getDirectoryCacheState(directoryCache, row.relativePath)
+      if (row.kind === 'directory' && expanded.has(row.relativePath) && (!state || state.stale)) {
+        void loadDirectory(row.relativePath)
+      }
+    }
+  }, [client, connState, directoryCache, expanded, loadDirectory, rows])
 
   const toggleDirectory = useCallback(
     (relativePath: string) => {
@@ -238,7 +251,12 @@ export function MobileFileExplorerPanel(props: {
         return next
       })
       const state = getDirectoryCacheState(directoryCache, relativePath)
-      if (!expanded.has(relativePath) && !state?.loading && (!state?.entries || state.error)) {
+      if (
+        !expanded.has(relativePath) &&
+        !rootLoadInFlightRef.current &&
+        !state?.loading &&
+        (!state?.entries || state.error || state.stale)
+      ) {
         void loadDirectory(relativePath)
       }
     },
@@ -248,11 +266,12 @@ export function MobileFileExplorerPanel(props: {
   const retryDirectory = useCallback(
     (relativePath: string) => {
       if (connState !== 'connected' && hostId) {
-        pendingDirectoryRetriesRef.current.add(relativePath)
         void forceReconnect(hostId)
         return
       }
-      void loadDirectory(relativePath)
+      if (!rootLoadInFlightRef.current) {
+        void loadDirectory(relativePath)
+      }
     },
     [connState, forceReconnect, hostId, loadDirectory]
   )
@@ -274,6 +293,20 @@ export function MobileFileExplorerPanel(props: {
     [embedded, hostId, name, onRequestClose, router, worktreeId]
   )
 
+  const symlinks = useMobileFileSymlinkActivation({
+    client,
+    connected: connState === 'connected',
+    scope,
+    worktreeId,
+    directoryCache,
+    setDirectoryCache,
+    setExpanded,
+    directoryLoadRevisionsRef,
+    rootLoadInFlightRef,
+    previewFile,
+    toggleDirectory
+  })
+
   const renderItem: ListRenderItem<FileExplorerRow> = ({ item }) => {
     return (
       <MobileFileExplorerRow
@@ -281,7 +314,9 @@ export function MobileFileExplorerPanel(props: {
         expanded={expanded}
         onPreviewFile={previewFile}
         onRetryDirectory={retryDirectory}
-        onToggleDirectory={toggleDirectory}
+        onToggleDirectory={symlinks.toggleDirectory}
+        onActivateSymlink={symlinks.activateSymlink}
+        activationState={symlinks.states.get(item.relativePath)}
       />
     )
   }
