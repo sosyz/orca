@@ -19,6 +19,20 @@ export const GLUE_SLIDE_BUDGET = 8
 type UserTurn = { index: number; text: string }
 type GlueSegment = { text: string; tail: number } | null
 
+function firstPendingStartAtOrAfter(starts: readonly number[], cursor: number): number {
+  let low = 0
+  let high = starts.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (starts[middle]! < cursor) {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  return low
+}
+
 /** Pending ids represented by post-send transcript rows that glued adjacent sends. */
 export function selectGluedPendingIds(
   messages: readonly NativeChatMessage[],
@@ -52,6 +66,19 @@ export function selectGluedPendingIds(
       ? null
       : { text, tail }
   })
+  const startsByFirstCharacter = new Map<string, number[]>()
+  for (const [index, segment] of segments.entries()) {
+    if (!segment) {
+      continue
+    }
+    const first = segment.text[0]!
+    const starts = startsByFirstCharacter.get(first)
+    if (starts) {
+      starts.push(index)
+    } else {
+      startsByFirstCharacter.set(first, [index])
+    }
+  }
 
   // Barriers preserve original adjacency after exact landings retire.
   let runStart = 0
@@ -77,13 +104,28 @@ export function selectGluedPendingIds(
       let budget = runEnd - runStart + GLUE_SLIDE_BUDGET
       let start = cursor
       let matched = 0
-      for (; start <= runEnd - 2 && budget > 0; start++) {
+      const candidates = startsByFirstCharacter.get(turn.text[0]!) ?? []
+      let candidateAt = firstPendingStartAtOrAfter(candidates, cursor)
+      while (start <= runEnd - 2 && budget > 0) {
+        const nextStart = Math.min(candidates[candidateAt] ?? runEnd - 1, runEnd - 1)
+        const skipped = nextStart - start
+        // Charge skipped prefixes as one inspection each, preserving the old slide budget.
+        if (skipped >= budget) {
+          break
+        }
+        budget -= skipped
+        start = nextStart
+        if (start > runEnd - 2) {
+          break
+        }
         const attempt = matchGluedRun(turn, segments, start, runEnd)
         budget -= attempt.inspected
         matched = attempt.matched
         if (matched > 0) {
           break
         }
+        start += 1
+        candidateAt += 1
       }
       if (matched === 0) {
         continue

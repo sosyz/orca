@@ -263,6 +263,29 @@ describe('selectGluedPendingIds', () => {
     }
     expect(segmentChecks).toBeLessThanOrEqual(turnCount * (2 * pendingCount + GLUE_SLIDE_BUDGET))
   })
+
+  it('skips old pending prefixes that cannot start any transcript turn', () => {
+    const pendingCount = 500
+    const turnCount = 100
+    const messages = [
+      assistantTurn('tail', 'ready', 1000),
+      ...Array.from({ length: turnCount }, (_, index) =>
+        userTurn(`m${index}`, `recorded ${index}`, 2000 + index)
+      )
+    ]
+    const pending = Array.from({ length: pendingCount }, (_, index) =>
+      pendingSend(`p${index}`, `unmatched ${index}`, 'tail')
+    )
+    const startsWith = vi.spyOn(String.prototype, 'startsWith')
+    let segmentChecks = 0
+    try {
+      expect(retiredIds(messages, pending)).toEqual([])
+      segmentChecks = startsWith.mock.calls.length
+    } finally {
+      startsWith.mockRestore()
+    }
+    expect(segmentChecks).toBeLessThan(turnCount * 4)
+  })
 })
 
 describe('retireLandedMobileNativeChatPending', () => {
