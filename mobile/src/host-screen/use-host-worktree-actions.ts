@@ -1,6 +1,7 @@
-import { useCallback } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { Alert } from 'react-native'
 import type { useRouter } from 'expo-router'
+import { getProvenCachedWorktrees } from '../cache/worktree-cache'
 import { floatingWorkspaceSessionPath } from '../session/floating-workspace'
 import { savePinnedIds } from '../storage/preferences'
 import type { useForgetHostClient } from '../transport/client-context'
@@ -9,7 +10,12 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { setHostRouteNewWorktreeVisible } from '../host-route-action-state'
 import { leaveHostRoute } from '../host-route-exit'
-import { getWorktreeRowIdentity, removeWorktreeRow } from '../worktree/worktree-host-row-identity'
+import {
+  getWorktreeRowIdentity,
+  isSameWorktreeRow,
+  removeWorktreeRow,
+  restoreWorktreeRow
+} from '../worktree/worktree-host-row-identity'
 import { isWorktreePinned, type Worktree } from '../worktree/workspace-list-sections'
 import type { HostScreenState } from './use-host-screen-state'
 
@@ -17,7 +23,10 @@ export function useHostWorktreeActions(args: {
   client: RpcClient | null
   connState: ConnectionState
   embedded: boolean
-  fetchWorktrees: (options?: { allowDuringModal?: boolean }) => Promise<void>
+  fetchWorktrees: (options?: {
+    allowDuringModal?: boolean
+    queueIfInFlight?: boolean
+  }) => Promise<void>
   forgetHostClient: ReturnType<typeof useForgetHostClient>
   hostId: string | undefined
   pathname: string
@@ -44,9 +53,41 @@ export function useHostWorktreeActions(args: {
     setOptimisticActiveWorktreeIdentity,
     setPinnedIds,
     setRouteActionState,
+    setSleptIds,
     setWorktrees,
     worktrees
   } = state
+  const sleepAttemptByIdentityRef = useRef(new Map<string, symbol>())
+  const owner = useMemo(() => ({ client, hostId }), [client, hostId])
+  const ownerRef = useRef<typeof owner | null>(null)
+  const hostOwner = useMemo(() => ({ hostId }), [hostId])
+  const hostOwnerRef = useRef<typeof hostOwner | null>(null)
+  const previousHostIdRef = useRef(hostId)
+
+  useLayoutEffect(() => {
+    const hostChanged = previousHostIdRef.current !== hostId
+    previousHostIdRef.current = hostId
+    setSleptIds((previous) => (previous.size === 0 ? previous : new Set()))
+    if (hostChanged) {
+      setOptimisticActiveWorktreeIdentity(null)
+    }
+    ownerRef.current = owner
+    return () => {
+      if (ownerRef.current === owner) {
+        ownerRef.current = null
+      }
+      sleepAttemptByIdentityRef.current.clear()
+    }
+  }, [hostId, owner, setOptimisticActiveWorktreeIdentity, setSleptIds])
+
+  useLayoutEffect(() => {
+    hostOwnerRef.current = hostOwner
+    return () => {
+      if (hostOwnerRef.current === hostOwner) {
+        hostOwnerRef.current = null
+      }
+    }
+  }, [hostOwner])
 
   const leaveHost = useCallback(() => {
     leaveHostRoute(router)
@@ -114,45 +155,112 @@ export function useHostWorktreeActions(args: {
 
   const handleDeleteWorktree = useCallback(
     async (item: Worktree) => {
-      if (!client) {
+      if (!client || ownerRef.current !== owner) {
         return
       }
+      const isCurrent = () => ownerRef.current === owner
+      const provenAtStart = hostId ? getProvenCachedWorktrees(hostId) : null
 
-      const removeFromList = (list: Worktree[]) => removeWorktreeRow(list, item)
+      const removeFromList = (list: Worktree[]) =>
+        isCurrent() ? removeWorktreeRow(list, item) : list
       setWorktrees(removeFromList)
       setLastKnownWorktrees(removeFromList)
 
+      let failed = false
       try {
         const response = await client.sendRequest('worktree.rm', {
           worktree: `id:${item.worktreeId}`,
           force: true
         })
         if (!response.ok) {
-          setWorktrees((prev) => [...prev, item])
-          setLastKnownWorktrees((prev) => [...prev, item])
+          failed = true
         }
-        void fetchWorktrees()
       } catch {
-        setWorktrees((prev) => [...prev, item])
-        setLastKnownWorktrees((prev) => [...prev, item])
+        failed = true
+      }
+      if (!isCurrent()) {
+        return
+      }
+      if (failed) {
+        const latestProven = hostId ? getProvenCachedWorktrees(hostId) : null
+        const confirmedRemoved =
+          latestProven !== null &&
+          latestProven !== provenAtStart &&
+          !latestProven.some((row) => isSameWorktreeRow(row as Worktree, item))
+        if (!confirmedRemoved) {
+          setWorktrees((prev) => (isCurrent() ? restoreWorktreeRow(prev, item) : prev))
+          setLastKnownWorktrees((prev) => (isCurrent() ? restoreWorktreeRow(prev, item) : prev))
+          Alert.alert('Could not delete workspace', 'Please try again.')
+        }
+      }
+      void fetchWorktrees({ allowDuringModal: true, queueIfInFlight: true })
+    },
+    [client, fetchWorktrees, hostId, owner]
+  )
+
+  const handleSleepWorktree = useCallback(
+    async (item: Worktree) => {
+      if (ownerRef.current !== owner) {
+        return
+      }
+      if (!client || connState !== 'connected') {
+        Alert.alert('Could not sleep workspace', 'Check the connection and try again.')
+        return
+      }
+      const isCurrent = () => ownerRef.current === owner
+      const identity = getWorktreeRowIdentity(item)
+      const attempt = Symbol('worktree sleep')
+      sleepAttemptByIdentityRef.current.set(identity, attempt)
+      setSleptIds((prev) => (isCurrent() ? new Set(prev).add(identity) : prev))
+      try {
+        const response = await client.sendRequest(
+          'worktree.sleep',
+          { worktree: `id:${item.worktreeId}` },
+          { failWhenDisconnected: true }
+        )
+        if (!response.ok) {
+          throw new Error(response.error.message)
+        }
+      } catch {
+        if (isCurrent() && sleepAttemptByIdentityRef.current.get(identity) === attempt) {
+          setSleptIds((prev) => {
+            if (!isCurrent()) {
+              return prev
+            }
+            const next = new Set(prev)
+            next.delete(identity)
+            return next
+          })
+          Alert.alert('Could not sleep workspace', 'Check the connection and try again.')
+        }
+      } finally {
+        if (isCurrent() && sleepAttemptByIdentityRef.current.get(identity) === attempt) {
+          sleepAttemptByIdentityRef.current.delete(identity)
+        }
       }
     },
-    [client, fetchWorktrees]
+    [client, connState, owner, setSleptIds]
   )
 
   const handleRemoveHost = useCallback(async () => {
-    if (!hostId) {
+    if (!hostId || hostOwnerRef.current !== hostOwner) {
       return
     }
+    const isCurrent = () => hostOwnerRef.current === hostOwner
     try {
       await removeHostAndCloseClient(hostId, forgetHostClient)
-      leaveHost()
+      if (isCurrent()) {
+        leaveHost()
+      }
     } catch {
+      if (!isCurrent()) {
+        return
+      }
       // Why: removal can fail while still paired; re-open confirm (ConfirmModal closes on confirm).
-      setConfirmRemoveHost(true)
+      setConfirmRemoveHost((current) => (isCurrent() ? true : current))
       Alert.alert('Could not remove host', 'Please try again.')
     }
-  }, [hostId, leaveHost, forgetHostClient])
+  }, [hostId, leaveHost, forgetHostClient, hostOwner])
 
   const navigateFromHostList = useCallback(
     (target: string) => {
@@ -199,6 +307,7 @@ export function useHostWorktreeActions(args: {
   return {
     handleDeleteWorktree,
     handleRemoveHost,
+    handleSleepWorktree,
     leaveHost,
     navigateFromHostList,
     openFloatingWorkspace,

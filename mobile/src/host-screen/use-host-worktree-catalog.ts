@@ -8,7 +8,7 @@ import { startHostWorktreeRefresh } from '../worktree/host-worktree-refresh'
 import { areWorktreeListsEqual } from '../worktree/worktree-list-snapshot'
 import {
   clearConfirmedActiveWorktreeIdentity,
-  retainLiveSleptWorktreeIdentities
+  clearSleptWorktreeOverridesAfterSnapshot
 } from '../worktree/worktree-host-row-identity'
 import { savePinnedIds } from '../storage/preferences'
 import type { FetchHostRepoMetadata } from './use-host-repo-metadata'
@@ -35,6 +35,7 @@ export function useHostWorktreeCatalog(args: {
   const {
     clientRef,
     fetchWorktreesInFlightRef,
+    fetchWorktreesPendingRef,
     newWorktreeModalVisibleRef,
     setCatalogError,
     setLastKnownWorktrees,
@@ -47,8 +48,8 @@ export function useHostWorktreeCatalog(args: {
   } = state
 
   const fetchWorktrees = useCallback(
-    async (options: { allowDuringModal?: boolean } = {}) => {
-      if (!client || connState !== 'connected' || !hostId) {
+    async (options: { allowDuringModal?: boolean; queueIfInFlight?: boolean } = {}) => {
+      if (!client || connState !== 'connected' || !hostId || clientRef.current !== client) {
         return
       }
       if (!options.allowDuringModal && newWorktreeModalVisibleRef.current) {
@@ -56,6 +57,11 @@ export function useHostWorktreeCatalog(args: {
       }
       // Why: prevent slow remote hosts from stacking overlapping worktree.ps requests during polling.
       if (fetchWorktreesInFlightRef.current) {
+        if (options.queueIfInFlight) {
+          fetchWorktreesPendingRef.current = () => {
+            void fetchWorktrees({ allowDuringModal: options.allowDuringModal })
+          }
+        }
         return
       }
       fetchWorktreesInFlightRef.current = true
@@ -101,8 +107,8 @@ export function useHostWorktreeCatalog(args: {
             clearConfirmedActiveWorktreeIdentity(pending, confirmed)
           )
 
-          // Clear optimistic sleep overrides once the server confirms inactive (liveTerminalCount === 0).
-          setSleptIds((prev) => retainLiveSleptWorktreeIdentities(prev, confirmed))
+          // A host snapshot owns sleep status even when its renderer could not complete shutdown.
+          setSleptIds(clearSleptWorktreeOverridesAfterSnapshot)
 
           // Sync pin state from server so desktop-initiated pins reflect without relying on stale AsyncStorage.
           const serverPinned = new Set(confirmed.filter((w) => w.isPinned).map((w) => w.worktreeId))
@@ -123,10 +129,19 @@ export function useHostWorktreeCatalog(args: {
         }
       } finally {
         fetchWorktreesInFlightRef.current = false
+        const pending = fetchWorktreesPendingRef.current
+        fetchWorktreesPendingRef.current = null
+        pending?.()
       }
     },
     [client, connState, hostId]
   )
+
+  useEffect(() => {
+    return () => {
+      fetchWorktreesPendingRef.current = null
+    }
+  }, [fetchWorktrees])
 
   useFocusEffect(
     useCallback(() => {

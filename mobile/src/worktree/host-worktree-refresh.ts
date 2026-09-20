@@ -4,7 +4,7 @@ import type { RpcClient } from '../transport/rpc-client'
 
 const WORKTREE_REFRESH_MS = 3000
 
-type WorktreeRefreshOptions = { allowDuringModal?: boolean }
+type WorktreeRefreshOptions = { allowDuringModal?: boolean; queueIfInFlight?: boolean }
 type RepoRefreshOptions = { force?: boolean; queueIfInFlight?: boolean }
 
 type HostWorktreeRefreshArgs = {
@@ -78,7 +78,8 @@ export function startHostWorktreeRefresh({
     }
   )
 
-  void fetchWorktrees()
+  // A replaced client's first snapshot must run after an older client's in-flight poll.
+  void fetchWorktrees({ queueIfInFlight: true })
   void fetchRepoMetadata({ force: true, queueIfInFlight: true })
 
   return () => {

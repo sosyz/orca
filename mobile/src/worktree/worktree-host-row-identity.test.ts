@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   applyWorktreeRowDisplayState,
   clearConfirmedActiveWorktreeIdentity,
+  clearSleptWorktreeOverridesAfterSnapshot,
   getWorktreeRowIdentity,
   removeWorktreeRow,
-  retainLiveSleptWorktreeIdentities
+  restoreWorktreeRow
 } from './worktree-host-row-identity'
 import type { Worktree } from './workspace-list-types'
 
@@ -28,6 +29,16 @@ describe('removeWorktreeRow', () => {
   })
 })
 
+describe('restoreWorktreeRow', () => {
+  it('does not duplicate a row restored by an older poll, preserving same-id rows on other hosts', () => {
+    const local = row('shared', 'host-a')
+    const remote = row('shared', 'host-b')
+
+    expect(restoreWorktreeRow([local, remote], local)).toEqual([local, remote])
+    expect(restoreWorktreeRow([remote], local)).toEqual([remote, local])
+  })
+})
+
 describe('getWorktreeRowIdentity', () => {
   it('uses the shared host-qualified identity format', () => {
     expect(getWorktreeRowIdentity(row('shared', 'ssh:builder'))).toBe('ssh:builder|shared')
@@ -46,59 +57,19 @@ describe('host-qualified row display state', () => {
     ).toBeNull()
   })
 
-  it('retains slept rows only while the same host still has live terminals', () => {
+  it('releases optimistic sleep when the host confirms a still-live row', () => {
     const local = row('shared', 'host-a')
     const remote = row('shared', 'host-b')
-    const retained = retainLiveSleptWorktreeIdentities(
-      new Set([getWorktreeRowIdentity(local), getWorktreeRowIdentity(remote)]),
-      [
-        row('shared', 'host-a', { liveTerminalCount: 0 }),
-        row('shared', 'host-b', { liveTerminalCount: 1 })
-      ]
+    const retained = clearSleptWorktreeOverridesAfterSnapshot(
+      new Set([getWorktreeRowIdentity(local), getWorktreeRowIdentity(remote)])
     )
-
-    expect([...retained]).toEqual([getWorktreeRowIdentity(remote)])
-  })
-
-  it('keeps first-match behavior when confirmed identities are duplicated', () => {
-    const identity = getWorktreeRowIdentity(row('shared', 'host-a'))
-    const retained = retainLiveSleptWorktreeIdentities(new Set([identity]), [
-      row('shared', 'host-a', { liveTerminalCount: 0 }),
-      row('shared', 'host-a', { liveTerminalCount: 1 })
-    ])
 
     expect([...retained]).toEqual([])
   })
 
-  it('indexes confirmed identities once instead of rescanning for every slept row', () => {
-    const rowCount = 64
-    let worktreeIdReads = 0
-    const confirmed = Array.from({ length: rowCount }, (_, index) => {
-      const worktree = {
-        hostId: `host-${index}`,
-        liveTerminalCount: 1
-      } as Worktree
-      Object.defineProperty(worktree, 'worktreeId', {
-        configurable: true,
-        get: () => {
-          worktreeIdReads += 1
-          return `worktree-${index}`
-        }
-      })
-      return worktree
-    })
-    const previous = new Set(
-      Array.from({ length: rowCount }, (_, index) => {
-        const reversed = rowCount - index - 1
-        return `host-${reversed}|worktree-${reversed}`
-      })
-    )
-
-    expect(retainLiveSleptWorktreeIdentities(previous, confirmed)).toBe(previous)
-    const legacyIdentityReads = (rowCount * (rowCount + 1)) / 2
-    expect(legacyIdentityReads).toBe(2_080)
-    expect(worktreeIdReads).toBe(rowCount)
-    expect(legacyIdentityReads - worktreeIdReads).toBe(2_016)
+  it('preserves the empty override set to avoid an unnecessary state update', () => {
+    const empty = new Set<string>()
+    expect(clearSleptWorktreeOverridesAfterSnapshot(empty)).toBe(empty)
   })
 
   it('applies active and slept overrides to the matching host row only', () => {

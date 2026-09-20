@@ -19,6 +19,7 @@ export function useHostScreenState(hostId: string | undefined, action: string | 
   )
   const clientRef = useRef<RpcClient | null>(null)
   const fetchWorktreesInFlightRef = useRef(false)
+  const fetchWorktreesPendingRef = useRef<(() => void) | null>(null)
   // Why: useRef, not useMemo — React may discard memoized values, which would silently
   // reset the snapshot token this object exists to own.
   const worktreeCatalogRef = useRef(new WorktreeCatalogSnapshotClient())
@@ -91,6 +92,7 @@ export function useHostScreenState(hostId: string | undefined, action: string | 
     fetchRepoMetadataInFlightRef,
     fetchRepoMetadataPendingRef,
     fetchWorktreesInFlightRef,
+    fetchWorktreesPendingRef,
     filters,
     groupMode,
     hostName,

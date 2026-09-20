@@ -8,7 +8,6 @@ import { NewWorktreeModalController } from '../components/NewWorktreeModalContro
 import { PickerModal } from '../components/PickerModal'
 import { colors } from '../theme/mobile-theme'
 import { hostNewWorktreeSessionRoute } from '../host-route-action-state'
-import { getWorktreeRowIdentity } from '../worktree/worktree-host-row-identity'
 import {
   WORKSPACE_GROUP_OPTIONS as GROUP_OPTIONS,
   WORKSPACE_SORT_OPTIONS as SORT_OPTIONS
@@ -165,16 +164,7 @@ export function HostScreenOverlays({ controller }: { controller: HostScreenContr
                       label: 'Sleep',
                       icon: Moon,
                       onPress: () => {
-                        if (client) {
-                          state.setSleptIds((prev) =>
-                            new Set(prev).add(getWorktreeRowIdentity(actionTarget))
-                          )
-                          void client
-                            .sendRequest('worktree.sleep', {
-                              worktree: `id:${actionTarget.worktreeId}`
-                            })
-                            .catch(() => null)
-                        }
+                        void actions.handleSleepWorktree(actionTarget)
                         state.setActionTarget(null)
                       }
                     },

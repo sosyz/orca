@@ -59,6 +59,7 @@ describe('startHostWorktreeRefresh', () => {
   it('keeps the worktree poll active but skips ticks while backgrounded', async () => {
     start()
     expect(fetchWorktrees).toHaveBeenCalledTimes(1)
+    expect(fetchWorktrees).toHaveBeenCalledWith({ queueIfInFlight: true })
 
     appState.currentState = 'background'
     await vi.advanceTimersByTimeAsync(6_000)

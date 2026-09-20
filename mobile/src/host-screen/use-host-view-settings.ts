@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState, RpcSuccess } from '../transport/types'
 import { getMobileWorkspaceLineageGroupKey } from '../worktree/mobile-workspace-lineage'
@@ -21,8 +21,24 @@ export function useHostViewSettings(args: {
   state: HostScreenState
 }) {
   const { client, connState, hostId, state } = args
+  const scope = useMemo(
+    () => ({
+      client,
+      hostId,
+      edits: new Map<keyof WorkspaceViewSettings, object>(),
+      pending: new Map<keyof WorkspaceViewSettings, number>()
+    }),
+    [client, hostId]
+  )
+  const committedScope = useRef<typeof scope | null>(null)
+  const readRevision = useRef(0)
+  useLayoutEffect(() => {
+    committedScope.current = scope
+    return () => {
+      committedScope.current = null
+    }
+  }, [scope])
   const {
-    clientRef,
     collapsedGroups,
     filters,
     groupMode,
@@ -67,6 +83,9 @@ export function useHostViewSettings(args: {
   // Apply the change locally, then patch the desktop's shared store (ui.set) so both apps stay in sync.
   const persistViewSettings = useCallback(
     (patch: Partial<MobileViewState>) => {
+      if (committedScope.current !== scope) {
+        return
+      }
       const next: MobileViewState = { ...viewStateRef.current, ...patch }
       applyViewState(next)
       if (!client) {
@@ -79,34 +98,59 @@ export function useHostViewSettings(args: {
       if (Object.keys(payload).length === 0) {
         return
       }
-      void client.sendRequest('ui.set', payload).catch(() => {
-        // Best-effort: view settings are a convenience preference.
-      })
+      const fields = Object.keys(payload) as (keyof WorkspaceViewSettings)[]
+      for (const field of fields) {
+        scope.edits.set(field, {})
+        scope.pending.set(field, (scope.pending.get(field) ?? 0) + 1)
+      }
+      void client
+        .sendRequest('ui.set', payload)
+        .catch(() => {
+          // Best-effort: view settings are a convenience preference.
+        })
+        .finally(() => {
+          for (const field of fields) {
+            const count = (scope.pending.get(field) ?? 1) - 1
+            if (count > 0) {
+              scope.pending.set(field, count)
+            } else {
+              scope.pending.delete(field)
+            }
+          }
+        })
     },
-    [client, applyViewState]
+    [client, applyViewState, scope]
   )
 
   // Merge the desktop's shared view settings (PersistedUIState) onto local state so desktop changes appear here.
   const syncViewSettingsFromDesktop = useCallback(async () => {
-    if (!client || connState !== 'connected') {
+    if (!client || connState !== 'connected' || committedScope.current !== scope) {
       return
     }
-    const requestClient = client
-    const requestHostId = hostId
+    const revision = ++readRevision.current
+    const edits = new Map(scope.edits)
+    const pending = new Set(scope.pending.keys())
     try {
-      const response = await requestClient.sendRequest('ui.get')
-      if (clientRef.current !== requestClient || hostId !== requestHostId || !response.ok) {
+      const response = await client.sendRequest('ui.get')
+      if (committedScope.current !== scope || readRevision.current !== revision || !response.ok) {
         return
       }
       const ui = ((response as RpcSuccess).result as { ui?: WorkspaceViewSettings }).ui
       if (!ui) {
         return
       }
-      applyViewState(applyDesktopViewSettings(viewStateRef.current, ui))
+      const unchangedFields = { ...ui }
+      for (const field of Object.keys(unchangedFields) as (keyof WorkspaceViewSettings)[]) {
+        // A snapshot cannot acknowledge writes that were pending or made after its request.
+        if (pending.has(field) || scope.edits.get(field) !== edits.get(field)) {
+          delete unchangedFields[field]
+        }
+      }
+      applyViewState(applyDesktopViewSettings(viewStateRef.current, unchangedFields))
     } catch {
       // Transient transport failure; retry on the next focus/connect.
     }
-  }, [client, connState, hostId, applyViewState])
+  }, [client, connState, scope, applyViewState])
 
   const handleSortChange = useCallback(
     (value: MobileSortMode) => {

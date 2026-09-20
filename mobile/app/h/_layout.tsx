@@ -11,6 +11,7 @@ import {
   saveHostSidebarWidth
 } from '../../src/storage/preferences'
 import { HostProtocolGate } from '../../src/components/HostProtocolGate'
+import { isHostStackIndexPathname } from '../../src/navigation/host-stack-navigation'
 import { HostScreen } from './[hostId]/index'
 
 // Keep at least this much room for the detail pane when resizing the sidebar.
@@ -95,7 +96,7 @@ export default function HostGroupLayout() {
 
   const hideSidebar = useCallback(() => setSidebarOpen(false), [])
   const showSidebar = isWideLayout && !!hostId
-  const detailHasContent = !!hostId && pathname !== `/h/${hostId}`
+  const detailHasContent = !!hostId && !isHostStackIndexPathname(pathname, hostId)
   const canCollapseSidebar = showSidebar && detailHasContent
 
   // Why: there is no reveal button — navigating Back to the base host route brings

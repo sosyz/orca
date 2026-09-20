@@ -1,6 +1,10 @@
 import { createElement } from 'react'
+import i18next from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import en from '../i18n/locales/en'
+import zh from '../i18n/locales/zh'
 import type { ConnectionVerdict } from '../transport/connection-health'
 import type { MobileConnectionPath } from '../transport/stable-logical-rpc-client'
 import type { ConnectionState, HostCredentialStatus, HostProfile } from '../transport/types'
@@ -18,6 +22,17 @@ vi.mock('react-native', () => ({
 }))
 vi.mock('lucide-react-native', () => ({ Monitor: 'Monitor', MoreVertical: 'MoreVertical' }))
 vi.mock('./StatusDot', () => ({ StatusDot: 'StatusDot' }))
+
+const testI18n = i18next.createInstance()
+const testI18nReady = testI18n.init({
+  fallbackLng: 'en',
+  interpolation: { escapeValue: false },
+  lng: 'en',
+  resources: {
+    en: { translation: en },
+    zh: { translation: zh }
+  }
+})
 
 const host: HostProfile = {
   id: 'host-1',
@@ -53,19 +68,24 @@ describe('MobileHostCard', () => {
       credentialStatus?: HostCredentialStatus
     }
   ): Promise<string[]> {
+    await testI18nReady
     await act(async () => {
       renderer = create(
-        createElement(MobileHostCard, {
-          host,
-          state: overrides?.state ?? 'connected',
-          verdict: overrides?.verdict ?? verdict,
-          path: overrides?.path ?? 'lan',
-          credentialStatus: overrides?.credentialStatus,
-          worktreeInfo,
-          onPress: () => {},
-          onLongPress: () => {},
-          onOpenActions: () => {}
-        })
+        createElement(
+          I18nextProvider,
+          { i18n: testI18n },
+          createElement(MobileHostCard, {
+            host,
+            state: overrides?.state ?? 'connected',
+            verdict: overrides?.verdict ?? verdict,
+            path: overrides?.path ?? 'lan',
+            credentialStatus: overrides?.credentialStatus,
+            worktreeInfo,
+            onPress: () => {},
+            onLongPress: () => {},
+            onOpenActions: () => {}
+          })
+        )
       )
     })
     return renderer!.root

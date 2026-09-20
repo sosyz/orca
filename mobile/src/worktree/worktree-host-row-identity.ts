@@ -22,6 +22,10 @@ export function removeWorktreeRow(
   return list.filter((entry) => !isSameWorktreeRow(entry, removed))
 }
 
+export function restoreWorktreeRow(list: readonly Worktree[], item: Worktree): Worktree[] {
+  return list.some((entry) => isSameWorktreeRow(entry, item)) ? [...list] : [...list, item]
+}
+
 export function clearConfirmedActiveWorktreeIdentity(
   pending: string | null,
   confirmed: readonly Worktree[]
@@ -31,29 +35,8 @@ export function clearConfirmedActiveWorktreeIdentity(
     : pending
 }
 
-export function retainLiveSleptWorktreeIdentities(
-  previous: Set<string>,
-  confirmed: readonly Worktree[]
-): Set<string> {
-  if (previous.size === 0) {
-    return previous
-  }
-  const confirmedByIdentity = new Map<string, Worktree>()
-  for (const worktree of confirmed) {
-    const identity = getWorktreeRowIdentity(worktree)
-    // The former Array#find path was first-match-wins for duplicate identities; retain that contract.
-    if (!confirmedByIdentity.has(identity)) {
-      confirmedByIdentity.set(identity, worktree)
-    }
-  }
-  const still = new Set<string>()
-  for (const id of previous) {
-    const wt = confirmedByIdentity.get(id)
-    if (wt && wt.liveTerminalCount > 0) {
-      still.add(id)
-    }
-  }
-  return still.size === previous.size ? previous : still
+export function clearSleptWorktreeOverridesAfterSnapshot(previous: Set<string>): Set<string> {
+  return previous.size === 0 ? previous : new Set()
 }
 
 export function applyWorktreeRowDisplayState(

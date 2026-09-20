@@ -1,3 +1,4 @@
+import { useLocalSearchParams } from 'expo-router'
 import { WorkspaceDetailPlaceholder } from '../../../src/components/WorkspaceDetailPlaceholder'
 import { HostScreenView } from '../../../src/host-screen/host-screen-view'
 import {
@@ -7,6 +8,13 @@ import {
 import { useResponsiveLayout } from '../../../src/layout/responsive-layout'
 
 export function HostScreen(props: HostScreenProps = {}) {
+  const params = useLocalSearchParams<{ hostId: string }>()
+  const hostId = props.hostId ?? params.hostId
+  // A reused sidebar must not carry confirmations or workspace state to another host.
+  return <ScopedHostScreen key={hostId} {...props} hostId={hostId} />
+}
+
+function ScopedHostScreen(props: HostScreenProps) {
   const controller = useHostScreenController(props)
   return <HostScreenView controller={controller} />
 }

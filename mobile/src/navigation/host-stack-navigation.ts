@@ -60,6 +60,10 @@ export function hostStackHostRoute(hostId: string): HostStackHostRoute {
   return `/h/${encodeURIComponent(hostId)}`
 }
 
+export function isHostStackIndexPathname(pathname: string, hostId: string): boolean {
+  return pathname === `/h/${hostId}` || pathname === hostStackHostRoute(hostId)
+}
+
 export function hostStackRouteHref(target: HostStackRouteTarget): HostStackRouteHref {
   return { pathname: `/h/${target.name}`, params: target.params }
 }

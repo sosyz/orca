@@ -1,12 +1,17 @@
 import { Monitor, MoreVertical } from 'lucide-react-native'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import type { ConnectionVerdict } from '../transport/connection-health'
-import { verdictDisplayLabel } from '../transport/connection-health'
-import { mobileConnectionPathLabel } from '../transport/mobile-connection-path-label'
+import {
+  mobileConnectionPathDisplayLabel,
+  mobileConnectionPathSpokenLabel,
+  mobileConnectionVerdictLabel,
+  mobileHomeWorktreeSummaryLabel
+} from '../transport/mobile-connection-labels'
 import type { MobileConnectionPath } from '../transport/stable-logical-rpc-client'
 import type { ConnectionState, HostCatalogEntry, HostProfile } from '../transport/types'
 import { colors, radii, spacing } from '../theme/mobile-theme'
-import { homeHostWorktreeSummary, type HostWorktreeInfo } from '../worktree/home-worktree-info'
+import type { HostWorktreeInfo } from '../worktree/home-worktree-info'
 import { StatusDot } from './StatusDot'
 
 export function MobileHostCard(props: {
@@ -22,39 +27,45 @@ export function MobileHostCard(props: {
   onLongPress: () => void
   onOpenActions: () => void
 }) {
+  const { t } = useTranslation()
   const credentialUnavailable = props.credentialStatus === 'temporarily-unavailable'
   const credentialMissing = props.credentialStatus === 'missing'
   const connected = props.state === 'connected' && !credentialUnavailable && !credentialMissing
   const isError =
     credentialMissing || ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
   const statusLabel = credentialMissing
-    ? 'Pairing invalid'
+    ? t('mobile.connection.invalidPairing', 'Pairing invalid')
     : credentialUnavailable
-      ? "Pairing credentials couldn't be read"
-      : verdictDisplayLabel(props.verdict)
+      ? t('mobile.connection.pairingCredentialsUnreadable', "Pairing credentials couldn't be read")
+      : mobileConnectionVerdictLabel(props.verdict, t)
   const statusVerdict: ConnectionVerdict = credentialMissing
     ? { kind: 'auth-failed', label: statusLabel }
     : credentialUnavailable
       ? { kind: 'warning', label: statusLabel }
       : props.verdict
-  const worktreeSummary = homeHostWorktreeSummary(props.worktreeInfo)
+  const worktreeSummary = mobileHomeWorktreeSummaryLabel(props.worktreeInfo, t)
   const connectionPathLabel =
     !credentialMissing && !credentialUnavailable && connected
-      ? mobileConnectionPathLabel(props.path)
+      ? mobileConnectionPathDisplayLabel(props.path, t)
       : null
+  const connectionPathSpokenLabel =
+    connectionPathLabel === null ? null : mobileConnectionPathSpokenLabel(props.path, t)
   const discoveryHint =
     props.verdict.kind === 'unreachable' && !props.host.relay
-      ? 'Update desktop Orca and sign in to connect from anywhere'
+      ? t(
+          'mobile.connection.updateRelayHint',
+          'Update desktop Orca and sign in to connect from anywhere'
+        )
       : null
   const credentialHint = credentialMissing
-    ? 'Tap to re-pair with your desktop'
+    ? t('mobile.connection.rePairHint', 'Tap to re-pair with your desktop')
     : credentialUnavailable
-      ? 'Tap to retry reading saved credentials'
+      ? t('mobile.connection.retryCredentialsHint', 'Tap to retry reading saved credentials')
       : null
   const accessibilityLabel = [
-    `Open ${props.host.name}`,
+    t('mobile.connection.openHost', 'Open {{name}}', { name: props.host.name }),
     statusLabel,
-    connectionPathLabel?.replace(' · ', ' via '),
+    connectionPathSpokenLabel,
     connected ? worktreeSummary?.replace(' · ', ', ') : null,
     discoveryHint,
     credentialHint
@@ -114,7 +125,9 @@ export function MobileHostCard(props: {
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Actions for ${props.host.name}`}
+        accessibilityLabel={t('mobile.connection.actionsFor', 'Actions for {{name}}', {
+          name: props.host.name
+        })}
         hitSlop={8}
         style={({ pressed }) => [styles.actionButton, pressed && styles.actionButtonPressed]}
         onPress={props.onOpenActions}

@@ -1,4 +1,4 @@
-import { useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { PersistedTrustedOrcaHooks } from '../../../src/shared/orca-yaml-hook-types'
 import type { RetiredNameRegistry } from '../../../src/shared/worktree/retired-name-registry'
 import type { RpcClient } from '../transport/rpc-client'
@@ -35,6 +35,7 @@ type CreateOptions = {
 type Composer = ReturnType<typeof useMobileComposerSource>
 
 export function useNewWorkspaceCreateSubmit(args: {
+  visible: boolean
   client: RpcClient | null
   selectedRepo: MobileWorkspaceRepo | null
   selectedAgent: NewWorktreeAgentOption
@@ -70,14 +71,25 @@ export function useNewWorkspaceCreateSubmit(args: {
 } {
   const createInFlightRef = useRef(false)
   const setupTrustActionInFlightRef = useRef(false)
+  const drawerOwnerRef = useRef<object | null>(null)
   const [creating, setCreating] = useState(false)
   const [setupTrustPrompt, setSetupTrustPrompt] = useState<SetupTrustPrompt | null>(null)
 
+  useLayoutEffect(() => {
+    const owner = args.visible ? {} : null
+    drawerOwnerRef.current = owner
+    return () => {
+      drawerOwnerRef.current = null
+    }
+  }, [args.visible])
+
   async function create(options: CreateOptions = {}): Promise<void> {
     const { client, selectedRepo } = args
-    if (!client || !selectedRepo || createInFlightRef.current) {
+    const owner = drawerOwnerRef.current
+    if (!owner || !client || !selectedRepo || createInFlightRef.current) {
       return
     }
+    const isCurrent = (): boolean => drawerOwnerRef.current === owner
     createInFlightRef.current = true
     setCreating(true)
     args.setError('')
@@ -89,6 +101,9 @@ export function useNewWorkspaceCreateSubmit(args: {
       let latestRuntimeSettings = args.runtimeSettings
       try {
         const settingsResponse = await client.sendRequest('settings.get')
+        if (!isCurrent()) {
+          return
+        }
         if (settingsResponse.ok) {
           const result = (settingsResponse as RpcSuccess).result as {
             settings: NewWorktreeRuntimeSettings
@@ -98,6 +113,9 @@ export function useNewWorkspaceCreateSubmit(args: {
         }
       } catch {
         // The runtime validates the same setting before spawning.
+      }
+      if (!isCurrent()) {
+        return
       }
       if (
         args.selectedAgent.id !== '__blank__' &&
@@ -176,6 +194,9 @@ export function useNewWorkspaceCreateSubmit(args: {
             setupDecision,
             worktreeCreateIdempotency: args.getWorktreeCreateCutoverSupport()
           })
+      if (!isCurrent()) {
+        return
+      }
       if ('error' in result) {
         args.setError(result.error)
         return
@@ -183,15 +204,21 @@ export function useNewWorkspaceCreateSubmit(args: {
       args.onClose()
       args.onCreated(result.worktreeId, result.name)
     } catch (error) {
-      args.setError(error instanceof Error ? error.message : 'Failed to create workspace')
+      if (isCurrent()) {
+        args.setError(error instanceof Error ? error.message : 'Failed to create workspace')
+      }
     } finally {
       createInFlightRef.current = false
-      setCreating(false)
+      if (isCurrent()) {
+        setCreating(false)
+      }
     }
   }
 
   async function approveSetupTrust(alwaysTrust: boolean): Promise<void> {
+    const owner = drawerOwnerRef.current
     if (
+      !owner ||
       !args.client ||
       !setupTrustPrompt ||
       setupTrustActionInFlightRef.current ||
@@ -199,6 +226,7 @@ export function useNewWorkspaceCreateSubmit(args: {
     ) {
       return
     }
+    const isCurrent = (): boolean => drawerOwnerRef.current === owner
     setupTrustActionInFlightRef.current = true
     setCreating(true)
     try {
@@ -209,16 +237,21 @@ export function useNewWorkspaceCreateSubmit(args: {
         contentHash: setupTrustPrompt.contentHash,
         alwaysTrust
       })
+      if (!isCurrent()) {
+        return
+      }
       args.setTrustedOrcaHooks(nextTrust)
       const approvedHash = setupTrustPrompt.contentHash
       setSetupTrustPrompt(null)
       args.transitionDrawer('form')
       await create({ setupOverride: 'run', approvedSetupContentHash: approvedHash })
     } catch (error) {
-      args.setError(error instanceof Error ? error.message : 'Failed to trust setup script.')
+      if (isCurrent()) {
+        args.setError(error instanceof Error ? error.message : 'Failed to trust setup script.')
+      }
     } finally {
       setupTrustActionInFlightRef.current = false
-      if (!createInFlightRef.current) {
+      if (isCurrent() && !createInFlightRef.current) {
         setCreating(false)
       }
     }

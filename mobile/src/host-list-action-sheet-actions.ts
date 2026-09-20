@@ -10,6 +10,14 @@ export function getHostListActionSheetActions(args: {
   state: ConnectionState
   /** Label "Connect" (not "Reconnect") when never connected this session, so the verb matches the action. */
   hasEverConnected: boolean
+  copy?: {
+    connect: string
+    diagnostics: string
+    disconnect: string
+    edit: string
+    reconnect: string
+    remove: string
+  }
   onDismiss: () => void
   onReconnect: (hostId: string) => void
   onDisconnect: (hostId: string) => void
@@ -26,10 +34,18 @@ export function getHostListActionSheetActions(args: {
     args.state === 'connecting' ||
     args.state === 'handshaking' ||
     args.state === 'reconnecting'
+  const copy = args.copy ?? {
+    connect: 'Connect',
+    diagnostics: 'Network diagnostics',
+    disconnect: 'Disconnect',
+    edit: 'Edit host',
+    reconnect: 'Reconnect',
+    remove: 'Remove'
+  }
 
   return [
     {
-      label: args.hasEverConnected && isLive ? 'Reconnect' : 'Connect',
+      label: args.hasEverConnected && isLive ? copy.reconnect : copy.connect,
       icon: RefreshCw,
       onPress: () => {
         args.onDismiss()
@@ -39,7 +55,7 @@ export function getHostListActionSheetActions(args: {
     ...(isLive
       ? [
           {
-            label: 'Disconnect',
+            label: copy.disconnect,
             icon: PowerOff,
             onPress: () => {
               args.onDismiss()
@@ -49,7 +65,7 @@ export function getHostListActionSheetActions(args: {
         ]
       : []),
     {
-      label: 'Network diagnostics',
+      label: copy.diagnostics,
       icon: Activity,
       closeBeforePress: true,
       onPress: () => {
@@ -57,7 +73,7 @@ export function getHostListActionSheetActions(args: {
       }
     },
     {
-      label: 'Edit host',
+      label: copy.edit,
       icon: Edit3,
       closeBeforePress: true,
       onPress: () => {
@@ -66,7 +82,7 @@ export function getHostListActionSheetActions(args: {
       }
     },
     {
-      label: 'Remove',
+      label: copy.remove,
       destructive: true,
       closeBeforePress: true,
       onPress: () => {

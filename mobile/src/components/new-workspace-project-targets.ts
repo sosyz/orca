@@ -15,6 +15,38 @@ type WorkspaceRepo = Pick<Repo, 'id' | 'displayName' | 'path'> &
     Pick<Repo, 'connectionId' | 'executionHostId' | 'upstream' | 'repoIcon' | 'gitRemoteIdentity'>
   >
 
+type NewWorkspaceTargetTranslator = (
+  key: string,
+  fallback: string,
+  options?: Record<string, unknown>
+) => string
+
+export type NewWorkspaceProjectTargetCopy = {
+  hostsConfigured: (count: number) => string
+  remotePrefix: string
+  sshPrefix: string
+  thisComputer: string
+}
+
+const DEFAULT_PROJECT_TARGET_COPY: NewWorkspaceProjectTargetCopy = {
+  hostsConfigured: (count) => `${count} hosts configured`,
+  remotePrefix: 'Remote',
+  sshPrefix: 'SSH',
+  thisComputer: 'This computer'
+}
+
+export function createNewWorkspaceProjectTargetCopy(
+  t: NewWorkspaceTargetTranslator
+): NewWorkspaceProjectTargetCopy {
+  return {
+    hostsConfigured: (count) =>
+      t('mobile.workspace.target.hostsConfigured', '{{count}} hosts configured', { count }),
+    remotePrefix: t('mobile.workspace.target.remotePrefix', 'Remote'),
+    sshPrefix: t('mobile.workspace.target.sshPrefix', 'SSH'),
+    thisComputer: t('mobile.workspace.target.thisComputer', 'This computer')
+  }
+}
+
 export type NewWorkspaceProjectOption<TRepo extends WorkspaceRepo> = {
   id: string
   label: string
@@ -30,7 +62,8 @@ export type NewWorkspaceRunTargetOption<TRepo extends WorkspaceRepo> = {
 }
 
 export function buildNewWorkspaceProjectOptions<TRepo extends WorkspaceRepo>(
-  repos: readonly TRepo[]
+  repos: readonly TRepo[],
+  copy: NewWorkspaceProjectTargetCopy = DEFAULT_PROJECT_TARGET_COPY
 ): NewWorkspaceProjectOption<TRepo>[] {
   const options = new Map<string, NewWorkspaceProjectOption<TRepo>>()
   const hostIdsByProject = new Map<string, Set<string>>()
@@ -53,14 +86,15 @@ export function buildNewWorkspaceProjectOptions<TRepo extends WorkspaceRepo>(
       ? `${providerIdentity.owner}/${providerIdentity.repo}`
       : ''
     const hostCount = hostIdsByProject.get(option.id)?.size ?? 0
-    const detail = providerDetail || (hostCount > 1 ? `${hostCount} hosts configured` : '')
+    const detail = providerDetail || (hostCount > 1 ? copy.hostsConfigured(hostCount) : '')
     return detail ? { ...option, detail } : option
   })
 }
 
 export function getNewWorkspaceRunTarget(
   repo: WorkspaceRepo,
-  localPlatform: NodeJS.Platform | null = null
+  localPlatform: NodeJS.Platform | null = null,
+  copy: NewWorkspaceProjectTargetCopy = DEFAULT_PROJECT_TARGET_COPY
 ): {
   label: string
   detail: string
@@ -69,13 +103,13 @@ export function getNewWorkspaceRunTarget(
   const host = parseExecutionHostId(hostId)
   const hostLabel = getExecutionHostLabel(hostId)
   if (host?.kind === 'ssh') {
-    return { label: `SSH · ${hostLabel}`, detail: repo.path }
+    return { label: `${copy.sshPrefix} · ${hostLabel}`, detail: repo.path }
   }
   if (host?.kind === 'runtime') {
-    return { label: `Remote · ${hostLabel}`, detail: repo.path }
+    return { label: `${copy.remotePrefix} · ${hostLabel}`, detail: repo.path }
   }
   return {
-    label: localPlatform ? getLocalExecutionHostLabel(localPlatform) : 'This computer',
+    label: localPlatform ? getLocalExecutionHostLabel(localPlatform) : copy.thisComputer,
     detail: repo.path
   }
 }
@@ -83,7 +117,8 @@ export function getNewWorkspaceRunTarget(
 export function buildNewWorkspaceRunTargetOptions<TRepo extends WorkspaceRepo>(
   repos: readonly TRepo[],
   projectId: string | null,
-  localPlatform: NodeJS.Platform | null = null
+  localPlatform: NodeJS.Platform | null = null,
+  copy: NewWorkspaceProjectTargetCopy = DEFAULT_PROJECT_TARGET_COPY
 ): NewWorkspaceRunTargetOption<TRepo>[] {
   if (!projectId) {
     return []
@@ -97,7 +132,7 @@ export function buildNewWorkspaceRunTargetOptions<TRepo extends WorkspaceRepo>(
     if (!options.has(hostId)) {
       options.set(hostId, {
         id: repo.id,
-        ...getNewWorkspaceRunTarget(repo, localPlatform),
+        ...getNewWorkspaceRunTarget(repo, localPlatform, copy),
         repo
       })
     }

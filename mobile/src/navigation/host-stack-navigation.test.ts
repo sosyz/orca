@@ -3,6 +3,7 @@ import {
   coordinateHostStackNavigation,
   hostStackHostRoute,
   hostStackRouteHref,
+  isHostStackIndexPathname,
   navigateToHostStackRoute,
   type HostStackNavigationState
 } from './host-stack-navigation'
@@ -66,6 +67,14 @@ function rootLayoutScopedState(inner: HostStackNavigationState): HostStackNaviga
 }
 
 describe('host stack navigation', () => {
+  it('recognizes decoded Expo and encoded Harmony host index paths', () => {
+    for (const hostId of ['host/one', 'host#one', 'host%one', 'host one']) {
+      expect(isHostStackIndexPathname(`/h/${hostId}`, hostId)).toBe(true)
+      expect(isHostStackIndexPathname(hostStackHostRoute(hostId), hostId)).toBe(true)
+      expect(isHostStackIndexPathname(`${hostStackHostRoute(hostId)}/tasks`, hostId)).toBe(false)
+    }
+  })
+
   it('matches a host committed as the encoded segment it was pushed as', () => {
     const harness = navigationHarness({ index: 0, routes: [{ name: 'index' }] })
     const push = vi.fn()

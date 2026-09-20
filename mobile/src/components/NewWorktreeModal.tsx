@@ -100,6 +100,7 @@ function NewWorktreeModalContent(props: NewWorktreeModalProps) {
     retiredNamesRefreshKey
   )
   const createSubmit = useNewWorkspaceCreateSubmit({
+    visible,
     client,
     selectedRepo,
     selectedAgent: agentSelection.selectedAgent,

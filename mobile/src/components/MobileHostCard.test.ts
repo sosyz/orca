@@ -1,6 +1,10 @@
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
+import i18next from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import en from '../i18n/locales/en'
+import zh from '../i18n/locales/zh'
 import { MobileHostCard } from './MobileHostCard'
 
 vi.mock('react-native', () => ({
@@ -19,6 +23,21 @@ vi.mock('./StatusDot', () => ({
   StatusDot: 'StatusDot'
 }))
 
+const testI18n = i18next.createInstance()
+const testI18nReady = testI18n.init({
+  fallbackLng: 'en',
+  interpolation: { escapeValue: false },
+  lng: 'en',
+  resources: {
+    en: { translation: en },
+    zh: { translation: zh }
+  }
+})
+
+function TestMobileHostCard(props: ComponentProps<typeof MobileHostCard>) {
+  return createElement(I18nextProvider, { i18n: testI18n }, createElement(MobileHostCard, props))
+}
+
 function suppressRendererDeprecation() {
   return vi.spyOn(console, 'error').mockImplementation((...args) => {
     if (typeof args[0] !== 'string' || !args[0].includes('react-test-renderer is deprecated')) {
@@ -29,6 +48,11 @@ function suppressRendererDeprecation() {
 
 describe('MobileHostCard', () => {
   let renderer: ReactTestRenderer | null = null
+
+  beforeEach(async () => {
+    await testI18nReady
+    await testI18n.changeLanguage('en')
+  })
 
   afterEach(() => {
     act(() => renderer?.unmount())
@@ -41,9 +65,10 @@ describe('MobileHostCard', () => {
     const onLongPress = vi.fn()
     const onOpenActions = vi.fn()
     const consoleError = suppressRendererDeprecation()
+    await testI18nReady
     await act(async () => {
       renderer = create(
-        createElement(MobileHostCard, {
+        createElement(TestMobileHostCard, {
           host: {
             id: 'desk',
             name: 'Desk',
@@ -86,9 +111,10 @@ describe('MobileHostCard', () => {
 
   it('announces the connection path without the visual separator', async () => {
     const consoleError = suppressRendererDeprecation()
+    await testI18nReady
     await act(async () => {
       renderer = create(
-        createElement(MobileHostCard, {
+        createElement(TestMobileHostCard, {
           host: {
             id: 'desk',
             name: 'Desk',
@@ -121,11 +147,51 @@ describe('MobileHostCard', () => {
     )
   })
 
-  it('preserves the connected worktree-catalog failure state', async () => {
+  it('announces a localized spoken connection path in Chinese', async () => {
     const consoleError = suppressRendererDeprecation()
+    await testI18nReady
+    await testI18n.changeLanguage('zh')
     await act(async () => {
       renderer = create(
-        createElement(MobileHostCard, {
+        createElement(TestMobileHostCard, {
+          host: {
+            id: 'desk',
+            name: 'Desk',
+            endpoint: 'ws://192.168.1.2:6768',
+            deviceToken: 'token',
+            publicKeyB64: 'key',
+            lastConnected: 1
+          },
+          state: 'connected',
+          verdict: { kind: 'normal', label: 'Connected' },
+          path: 'tailscale',
+          worktreeInfo: {
+            hostId: 'desk',
+            totalWorktrees: 3,
+            activeCount: 2,
+            lastActiveWorktree: null,
+            countsProvenAt: Date.now()
+          },
+          onPress: vi.fn(),
+          onLongPress: vi.fn(),
+          onOpenActions: vi.fn()
+        })
+      )
+    })
+    consoleError.mockRestore()
+
+    const navigationButton = renderer.root.findAllByType('Pressable')[0]
+    expect(navigationButton.props.accessibilityLabel).toBe(
+      '打开 Desk, 已连接, 通过 Tailscale 直连, 3 个 worktree, 2 个活跃'
+    )
+  })
+
+  it('preserves the connected worktree-catalog failure state', async () => {
+    const consoleError = suppressRendererDeprecation()
+    await testI18nReady
+    await act(async () => {
+      renderer = create(
+        createElement(TestMobileHostCard, {
           host: {
             id: 'desk',
             name: 'Desk',
@@ -165,9 +231,10 @@ describe('MobileHostCard', () => {
 
   it('includes visible offline recovery guidance in the navigation label', async () => {
     const consoleError = suppressRendererDeprecation()
+    await testI18nReady
     await act(async () => {
       renderer = create(
-        createElement(MobileHostCard, {
+        createElement(TestMobileHostCard, {
           host: {
             id: 'desk',
             name: 'Desk',
