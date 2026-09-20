@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from 'react'
+import { useCallback } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import { triggerError } from '../platform/haptics'
 import type { MobileGitStatusResult } from './mobile-git-status'
@@ -28,7 +28,7 @@ type Params = {
   branchLabel: string
   commitMessage: string
   stagedEntries: MobileCommitFailureRecovery['stagedEntries']
-  mountedRef: MutableRefObject<boolean>
+  isCurrentOwner: () => boolean
   runGitWorkflow: RunGitWorkflow
   loadStatus: LoadStatus
   setActionError: (next: string | null) => void
@@ -46,7 +46,7 @@ export function useMobileCreatePrRunner({
   branchLabel,
   commitMessage,
   stagedEntries,
-  mountedRef,
+  isCurrentOwner,
   runGitWorkflow,
   loadStatus,
   setActionError,
@@ -58,6 +58,9 @@ export function useMobileCreatePrRunner({
 }: Params) {
   return useCallback(
     async (pushFirst: boolean) => {
+      if (!isCurrentOwner()) {
+        return
+      }
       setShowActionSheet(false)
       const branch = status?.branch
       if (!client || !branch) {
@@ -65,37 +68,57 @@ export function useMobileCreatePrRunner({
         setActionError('Check out a branch before creating a pull request.')
         return
       }
+      const ownedClient: Pick<RpcClient, 'sendRequest'> = {
+        sendRequest: async (...args) => {
+          if (!isCurrentOwner()) {
+            throw new Error('Source control connection changed')
+          }
+          const response = await client.sendRequest(...args)
+          if (!isCurrentOwner()) {
+            throw new Error('Source control connection changed')
+          }
+          return response
+        }
+      }
       const created: { current: MobileHostedReviewCreateIntentRunOutcome | null } = {
         current: null
       }
       let progress: MobileHostedReviewCreateIntentProgress | null = null
       const ran = await runGitWorkflow(pushFirst ? 'push-create-pr' : 'create-pr', async () => {
-        created.current = await runMobileHostedReviewCreateIntent(client, worktreeId, {
+        created.current = await runMobileHostedReviewCreateIntent(ownedClient, worktreeId, {
           branch,
           title: branchLabel,
           status,
           commitMessage,
           onProgress: (nextProgress: MobileHostedReviewCreateIntentProgress) => {
-            progress = nextProgress
-            setActionError(mobileHostedReviewCreateIntentProgressMessage(nextProgress))
+            if (isCurrentOwner()) {
+              progress = nextProgress
+              setActionError(mobileHostedReviewCreateIntentProgressMessage(nextProgress))
+            }
           }
         })
         if (!created.current.ok) {
           throw new Error(created.current.error)
         }
       })
+      if (!isCurrentOwner()) {
+        return
+      }
       const outcome = created.current
-      if (outcome?.committed && mountedRef.current) {
+      if (outcome?.committed) {
         setCommitMessage('')
       }
-      if (!ran && outcome?.status !== undefined && mountedRef.current) {
+      if (!ran && outcome?.status !== undefined) {
         await loadStatus({
           preserveReadyOnFailure: true,
           clearActionErrorOnSuccess: false,
           force: true
         })
       }
-      if (!ran || !mountedRef.current || !outcome || !outcome.ok) {
+      if (!isCurrentOwner()) {
+        return
+      }
+      if (!ran || !outcome || !outcome.ok) {
         if (!ran && outcome && isMobileHostedReviewCommitFailure(outcome, progress)) {
           const outcomeStagedEntries = getMobileCommitFailureStagedEntries(outcome.status?.entries)
           recordCommitFailure({
@@ -115,7 +138,7 @@ export function useMobileCreatePrRunner({
       client,
       commitMessage,
       loadStatus,
-      mountedRef,
+      isCurrentOwner,
       recordCommitFailure,
       runGitWorkflow,
       setActionError,

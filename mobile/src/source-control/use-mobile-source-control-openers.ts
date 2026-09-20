@@ -1,17 +1,15 @@
-import { useCallback, useRef, useState, type MutableRefObject } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject
+} from 'react'
 import { useRouter } from 'expo-router'
 import type { RpcClient } from '../transport/rpc-client'
-import type { ConnectionState, RpcSuccess } from '../transport/types'
+import type { ConnectionState } from '../transport/types'
 import { triggerError, triggerSelection } from '../platform/haptics'
-import { buildMobileDiffLines } from '../session/mobile-diff-lines'
-import {
-  highlightMobileDiffLines,
-  resolveMobileSyntaxLanguage
-} from '../session/mobile-file-syntax'
-import {
-  canOpenMobileBranchCompareDiff,
-  type MobileGitBranchChangeEntry
-} from './mobile-branch-compare'
 import {
   canOpenMobileGitStatusEntry,
   isMobileGitUnavailable,
@@ -20,11 +18,8 @@ import {
 import { buildMobileReviewFileRoute } from './mobile-review-route'
 import * as rendererFallback from './mobile-source-control-renderer-fallback'
 import { revealMobileSourceControlSessionDiff } from './reveal-mobile-source-control-session-diff'
-import type {
-  GitDiffTextResult,
-  MobileBranchCompareState,
-  MobileBranchDiffPreviewState
-} from './mobile-source-control-screen-state'
+import type { MobileBranchCompareState } from './mobile-source-control-screen-state'
+import { useMobileSourceControlBranchDiffOpener } from './use-mobile-source-control-branch-diff-opener'
 
 type Params = {
   client: RpcClient | null
@@ -64,19 +59,57 @@ export function useMobileSourceControlOpeners(params: Params) {
     setActionError
   } = params
   const router = useRouter()
-  const [branchDiffPreview, setBranchDiffPreview] = useState<MobileBranchDiffPreviewState | null>(
-    null
-  )
   const [openingPath, setOpeningPath] = useState<string | null>(null)
-  const [openingBranchPath, setOpeningBranchPath] = useState<string | null>(null)
   const openingPathRef = useRef<string | null>(null)
-  const openingBranchPathRef = useRef<string | null>(null)
+  const owner = useMemo(
+    () => ({ client, connState, hostId, worktreeId }),
+    [client, connState, hostId, worktreeId]
+  )
+  const committedOwnerRef = useRef<typeof owner | null>(null)
+  const previousOwnerRef = useRef(owner)
+  useLayoutEffect(() => {
+    if (previousOwnerRef.current !== owner) {
+      previousOwnerRef.current = owner
+      openingPathRef.current = null
+      setOpeningPath(null)
+    }
+    committedOwnerRef.current = owner
+    return () => {
+      if (committedOwnerRef.current === owner) {
+        committedOwnerRef.current = null
+      }
+    }
+  }, [owner])
+  const isCurrentOwner = useCallback(
+    () => mountedRef.current && committedOwnerRef.current === owner,
+    [mountedRef, owner]
+  )
+  const { branchDiffPreview, setBranchDiffPreview, openingBranchPath, openBranchDiff } =
+    useMobileSourceControlBranchDiffOpener({
+      owner,
+      isCurrentOwner,
+      client,
+      connState,
+      hostId,
+      worktreeId,
+      name,
+      origin,
+      router,
+      branchCompareState,
+      mountedRef,
+      busyActionRef,
+      openingPathRef,
+      setActionError
+    })
 
   const openFile = useCallback(
     async (entry: MobileGitStatusEntry) => {
       // Deletions are openable (pre-delete text/image via git.diff); only block
       // unresolved conflicts, matching canOpenMobileGitStatusEntry / row UI.
       if (!canOpenMobileGitStatusEntry(entry)) {
+        return
+      }
+      if (!isCurrentOwner()) {
         return
       }
       if (openingPathRef.current || busyActionRef.current) {
@@ -113,9 +146,12 @@ export function useMobileSourceControlOpeners(params: Params) {
           relativePath: entry.path,
           staged: entry.area === 'staged'
         })
+        if (!isCurrentOwner()) {
+          return
+        }
         let openedTabMode: 'diff' | 'edit' = 'diff'
         if (!response.ok && rendererFallback.isMobileOpenDiffRendererUnavailable(response.error)) {
-          if (!mountedRef.current || openingPathRef.current !== entry.path) {
+          if (openingPathRef.current !== entry.path) {
             return
           }
           triggerSelection()
@@ -135,13 +171,13 @@ export function useMobileSourceControlOpeners(params: Params) {
             worktree: `id:${worktreeId}`,
             relativePath: entry.path
           })
+          if (!isCurrentOwner()) {
+            return
+          }
           openedTabMode = 'edit'
         }
         if (!response.ok) {
           throw new Error(response.error?.message || 'Unable to open diff')
-        }
-        if (!mountedRef.current) {
-          return
         }
         const revealResult = await revealMobileSourceControlSessionDiff({
           client,
@@ -150,8 +186,11 @@ export function useMobileSourceControlOpeners(params: Params) {
           tabMode: openedTabMode,
           staged: entry.area === 'staged',
           onOpenedFileDiff,
-          isCurrent: () => mountedRef.current && openingPathRef.current === entry.path
+          isCurrent: () => isCurrentOwner() && openingPathRef.current === entry.path
         })
+        if (!isCurrentOwner()) {
+          return
+        }
         if (revealResult === 'cancelled') {
           return
         }
@@ -167,17 +206,15 @@ export function useMobileSourceControlOpeners(params: Params) {
           router.back()
         }
       } catch (err) {
-        if (!mountedRef.current) {
+        if (!isCurrentOwner()) {
           return
         }
         triggerError()
         setActionError(err instanceof Error ? err.message : 'Unable to open diff')
       } finally {
-        if (openingPathRef.current === entry.path) {
+        if (isCurrentOwner() && openingPathRef.current === entry.path) {
           openingPathRef.current = null
-          if (mountedRef.current) {
-            setOpeningPath(null)
-          }
+          setOpeningPath(null)
         }
       }
     },
@@ -187,117 +224,12 @@ export function useMobileSourceControlOpeners(params: Params) {
       connState,
       embedded,
       hostId,
+      isCurrentOwner,
       mountedRef,
       name,
       onFileOpenStart,
       onOpenedFileDiff,
       onRequestClose,
-      origin,
-      router,
-      setActionError,
-      worktreeId
-    ]
-  )
-
-  const openBranchDiff = useCallback(
-    async (entry: MobileGitBranchChangeEntry) => {
-      if (openingBranchPathRef.current || openingPathRef.current || busyActionRef.current) {
-        return
-      }
-      if (!client || connState !== 'connected') {
-        if (!mountedRef.current) {
-          return
-        }
-        setActionError('Waiting for desktop...')
-        return
-      }
-      if (branchCompareState.kind !== 'ready') {
-        return
-      }
-      const summary = branchCompareState.result.summary
-      if (!canOpenMobileBranchCompareDiff(summary) || !summary.headOid || !summary.mergeBase) {
-        return
-      }
-
-      openingBranchPathRef.current = entry.path
-      setOpeningBranchPath(entry.path)
-      if (origin !== 'session') {
-        triggerSelection()
-        router.push(
-          buildMobileReviewFileRoute({
-            hostId,
-            worktreeId,
-            worktreeName: name,
-            filePath: entry.path,
-            area: 'branch'
-          }) as Parameters<typeof router.push>[0]
-        )
-        openingBranchPathRef.current = null
-        if (mountedRef.current) {
-          setOpeningBranchPath(null)
-        }
-        return
-      }
-      setBranchDiffPreview({ kind: 'loading', entry })
-      try {
-        const response = await client.sendRequest('git.branchDiff', {
-          worktree: `id:${worktreeId}`,
-          filePath: entry.path,
-          ...(entry.oldPath ? { oldPath: entry.oldPath } : {}),
-          compare: {
-            baseRef: summary.baseRef,
-            ...(summary.baseOid ? { baseOid: summary.baseOid } : {}),
-            headOid: summary.headOid,
-            mergeBase: summary.mergeBase
-          }
-        })
-        if (!response.ok) {
-          throw new Error(response.error?.message || 'Unable to load committed diff')
-        }
-        const result = (response as RpcSuccess).result as GitDiffTextResult | { kind: 'binary' }
-        if (result.kind !== 'text') {
-          throw new Error('Binary branch diff preview unavailable on mobile')
-        }
-        const diff = buildMobileDiffLines(result.originalContent, result.modifiedContent)
-        const syntaxLanguage = resolveMobileSyntaxLanguage(entry.path)
-        if (!mountedRef.current) {
-          return
-        }
-        setBranchDiffPreview({
-          kind: 'ready',
-          entry,
-          summary,
-          lines: highlightMobileDiffLines(diff.lines, syntaxLanguage),
-          truncated: diff.truncated
-        })
-        triggerSelection()
-      } catch (err) {
-        if (!mountedRef.current) {
-          return
-        }
-        triggerError()
-        setBranchDiffPreview({
-          kind: 'error',
-          entry,
-          message: err instanceof Error ? err.message : 'Unable to load committed diff'
-        })
-      } finally {
-        if (openingBranchPathRef.current === entry.path) {
-          openingBranchPathRef.current = null
-          if (mountedRef.current) {
-            setOpeningBranchPath(null)
-          }
-        }
-      }
-    },
-    [
-      branchCompareState,
-      busyActionRef,
-      client,
-      connState,
-      hostId,
-      mountedRef,
-      name,
       origin,
       router,
       setActionError,

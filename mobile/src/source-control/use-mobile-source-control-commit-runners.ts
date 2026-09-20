@@ -1,10 +1,11 @@
-import { useCallback, type MutableRefObject } from 'react'
+import { useCallback } from 'react'
 import { triggerError, triggerSuccess } from '../platform/haptics'
 import type { LoadStatusOptions } from './mobile-source-control-screen-state'
 import type {
   MobileCommitFailureRecovery,
   RecordMobileCommitFailure
 } from './mobile-commit-failure-recovery'
+import type { MobileSourceControlBusyClaim } from './use-mobile-source-control-workflow-owner'
 
 type GitStep = { method: string; params?: Record<string, unknown> }
 type SendGitRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
@@ -22,9 +23,9 @@ type Params = {
   runGitSyncSteps: () => Promise<void>
   runGitWorkflow: RunGitWorkflow
   loadStatus: (options?: LoadStatusOptions) => Promise<boolean>
-  mountedRef: MutableRefObject<boolean>
-  busyActionRef: MutableRefObject<string | null>
-  setBusyAction: (next: string | null) => void
+  isCurrentOwner: () => boolean
+  claimBusy: (actionId: string) => MobileSourceControlBusyClaim | null
+  releaseBusy: (claim: MobileSourceControlBusyClaim) => void
   setActionError: (next: string | null) => void
   setCommitMessage: (next: string) => void
   recordCommitFailure: RecordMobileCommitFailure
@@ -41,9 +42,9 @@ export function useMobileSourceControlCommitRunners(params: Params) {
     runGitSyncSteps,
     runGitWorkflow,
     loadStatus,
-    mountedRef,
-    busyActionRef,
-    setBusyAction,
+    isCurrentOwner,
+    claimBusy,
+    releaseBusy,
     setActionError,
     setCommitMessage,
     recordCommitFailure
@@ -60,17 +61,26 @@ export function useMobileSourceControlCommitRunners(params: Params) {
         try {
           await sendCommitRequest(message)
         } catch (err) {
-          recordCommitFailure({
-            error: err instanceof Error ? err.message : 'Commit failed',
-            commitMessage: message,
-            stagedEntries
-          })
+          if (isCurrentOwner()) {
+            recordCommitFailure({
+              error: err instanceof Error ? err.message : 'Commit failed',
+              commitMessage: message,
+              stagedEntries
+            })
+          }
           throw err
         }
       },
       { clearCommitMessage: true }
     )
-  }, [commitMessage, recordCommitFailure, runGitWorkflow, sendCommitRequest, stagedEntries])
+  }, [
+    commitMessage,
+    isCurrentOwner,
+    recordCommitFailure,
+    runGitWorkflow,
+    sendCommitRequest,
+    stagedEntries
+  ])
 
   const runCommitFollowUps = useCallback(
     async (actionId: string, afterCommit: () => Promise<void>) => {
@@ -78,27 +88,29 @@ export function useMobileSourceControlCommitRunners(params: Params) {
       if (!message) {
         return false
       }
-      if (busyActionRef.current) {
+      const claim = claimBusy(actionId)
+      if (!claim) {
         return false
       }
-      busyActionRef.current = actionId
-      setBusyAction(actionId)
       setActionError(null)
       recordCommitFailure(null)
       let didCommit = false
       try {
         await sendCommitRequest(message)
         didCommit = true
+        if (!isCurrentOwner()) {
+          return false
+        }
         await afterCommit()
-        if (!mountedRef.current) {
+        if (!isCurrentOwner()) {
           return false
         }
         setCommitMessage('')
         triggerSuccess()
         await loadStatus({ preserveReadyOnFailure: true, force: true })
-        return true
+        return isCurrentOwner()
       } catch (err) {
-        if (!mountedRef.current) {
+        if (!isCurrentOwner()) {
           return false
         }
         triggerError()
@@ -113,27 +125,25 @@ export function useMobileSourceControlCommitRunners(params: Params) {
             clearActionErrorOnSuccess: false,
             force: true
           })
+          if (!isCurrentOwner()) {
+            return false
+          }
         }
         setActionError(errorMessage)
         return false
       } finally {
-        if (busyActionRef.current === actionId) {
-          busyActionRef.current = null
-          if (mountedRef.current) {
-            setBusyAction(null)
-          }
-        }
+        releaseBusy(claim)
       }
     },
     [
-      busyActionRef,
+      claimBusy,
       commitMessage,
+      isCurrentOwner,
       loadStatus,
-      mountedRef,
       recordCommitFailure,
+      releaseBusy,
       sendCommitRequest,
       setActionError,
-      setBusyAction,
       setCommitMessage,
       stagedEntries
     ]
@@ -143,11 +153,14 @@ export function useMobileSourceControlCommitRunners(params: Params) {
     async (actionId: string, afterCommit: GitStep[]) => {
       return await runCommitFollowUps(actionId, async () => {
         for (const step of afterCommit) {
+          if (!isCurrentOwner()) {
+            return
+          }
           await sendGitRequest<unknown>(step.method, step.params)
         }
       })
     },
-    [runCommitFollowUps, sendGitRequest]
+    [isCurrentOwner, runCommitFollowUps, sendGitRequest]
   )
 
   const runCommitSyncSequence = useCallback(async () => {

@@ -99,7 +99,15 @@ function matchesTabMode(mode: unknown, expected: 'diff' | 'edit'): boolean {
 
 async function activateSessionFileTab(options: Options, tabId: string): Promise<boolean> {
   try {
-    const response = await activateMobileSessionTab(options.client, {
+    const client: ActivationClient = {
+      sendRequest: (...args) => {
+        if (options.isCurrent?.() === false) {
+          throw new Error('Source control opener changed')
+        }
+        return options.client.sendRequest(...args)
+      }
+    }
+    const response = await activateMobileSessionTab(client, {
       worktree: `id:${options.worktreeId}`,
       tabId,
       notifyClients: false,

@@ -34,7 +34,11 @@ export type MobileSourceControlPanelProps = {
   onOpenedFileDiff?: (relativePath: string) => void
 }
 
-export function MobileSourceControlPanel({
+export function MobileSourceControlPanel(props: MobileSourceControlPanelProps) {
+  return <ScopedMobileSourceControlPanel key={`${props.hostId}\0${props.worktreeId}`} {...props} />
+}
+
+function ScopedMobileSourceControlPanel({
   hostId,
   worktreeId,
   name = '',
@@ -117,25 +121,35 @@ export function MobileSourceControlPanel({
   const ready = screenState.kind === 'ready'
 
   // Keep last-known branch/head across a transient status unload so the PR controller isn't wiped ready → hidden → cold start.
-  const lastPrBranchRef = useRef<string | null>(null)
-  const lastPrHeadRef = useRef<string | null>(null)
-  useEffect(() => {
-    lastPrBranchRef.current = null
-    lastPrHeadRef.current = null
-  }, [worktreeId])
+  const lastPrStatusRef = useRef({
+    client,
+    worktreeId,
+    branch: null as string | null,
+    head: null as string | null
+  })
   const statusBranch = status?.branch ?? null
   const statusHead = status?.head ?? branchCompareResult?.summary.headOid ?? null
+  const lastPrStatus =
+    lastPrStatusRef.current.client === client && lastPrStatusRef.current.worktreeId === worktreeId
+      ? lastPrStatusRef.current
+      : null
   // Write last-known identity in an effect, not render: a discarded concurrent render must not leave the fallback stale.
   useEffect(() => {
+    if (
+      lastPrStatusRef.current.client !== client ||
+      lastPrStatusRef.current.worktreeId !== worktreeId
+    ) {
+      lastPrStatusRef.current = { client, worktreeId, branch: null, head: null }
+    }
     if (statusBranch) {
-      lastPrBranchRef.current = statusBranch
+      lastPrStatusRef.current.branch = statusBranch
     }
     if (statusHead) {
-      lastPrHeadRef.current = statusHead
+      lastPrStatusRef.current.head = statusHead
     }
-  }, [statusBranch, statusHead])
-  const prBranch = statusBranch ?? lastPrBranchRef.current
-  const prHeadSha = statusHead ?? lastPrHeadRef.current
+  }, [client, worktreeId, statusBranch, statusHead])
+  const prBranch = statusBranch ?? lastPrStatus?.branch ?? null
+  const prHeadSha = statusHead ?? lastPrStatus?.head ?? null
   const prController = useMobilePrSidebarController({
     client,
     connState,

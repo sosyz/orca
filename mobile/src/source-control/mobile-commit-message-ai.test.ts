@@ -75,6 +75,11 @@ describe('requestMobileCommitMessage', () => {
 })
 
 describe('cancelMobileCommitMessage', () => {
+  it('reports a rejected cancellation instead of claiming it succeeded', async () => {
+    const client = clientWith([fail('desktop unavailable')])
+    await expect(cancelMobileCommitMessage(client, 'wt-1')).rejects.toThrow('desktop unavailable')
+  })
+
   it('calls the cancel RPC', async () => {
     const client = clientWith([ok({})])
     await cancelMobileCommitMessage(client, 'wt-1')

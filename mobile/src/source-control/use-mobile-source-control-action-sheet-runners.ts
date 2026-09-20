@@ -16,6 +16,7 @@ type Params = {
   commit: () => Promise<boolean>
   runCommitSequence: (actionId: string, afterCommit: GitStep[]) => Promise<boolean>
   runCommitSyncSequence: () => Promise<boolean>
+  isCurrentOwner: () => boolean
   setShowActionSheet: (next: boolean) => void
 }
 
@@ -32,39 +33,45 @@ export function useMobileSourceControlActionSheetRunners(params: Params) {
     commit,
     runCommitSequence,
     runCommitSyncSequence,
+    isCurrentOwner,
     setShowActionSheet
   } = params
+  const closeIfCurrent = useCallback(() => {
+    if (isCurrentOwner()) {
+      setShowActionSheet(false)
+    }
+  }, [isCurrentOwner, setShowActionSheet])
 
   const runActionSheetCommit = useCallback(async () => {
     await commit()
-    setShowActionSheet(false)
-  }, [commit, setShowActionSheet])
+    closeIfCurrent()
+  }, [closeIfCurrent, commit])
 
   const runActionSheetCommitSequence = useCallback(
     async (actionId: string, afterCommit: GitStep[]) => {
       await runCommitSequence(actionId, afterCommit)
-      setShowActionSheet(false)
+      closeIfCurrent()
     },
-    [runCommitSequence, setShowActionSheet]
+    [closeIfCurrent, runCommitSequence]
   )
 
   const runActionSheetCommitSync = useCallback(async () => {
     await runCommitSyncSequence()
-    setShowActionSheet(false)
-  }, [runCommitSyncSequence, setShowActionSheet])
+    closeIfCurrent()
+  }, [closeIfCurrent, runCommitSyncSequence])
 
   const runActionSheetGitSequence = useCallback(
     async (actionId: string, steps: GitStep[]) => {
       await runGitSequence(actionId, steps)
-      setShowActionSheet(false)
+      closeIfCurrent()
     },
-    [runGitSequence, setShowActionSheet]
+    [closeIfCurrent, runGitSequence]
   )
 
   const runActionSheetGitSync = useCallback(async () => {
     await runGitSync('sync')
-    setShowActionSheet(false)
-  }, [runGitSync, setShowActionSheet])
+    closeIfCurrent()
+  }, [closeIfCurrent, runGitSync])
 
   const runActionSheetRebase = useCallback(async () => {
     await runGitWorkflow('rebase', async () => {
@@ -77,8 +84,8 @@ export function useMobileSourceControlActionSheetRunners(params: Params) {
       }
       await sendGitRequest<unknown>('git.rebaseFromBase', { baseRef })
     })
-    setShowActionSheet(false)
-  }, [client, runGitWorkflow, sendGitRequest, setShowActionSheet, worktreeId])
+    closeIfCurrent()
+  }, [client, closeIfCurrent, runGitWorkflow, sendGitRequest, worktreeId])
 
   return {
     runActionSheetCommit,

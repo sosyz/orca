@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import type { ConnectionState, RpcSuccess } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
 import {
@@ -17,15 +17,29 @@ type Params = {
 // The raw RPC layer for source-control git actions. Pure transport — owns no
 // screen state, so it stays out of the giant state hook.
 export function useMobileGitRequests({ client, connState, worktreeId }: Params) {
+  const owner = useMemo(() => ({ client, connState, worktreeId }), [client, connState, worktreeId])
+  const committedOwnerRef = useRef<typeof owner | null>(null)
+  useLayoutEffect(() => {
+    committedOwnerRef.current = owner
+    return () => {
+      if (committedOwnerRef.current === owner) {
+        committedOwnerRef.current = null
+      }
+    }
+  }, [owner])
+  const isCurrentOwner = useCallback(() => committedOwnerRef.current === owner, [owner])
   const sendGitRequest = useCallback(
     async <T>(method: string, params?: Record<string, unknown>): Promise<T> => {
-      if (!client || connState !== 'connected') {
+      if (!isCurrentOwner() || !client || connState !== 'connected') {
         throw new Error('Waiting for desktop...')
       }
       const response = await client.sendRequest(method, {
         worktree: `id:${worktreeId}`,
         ...params
       })
+      if (!isCurrentOwner()) {
+        throw new Error('Source control connection changed')
+      }
       if (!response.ok) {
         const error = new Error(
           response.error?.message || 'Source control action failed'
@@ -35,7 +49,7 @@ export function useMobileGitRequests({ client, connState, worktreeId }: Params) 
       }
       return (response as RpcSuccess).result as T
     },
-    [client, connState, worktreeId]
+    [client, connState, isCurrentOwner, worktreeId]
   )
 
   const sendCommitRequest = useCallback(

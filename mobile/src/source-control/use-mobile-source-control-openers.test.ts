@@ -36,12 +36,18 @@ function failure(code: string, message: string): RpcResponse {
   return { id: 'rpc-1', ok: false, error: { code, message }, _meta: { runtimeId: 'runtime-1' } }
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason: Error) => void
+} {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: Error) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
+    reject = rejectPromise
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function clientWith(sendRequest: RpcClient['sendRequest']): RpcClient {
@@ -217,7 +223,7 @@ describe('useMobileSourceControlOpeners', () => {
     expect(mocks.triggerError).not.toHaveBeenCalled()
   })
 
-  it('uses tap-time route data when props change before openDiff resolves', async () => {
+  it('uses tap-time route data when the same source is renamed before openDiff resolves', async () => {
     const pending = deferred<RpcResponse>()
     const sendRequest = vi.fn<RpcClient['sendRequest']>().mockReturnValue(pending.promise)
     const options = makeOptions({
@@ -235,7 +241,7 @@ describe('useMobileSourceControlOpeners', () => {
     act(() => {
       renderer!.update(
         createElement(Harness, {
-          options: { ...options, worktreeId: 'wt-after', name: 'After' }
+          options: { ...options, name: 'After' }
         })
       )
     })
@@ -254,5 +260,160 @@ describe('useMobileSourceControlOpeners', () => {
         area: 'staged'
       })
     )
+  })
+
+  it('does not navigate for a previous worktree after the hook adopts another', async () => {
+    const pending = deferred<RpcResponse>()
+    const options = makeOptions({ client: clientWith(vi.fn().mockReturnValue(pending.promise)) })
+    mount(options)
+    let opening!: Promise<void>
+    await act(async () => {
+      opening = openers!.openFile(statusEntry())
+    })
+    act(() => {
+      renderer!.update(createElement(Harness, { options: { ...options, worktreeId: 'wt-after' } }))
+    })
+    await act(async () => {
+      pending.resolve(rendererUnavailable())
+      await opening
+    })
+    expect(mocks.replace).not.toHaveBeenCalled()
+    expect(mocks.push).not.toHaveBeenCalled()
+  })
+
+  it('does not show an old openDiff close error after the same worktree adopts a new client', async () => {
+    const pending = deferred<RpcResponse>()
+    const setActionError = vi.fn()
+    const options = makeOptions({
+      client: clientWith(vi.fn().mockReturnValue(pending.promise)),
+      setActionError
+    })
+    mount(options)
+    let opening!: Promise<void>
+    await act(async () => {
+      opening = openers!.openFile(statusEntry())
+    })
+
+    act(() => {
+      pending.reject(new Error('Client closed'))
+      renderer!.update(
+        createElement(Harness, {
+          options: { ...options, client: clientWith(vi.fn().mockResolvedValue({})) }
+        })
+      )
+    })
+    await act(async () => opening)
+
+    expect(setActionError).not.toHaveBeenCalledWith('Client closed')
+    expect(mocks.triggerError).not.toHaveBeenCalled()
+  })
+
+  it('does not show an old branch preview error after the same worktree adopts a new client', async () => {
+    const pending = deferred<RpcResponse>()
+    const options = makeOptions({
+      client: clientWith(vi.fn().mockReturnValue(pending.promise)),
+      branchCompareState: {
+        kind: 'ready',
+        result: {
+          summary: {
+            status: 'ready',
+            baseRef: 'main',
+            baseOid: 'base',
+            compareRef: 'HEAD',
+            headOid: 'head',
+            mergeBase: 'base',
+            changedFiles: 1
+          },
+          entries: [{ path: 'src/example.ts', status: 'modified' }]
+        }
+      }
+    })
+    mount(options)
+    let opening!: Promise<void>
+    await act(async () => {
+      opening = openers!.openBranchDiff({ path: 'src/example.ts', status: 'modified' })
+    })
+
+    act(() => {
+      pending.reject(new Error('Client closed'))
+      renderer!.update(
+        createElement(Harness, {
+          options: { ...options, client: clientWith(vi.fn().mockResolvedValue({})) }
+        })
+      )
+    })
+    await act(async () => opening)
+
+    expect(openers!.branchDiffPreview).not.toMatchObject({
+      kind: 'error',
+      message: 'Client closed'
+    })
+    expect(mocks.triggerError).not.toHaveBeenCalled()
+  })
+
+  it('does not accept an old response after disconnected and connected visits to the same client', async () => {
+    const pending = deferred<RpcResponse>()
+    const options = makeOptions({ client: clientWith(vi.fn().mockReturnValue(pending.promise)) })
+    mount(options)
+    let opening!: Promise<void>
+    await act(async () => {
+      opening = openers!.openFile(statusEntry())
+    })
+    act(() => {
+      renderer!.update(
+        createElement(Harness, { options: { ...options, connState: 'disconnected' } })
+      )
+    })
+    act(() => {
+      renderer!.update(createElement(Harness, { options }))
+    })
+    await act(async () => {
+      pending.resolve(rendererUnavailable())
+      await opening
+    })
+    expect(mocks.replace).not.toHaveBeenCalled()
+    expect(mocks.push).not.toHaveBeenCalled()
+  })
+
+  it('does not release a new client opening when an old same-path request settles', async () => {
+    const oldPending = deferred<RpcResponse>()
+    const newPending = deferred<RpcResponse>()
+    const oldOptions = makeOptions({
+      client: clientWith(vi.fn().mockReturnValue(oldPending.promise))
+    })
+    mount(oldOptions)
+    let oldOpening!: Promise<void>
+    await act(async () => {
+      oldOpening = openers!.openFile(statusEntry())
+    })
+    act(() => {
+      renderer!.update(
+        createElement(Harness, {
+          options: {
+            ...oldOptions,
+            client: clientWith(vi.fn().mockReturnValue(newPending.promise))
+          }
+        })
+      )
+    })
+    let newOpening!: Promise<void>
+    await act(async () => {
+      newOpening = openers!.openFile(statusEntry())
+    })
+    await act(async () => {
+      oldPending.reject(new Error('Client closed'))
+      await oldOpening
+    })
+    expect(openers!.openingPath).toBe('src/example.ts')
+    await act(async () => {
+      newPending.resolve({
+        id: 'request',
+        ok: true,
+        result: {},
+        _meta: { runtimeId: 'host' }
+      })
+      await newOpening
+    })
+    expect(openers!.openingPath).toBeNull()
   })
 })

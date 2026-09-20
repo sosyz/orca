@@ -51,22 +51,27 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
   })
   const currentStatusIdentityRef = useRef('')
   const currentBranchCompareIdentityRef = useRef('')
+  const currentClientRef = useRef(client)
   const loadGenerationRef = useRef(0)
   const branchCompareGenerationRef = useRef(0)
   const mountedRef = useRef(true)
   const statusLoadInFlightRef = useRef<StatusLoadInFlight | null>(null)
-  // Why: the same route can be reused for another worktree/host (identity change);
-  // a kept-on-failure `ready` state would otherwise show the previous worktree's
-  // data until the fresh load resolves. Reset to loading in the render phase (the
-  // React "adjust state on prop change" pattern) before the new load runs.
-  const lastResetIdentityRef = useRef(statusIdentityKey)
-  if (lastResetIdentityRef.current !== statusIdentityKey) {
-    lastResetIdentityRef.current = statusIdentityKey
+  // Clear old source data before a replacement connection can expose actions.
+  const lastResetSourceRef = useRef({ statusIdentityKey, client })
+  if (
+    lastResetSourceRef.current.statusIdentityKey !== statusIdentityKey ||
+    lastResetSourceRef.current.client !== client
+  ) {
+    lastResetSourceRef.current = { statusIdentityKey, client }
+    loadGenerationRef.current += 1
+    branchCompareGenerationRef.current += 1
     setScreenState({ kind: 'loading' })
     setBranchCompareState({ kind: 'idle' })
   }
+  const source = lastResetSourceRef.current
   currentStatusIdentityRef.current = statusIdentityKey
   currentBranchCompareIdentityRef.current = statusIdentityKey
+  currentClientRef.current = client
 
   const setRootRef = useCallback((node: View | null): void => {
     if (node !== null) {
@@ -88,7 +93,8 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
       const isCurrentLoad = () =>
         mountedRef.current &&
         branchCompareGenerationRef.current === generation &&
-        currentBranchCompareIdentityRef.current === loadKey
+        currentBranchCompareIdentityRef.current === loadKey &&
+        currentClientRef.current === client
 
       if (!worktreeId || !client || connState !== 'connected') {
         if (isCurrentLoad()) {
@@ -161,6 +167,9 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
   const loadStatus = useCallback(
     async (options?: LoadStatusOptions) => {
       const loadKey = statusIdentityKey
+      if (!mountedRef.current || lastResetSourceRef.current !== source) {
+        return false
+      }
       const inFlight = statusLoadInFlightRef.current
       if (inFlight && !options?.force && inFlight.key === loadKey && inFlight.client === client) {
         return await inFlight.promise
@@ -172,7 +181,8 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
         const isCurrentLoad = () =>
           mountedRef.current &&
           loadGenerationRef.current === generation &&
-          currentStatusIdentityRef.current === loadKey
+          currentStatusIdentityRef.current === loadKey &&
+          currentClientRef.current === client
         if (!worktreeId) {
           if (isCurrentLoad()) {
             setScreenState({ kind: 'loading' })
@@ -265,6 +275,7 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
       connState,
       loadBranchCompare,
       onStatusLoadSuccess,
+      source,
       statusIdentityKey,
       worktreeId,
       setActionError

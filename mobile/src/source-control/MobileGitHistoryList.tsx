@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
@@ -60,17 +60,23 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
   const [expanded, setExpanded] = useState<string | null>(null)
   const [filesById, setFilesById] = useState<Record<string, CommitFilesState>>({})
   const scopeKey = `${hostId}\0${worktreeId}`
-  const liveScopeKeyRef = useRef(scopeKey)
-  liveScopeKeyRef.current = scopeKey
+  const [source, setSource] = useState({ client, scopeKey })
+  const liveSourceRef = useRef<typeof source | null>(null)
 
-  // Host or worktree identity change must wipe history immediately — even while
-  // disconnected — so a kept-mounted hub segment never shows another tree's commits.
-  useEffect(() => {
+  // Reset before children render so old expanded commits cannot be requested from a new client.
+  if (source.client !== client || source.scopeKey !== scopeKey) {
+    setSource({ client, scopeKey })
     setRows(null)
     setError(null)
     setExpanded(null)
     setFilesById({})
-  }, [hostId, worktreeId])
+  }
+  useLayoutEffect(() => {
+    liveSourceRef.current = source
+    return () => {
+      liveSourceRef.current = null
+    }
+  }, [source])
 
   useEffect(() => {
     let active = true
@@ -79,18 +85,17 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
       // resolveMobileHistoryScreenView keeps them visible (STA-1511).
       return
     }
-    const requestScopeKey = scopeKey
     // Why (F10): clear only the error (it wins render precedence, so a stale one would outlive a
     // successful retry) — the loaded rows stay up until fresh ones land instead of flashing empty.
     setError(null)
     void (async () => {
       try {
         const result = await fetchMobileGitHistory(client, worktreeId)
-        if (active && requestScopeKey === liveScopeKeyRef.current) {
+        if (active && source === liveSourceRef.current) {
           setRows(mapMobileCommitRows(result, Date.now()))
         }
       } catch (err) {
-        if (active && requestScopeKey === liveScopeKeyRef.current) {
+        if (active && source === liveSourceRef.current) {
           setError(err instanceof Error ? err.message : 'Failed to load history')
         }
       }
@@ -98,9 +103,12 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     return () => {
       active = false
     }
-  }, [client, connState, reloadNonce, refreshNonce, scopeKey, worktreeId])
+  }, [client, connState, reloadNonce, refreshNonce, source, worktreeId])
 
   const retry = useCallback(() => {
+    if (source !== liveSourceRef.current) {
+      return
+    }
     setError(null)
     // Why: retrying the fetch is useless while the transport's reconnect loop
     // is parked at its backoff cap — revive the connection instead (mirrors
@@ -111,14 +119,22 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
       return
     }
     setReloadNonce((n) => n + 1)
-  }, [connState, forceReconnect, hostId])
+  }, [connState, forceReconnect, hostId, source])
 
-  const toggleCommit = useCallback((row: MobileCommitRow) => {
-    setExpanded((current) => (current === row.id ? null : row.id))
-  }, [])
+  const toggleCommit = useCallback(
+    (row: MobileCommitRow) => {
+      if (source === liveSourceRef.current) {
+        setExpanded((current) => (current === row.id ? null : row.id))
+      }
+    },
+    [source]
+  )
 
   const retryCommitFiles = useCallback(
     (commitId: string) => {
+      if (source !== liveSourceRef.current) {
+        return
+      }
       setFilesById((prev) => ({
         ...prev,
         [commitId]: { kind: 'loading', entries: prev[commitId]?.entries }
@@ -129,7 +145,7 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
       }
       setFilesReloadNonce((n) => n + 1)
     },
-    [connState, forceReconnect, hostId]
+    [connState, forceReconnect, hostId, source]
   )
 
   // Why (F10): the expanded commit's files load here, not in the tap handler, so a row expanded
@@ -139,19 +155,18 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
       return
     }
     const commitId = expanded
-    const requestScopeKey = scopeKey
     let stale = false
     setFilesById((prev) => (prev[commitId] ? prev : { ...prev, [commitId]: { kind: 'loading' } }))
     void client
       .sendRequest('git.commitCompare', { worktree: `id:${worktreeId}`, commitId })
       .then((response) => {
         const entries = commitCompareEntries(response)
-        if (!stale && requestScopeKey === liveScopeKeyRef.current) {
+        if (!stale && source === liveSourceRef.current) {
           setFilesById((prev) => ({ ...prev, [commitId]: { kind: 'loaded', entries } }))
         }
       })
       .catch((err) => {
-        if (!stale && requestScopeKey === liveScopeKeyRef.current) {
+        if (!stale && source === liveSourceRef.current) {
           setFilesById((prev) => ({
             ...prev,
             [commitId]: {
@@ -165,7 +180,7 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     return () => {
       stale = true
     }
-  }, [client, connState, expanded, filesReloadNonce, scopeKey, worktreeId])
+  }, [client, connState, expanded, filesReloadNonce, source, worktreeId])
 
   const connected = client !== null && connState === 'connected'
 

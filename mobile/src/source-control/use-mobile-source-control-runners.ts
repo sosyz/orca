@@ -1,11 +1,13 @@
 import { useCallback, type MutableRefObject } from 'react'
 import { useRouter } from 'expo-router'
 import type { RpcClient } from '../transport/rpc-client'
+import type { ConnectionState } from '../transport/types'
 import { triggerError, triggerSuccess } from '../platform/haptics'
 import { useMobileCommitMessageGeneration } from './use-mobile-commit-message-generation'
 import { useMobileSourceControlCommitRunners } from './use-mobile-source-control-commit-runners'
 import { useMobileSourceControlActionSheetRunners } from './use-mobile-source-control-action-sheet-runners'
 import { useMobileCreatePrRunner } from './use-mobile-create-pr-runner'
+import { useMobileSourceControlWorkflowOwner } from './use-mobile-source-control-workflow-owner'
 import type { RuntimeGitLocalBranches } from '../../../src/shared/runtime-types'
 import type { MobileGitStatusResult } from './mobile-git-status'
 import type { LoadStatusOptions } from './mobile-source-control-screen-state'
@@ -19,6 +21,7 @@ type SendGitRequest = <T>(method: string, params?: Record<string, unknown>) => P
 
 type Params = {
   client: RpcClient | null
+  connState: ConnectionState
   hostId: string
   worktreeId: string
   status: MobileGitStatusResult | null
@@ -55,13 +58,13 @@ type Params = {
 export function useMobileSourceControlRunners(params: Params) {
   const {
     client,
+    connState,
     hostId,
     worktreeId,
     status,
     branchLabel,
     commitMessage,
     stagedEntries,
-    generatingMessage,
     stageablePaths,
     unstageablePaths,
     router,
@@ -83,6 +86,15 @@ export function useMobileSourceControlRunners(params: Params) {
     recordCommitFailure,
     onOpenHistory
   } = params
+  const { isCurrentOwner, claimBusy, releaseBusy } = useMobileSourceControlWorkflowOwner({
+    client,
+    connState,
+    hostId,
+    worktreeId,
+    mountedRef,
+    busyActionRef,
+    setBusyAction
+  })
 
   const runGitWorkflow = useCallback(
     async (
@@ -90,16 +102,15 @@ export function useMobileSourceControlRunners(params: Params) {
       runner: () => Promise<void>,
       options?: { clearCommitMessage?: boolean }
     ) => {
-      if (busyActionRef.current) {
+      const claim = claimBusy(actionId)
+      if (!claim) {
         return false
       }
-      busyActionRef.current = actionId
-      setBusyAction(actionId)
       setActionError(null)
       recordCommitFailure(null)
       try {
         await runner()
-        if (!mountedRef.current) {
+        if (!isCurrentOwner()) {
           return false
         }
         if (options?.clearCommitMessage) {
@@ -107,40 +118,32 @@ export function useMobileSourceControlRunners(params: Params) {
         }
         triggerSuccess()
         await loadStatus({ preserveReadyOnFailure: true, force: true })
-        return true
+        return isCurrentOwner()
       } catch (err) {
-        if (!mountedRef.current) {
+        if (!isCurrentOwner()) {
           return false
         }
         triggerError()
         setActionError(err instanceof Error ? err.message : 'Source control action failed')
         return false
       } finally {
-        if (busyActionRef.current === actionId) {
-          busyActionRef.current = null
-          if (mountedRef.current) {
-            setBusyAction(null)
-          }
-        }
+        releaseBusy(claim)
       }
     },
     [
-      busyActionRef,
+      claimBusy,
+      isCurrentOwner,
       loadStatus,
-      mountedRef,
       recordCommitFailure,
+      releaseBusy,
       setActionError,
-      setBusyAction,
       setCommitMessage
     ]
   )
 
   const runGitAction = useCallback(
-    async (actionId: string, method: string, p: Record<string, unknown>) => {
-      return await runGitWorkflow(actionId, async () => {
-        await sendGitRequest<unknown>(method, p)
-      })
-    },
+    (actionId: string, method: string, p: Record<string, unknown>) =>
+      runGitWorkflow(actionId, () => sendGitRequest<void>(method, p)),
     [runGitWorkflow, sendGitRequest]
   )
 
@@ -165,17 +168,15 @@ export function useMobileSourceControlRunners(params: Params) {
   )
 
   const stageAll = useCallback(async () => {
-    if (stageablePaths.length === 0) {
-      return
+    if (stageablePaths.length > 0) {
+      await runGitAction('stage-all', 'git.bulkStage', { filePaths: stageablePaths })
     }
-    await runGitAction('stage-all', 'git.bulkStage', { filePaths: stageablePaths })
   }, [runGitAction, stageablePaths])
 
   const unstageAll = useCallback(async () => {
-    if (unstageablePaths.length === 0) {
-      return
+    if (unstageablePaths.length > 0) {
+      await runGitAction('unstage-all', 'git.bulkUnstage', { filePaths: unstageablePaths })
     }
-    await runGitAction('unstage-all', 'git.bulkUnstage', { filePaths: unstageablePaths })
   }, [runGitAction, unstageablePaths])
 
   const { commit, runCommitSequence, runCommitSyncSequence } = useMobileSourceControlCommitRunners({
@@ -186,9 +187,9 @@ export function useMobileSourceControlRunners(params: Params) {
     runGitSyncSteps,
     runGitWorkflow,
     loadStatus,
-    mountedRef,
-    busyActionRef,
-    setBusyAction,
+    isCurrentOwner,
+    claimBusy,
+    releaseBusy,
     setActionError,
     setCommitMessage,
     recordCommitFailure
@@ -196,8 +197,8 @@ export function useMobileSourceControlRunners(params: Params) {
 
   const { generateCommitMessage, cancelGenerateCommitMessage } = useMobileCommitMessageGeneration({
     client,
+    commitMessage,
     worktreeId,
-    generatingMessage,
     mountedRef,
     busyActionRef,
     setGeneratingMessage,
@@ -212,7 +213,7 @@ export function useMobileSourceControlRunners(params: Params) {
     branchLabel,
     commitMessage,
     stagedEntries,
-    mountedRef,
+    isCurrentOwner,
     runGitWorkflow,
     loadStatus,
     setActionError,
@@ -230,19 +231,19 @@ export function useMobileSourceControlRunners(params: Params) {
     if (client) {
       void sendGitRequest<RuntimeGitLocalBranches>('git.localBranches')
         .then((result) => {
-          if (mountedRef.current) {
+          if (isCurrentOwner()) {
             setLocalBranches(result)
           }
         })
         .catch(() => {
-          if (mountedRef.current) {
+          if (isCurrentOwner()) {
             setLocalBranches({ current: null, branches: [] })
           }
         })
     }
   }, [
     client,
-    mountedRef,
+    isCurrentOwner,
     sendGitRequest,
     setLocalBranches,
     setShowActionSheet,
@@ -256,9 +257,7 @@ export function useMobileSourceControlRunners(params: Params) {
     // /history route) so deep links land in one hop.
     if (onOpenHistory) {
       onOpenHistory()
-      return
-    }
-    if (hostId && worktreeId) {
+    } else if (hostId && worktreeId) {
       router.push({
         pathname: '/h/[hostId]/source-control/[worktreeId]',
         params: {
@@ -289,6 +288,7 @@ export function useMobileSourceControlRunners(params: Params) {
     commit,
     runCommitSequence,
     runCommitSyncSequence,
+    isCurrentOwner,
     setShowActionSheet
   })
 

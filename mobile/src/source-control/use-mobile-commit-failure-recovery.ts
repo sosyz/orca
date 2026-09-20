@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import type { ConnectionState } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
-import { triggerError, triggerSuccess } from '../platform/haptics'
-import { createTerminalAndSendPrompt } from '../session/pr-ai-triage-launch'
+import { useMobileTerminalPromptLaunch } from '../session/use-mobile-terminal-prompt-launch'
 import {
   buildFixCommitFailurePrompt,
   type MobileCommitFailureRecovery,
@@ -18,13 +17,13 @@ type Params = {
 }
 
 export function useMobileCommitFailureRecovery({ client, connState, worktreeId, failure }: Params) {
-  const [launching, setLaunching] = useState(false)
-  const [launchError, setLaunchError] = useState<string | null>(null)
+  const launcher = useMobileTerminalPromptLaunch<'commit-failure'>({
+    client,
+    connState,
+    worktreeId,
+    target: failure
+  })
   const summary = useMemo(() => (failure ? summarizeCommitFailure(failure.error) : null), [failure])
-
-  useEffect(() => {
-    setLaunchError(null)
-  }, [failure])
 
   const hasDetails = useMemo(
     () => (failure && summary ? hasExpandedCommitFailureDetails(failure.error, summary) : false),
@@ -44,35 +43,19 @@ export function useMobileCommitFailureRecovery({ client, connState, worktreeId, 
     [failure, summary]
   )
 
+  const launchPrompt = launcher.launch
   const launch = useCallback(async (): Promise<boolean> => {
-    if (launching || !prompt) {
+    if (!prompt) {
       return false
     }
-    if (!client || connState !== 'connected') {
-      setLaunchError('Waiting for desktop...')
-      triggerError()
-      return false
-    }
-    setLaunching(true)
-    setLaunchError(null)
-    try {
-      await createTerminalAndSendPrompt(client, worktreeId, prompt)
-      triggerSuccess()
-      return true
-    } catch (err) {
-      triggerError()
-      setLaunchError(err instanceof Error ? err.message : 'Failed to launch agent')
-      return false
-    } finally {
-      setLaunching(false)
-    }
-  }, [client, connState, launching, prompt, worktreeId])
+    return launchPrompt('commit-failure', () => prompt)
+  }, [launchPrompt, prompt])
 
   return {
     summary,
     hasDetails,
-    launching,
-    launchError,
+    launching: launcher.isBusy('commit-failure'),
+    launchError: launcher.error,
     launch
   }
 }

@@ -44,5 +44,10 @@ export async function cancelMobileCommitMessage(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string
 ): Promise<void> {
-  await client.sendRequest('git.cancelGenerateCommitMessage', { worktree: `id:${worktreeId}` })
+  const response = await client.sendRequest('git.cancelGenerateCommitMessage', {
+    worktree: `id:${worktreeId}`
+  })
+  if (!response.ok) {
+    throw new Error(response.error?.message || 'Failed to cancel generation')
+  }
 }
