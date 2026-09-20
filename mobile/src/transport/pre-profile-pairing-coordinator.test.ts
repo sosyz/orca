@@ -96,7 +96,7 @@ function dependencies(client: RpcClient, events: string[]) {
   ;(unavailableRelay.sendRequest as ReturnType<typeof vi.fn>).mockRejectedValue(
     new Error('relay unavailable')
   )
-  return {
+  const deps = {
     connectDirect: vi.fn(
       (..._args: Parameters<typeof connect>) => (events.push('connect'), client)
     ),
@@ -125,6 +125,15 @@ function dependencies(client: RpcClient, events: string[]) {
     }),
     now: () => now,
     platform: 'ios'
+  }
+  return {
+    ...deps,
+    saveHostWithRelayCredential: vi.fn(
+      async (host: HostProfile, writeCredential: () => Promise<void>) => {
+        await writeCredential()
+        await deps.saveHost(host)
+      }
+    )
   }
 }
 
@@ -459,6 +468,85 @@ describe('pre-profile pairing coordinator', () => {
 
     await expect(attempt.result).rejects.toThrow(/cancelled/)
     expect(client.close).toHaveBeenCalledOnce()
+    expect(deps.saveHost).not.toHaveBeenCalled()
+  })
+
+  it('removes its relay journal when cancelled while the journal write is pending', async () => {
+    let finishJournalWrite!: () => void
+    const journalWrite = new Promise<void>((resolve) => (finishJournalWrite = resolve))
+    const deps = dependencies(fakeClient([]), [])
+    deps.saveJournal.mockImplementation(() => journalWrite)
+
+    const attempt = startPreProfilePairing({
+      offer: relayOffer,
+      timeoutMs: 5_000,
+      dependencies: deps
+    })
+    await vi.waitFor(() => expect(deps.saveJournal).toHaveBeenCalledOnce())
+    const journal = deps.saveJournal.mock.calls[0]![0]
+    attempt.dispose()
+    finishJournalWrite()
+
+    await expect(attempt.result).rejects.toThrow(/cancelled/)
+    expect(deps.clearJournal).toHaveBeenCalledExactlyOnceWith(journal.metadata.journalId)
+    expect(deps.connectDirect).not.toHaveBeenCalled()
+  })
+
+  it('does not provision after cancellation during journal authorization update', async () => {
+    let finishUpdate!: () => void
+    const update = new Promise<void>((resolve) => (finishUpdate = resolve))
+    const client = fakeClient([success({ version: '1.0.0' })])
+    const deps = dependencies(client, [])
+    deps.updateJournal.mockImplementation(() => update)
+
+    const attempt = startPreProfilePairing({
+      offer: relayOffer,
+      timeoutMs: 5_000,
+      dependencies: deps
+    })
+    await vi.waitFor(() => expect(deps.updateJournal).toHaveBeenCalledOnce())
+    const journal = deps.saveJournal.mock.calls[0]![0]
+    attempt.dispose()
+    finishUpdate()
+
+    await expect(attempt.result).rejects.toThrow(/cancelled/)
+    expect(client.sendRequest).not.toHaveBeenCalledWith('pairing.provisionRelay', expect.anything())
+    expect(deps.clearJournal).toHaveBeenCalledExactlyOnceWith(journal.metadata.journalId)
+    expect(deps.saveHost).not.toHaveBeenCalled()
+  })
+
+  it('retains its journal when cancelled after provisioning was dispatched', async () => {
+    let finishProvision!: (response: RpcResponse) => void
+    const provision = new Promise<RpcResponse>((resolve) => (finishProvision = resolve))
+    const client = fakeClient([])
+    ;(client.sendRequest as ReturnType<typeof vi.fn>).mockImplementation((method: string) =>
+      method === 'status.get' ? Promise.resolve(success({ version: '1.0.0' })) : provision
+    )
+    const deps = dependencies(client, [])
+
+    const attempt = startPreProfilePairing({
+      offer: relayOffer,
+      timeoutMs: 5_000,
+      dependencies: deps
+    })
+    await vi.waitFor(() =>
+      expect(client.sendRequest).toHaveBeenCalledWith('pairing.provisionRelay', expect.anything())
+    )
+    const journal = deps.saveJournal.mock.calls[0]![0]
+    attempt.dispose()
+    finishProvision(
+      success({
+        v: 1,
+        reqId: journal.metadata.installReqId,
+        authorizationMode: 'authenticated-direct',
+        currentVersion: 1,
+        resumeExpiresAt: now + 86_400_000
+      })
+    )
+
+    await expect(attempt.result).rejects.toThrow(/cancelled/)
+    expect(client.sendRequest).not.toHaveBeenCalledWith('pairing.getEndpoints', expect.anything())
+    expect(deps.clearJournal).not.toHaveBeenCalled()
     expect(deps.saveHost).not.toHaveBeenCalled()
   })
 })

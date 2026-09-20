@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
+import { hashMobileRelayCredential } from './mobile-relay-credential-hash'
 import { createMobileRelayPairingJournal } from './mobile-relay-pairing-journal'
 import {
   recoverMobileRelayPairing,
   resetMobileRelayPairingRecoveryForTests
 } from './mobile-relay-pairing-recovery'
 import type { PairingCandidateClient } from './mobile-relay-physical-client'
-import type { PairingOffer, RpcResponse } from './types'
+import type { HostProfile, PairingOffer, RpcResponse } from './types'
 
 vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }))
 vi.mock('expo-crypto', () => ({ getRandomBytes: vi.fn() }))
@@ -93,7 +94,7 @@ function dependencies(args: {
   connectRelay: ReturnType<typeof vi.fn>
   bundle?: MobileRelayCredentialBundle | null
 }) {
-  return {
+  const deps = {
     loadJournal: vi.fn(async () => args.journal),
     updateJournal: vi.fn(async (_id, update) => {
       Object.assign(args.journal.metadata, update(args.journal.metadata))
@@ -101,8 +102,9 @@ function dependencies(args: {
     clearJournal: vi.fn(async () => {}),
     readCredentialBundle: vi.fn(async () => args.bundle ?? null),
     writeCredentialBundle: vi.fn(async () => {}),
-    loadHosts: vi.fn(async () => []),
-    saveHost: vi.fn(async () => {}),
+    getHostPairingEpoch: vi.fn(() => 0),
+    loadHosts: vi.fn(async (): Promise<HostProfile[]> => []),
+    saveExistingHostRelayUpgrade: vi.fn(async () => {}),
     connectRelay: args.connectRelay,
     resolveInviteDirector: vi.fn(async () => {
       throw new Error('director not needed')
@@ -110,11 +112,499 @@ function dependencies(args: {
     now: () => now,
     platform: 'ios'
   }
+  return {
+    ...deps,
+    saveHostWithRelayCredential: vi.fn(
+      async (_host: HostProfile, writeCredential: () => Promise<void>) => {
+        await writeCredential()
+      }
+    )
+  }
 }
 
 describe('mobile relay pairing recovery', () => {
   beforeEach(() => {
     resetMobileRelayPairingRecoveryForTests()
+  })
+
+  it.each([
+    { storedToken: 'old-device-token', storedHash: 'pending' },
+    { storedToken: offer.deviceToken, storedHash: 'D'.repeat(43) }
+  ])(
+    'reconciles a same-id pairing instead of clearing its journal with $storedToken',
+    async ({ storedToken, storedHash }) => {
+      const saved = journal()
+      const committed = installed(saved, 'authenticated-direct')
+      const connected = client(async () =>
+        response(endpoints(saved, { state: 'committed', result: committed }))
+      )
+      const deps = dependencies({
+        journal: saved,
+        connectRelay: vi.fn(() => connected),
+        bundle: {
+          v: 1,
+          hostId: saved.metadata.host.id,
+          deviceToken: saved.secrets.deviceToken,
+          current: {
+            token: 'C'.repeat(43),
+            hash: storedHash === 'pending' ? saved.metadata.pendingResumeTokenHash : storedHash,
+            version: 1,
+            expiresAt: now + 60_000
+          }
+        }
+      })
+      let publishedHost: HostProfile = {
+        id: saved.metadata.host.id,
+        name: 'Old host',
+        endpoint: offer.endpoint,
+        publicKeyB64: offer.publicKeyB64,
+        deviceToken: storedToken,
+        lastConnected: 0,
+        relayHostId: offer.relay.relayHostId
+      }
+      deps.saveHostWithRelayCredential.mockImplementation(async (host, writeCredential) => {
+        await writeCredential()
+        publishedHost = host
+      })
+
+      await expect(recoverMobileRelayPairing(deps)).resolves.toBe('recovered')
+      expect(deps.connectRelay).toHaveBeenCalled()
+      expect(deps.saveHostWithRelayCredential).toHaveBeenCalledOnce()
+      expect(publishedHost.deviceToken).toBe(saved.secrets.deviceToken)
+      expect(publishedHost.relayHostId).toBe(offer.relay.relayHostId)
+      expect(deps.clearJournal).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('replaces a stale relay overlay before clearing a journal for a matching credential', async () => {
+    const saved = journal()
+    const committed = installed(saved, 'authenticated-direct')
+    const currentRelay = {
+      ...endpoints(saved, { state: 'committed', result: committed }).relay,
+      cellUrl: 'https://relay-c2.onorca.dev',
+      assignmentEpoch: 8
+    }
+    const connected = client(async () =>
+      response({
+        ...endpoints(saved, { state: 'committed', result: committed }),
+        relay: currentRelay
+      })
+    )
+    const deps = dependencies({
+      journal: saved,
+      connectRelay: vi.fn(() => connected),
+      bundle: {
+        v: 1,
+        hostId: saved.metadata.host.id,
+        deviceToken: saved.secrets.deviceToken,
+        current: {
+          token: saved.secrets.pendingResumeToken,
+          hash: saved.metadata.pendingResumeTokenHash,
+          version: 1,
+          expiresAt: now + 60_000
+        }
+      }
+    })
+    let publishedHost: HostProfile = {
+      ...saved.metadata.host,
+      deviceToken: saved.secrets.deviceToken,
+      relayHostId: offer.relay.relayHostId,
+      relay: endpoints(saved, { state: 'committed', result: committed }).relay,
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: offer.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay-c1.onorca.dev' }
+      ]
+    }
+    deps.loadHosts.mockImplementation(async () => [publishedHost])
+    deps.saveExistingHostRelayUpgrade.mockImplementation(async (host) => {
+      publishedHost = host
+    })
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('recovered')
+    expect(deps.connectRelay).toHaveBeenCalledOnce()
+    expect(publishedHost.relay).toEqual(currentRelay)
+    expect(deps.saveExistingHostRelayUpgrade).toHaveBeenCalledOnce()
+    expect(deps.saveHostWithRelayCredential).not.toHaveBeenCalled()
+    expect(deps.writeCredentialBundle).not.toHaveBeenCalled()
+    expect(deps.clearJournal).toHaveBeenCalledOnce()
+  })
+
+  it('keeps edited host metadata when journal clearing fails after relay publication', async () => {
+    const saved = journal()
+    const committed = installed(saved, 'authenticated-direct')
+    const currentRelay = {
+      ...endpoints(saved, { state: 'committed', result: committed }).relay,
+      cellUrl: 'https://relay-c2.onorca.dev',
+      assignmentEpoch: 8
+    }
+    const connected = client(async () =>
+      response({
+        ...endpoints(saved, { state: 'committed', result: committed }),
+        relay: currentRelay
+      })
+    )
+    const unavailableInvite = client(async () => {
+      throw new Error('invite unavailable')
+    })
+    const deps = dependencies({
+      journal: saved,
+      connectRelay: vi.fn((args) => (args.credential ? connected : unavailableInvite)),
+      bundle: {
+        v: 1,
+        hostId: saved.metadata.host.id,
+        deviceToken: saved.secrets.deviceToken,
+        current: {
+          token: saved.secrets.pendingResumeToken,
+          hash: saved.metadata.pendingResumeTokenHash,
+          version: committed.currentVersion,
+          expiresAt: now + 60_000
+        }
+      }
+    })
+    let publishedHost: HostProfile = {
+      ...saved.metadata.host,
+      name: 'My edited desktop',
+      endpoint: 'ws://192.168.1.20:6768',
+      deviceToken: saved.secrets.deviceToken,
+      relayHostId: offer.relay.relayHostId,
+      relay: endpoints(saved, { state: 'committed', result: committed }).relay,
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: 'ws://192.168.1.20:6768' },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay-c1.onorca.dev' }
+      ]
+    }
+    deps.loadHosts.mockImplementation(async () => [publishedHost])
+    deps.saveExistingHostRelayUpgrade.mockImplementation(async (host) => {
+      publishedHost = host
+    })
+    deps.clearJournal.mockRejectedValueOnce(new Error('journal unavailable'))
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')
+    expect(publishedHost).toMatchObject({
+      name: 'My edited desktop',
+      endpoint: 'ws://192.168.1.20:6768',
+      relay: currentRelay
+    })
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('recovered')
+    expect(publishedHost.name).toBe('My edited desktop')
+    expect(publishedHost.endpoint).toBe('ws://192.168.1.20:6768')
+    expect(deps.saveHostWithRelayCredential).not.toHaveBeenCalled()
+    expect(deps.writeCredentialBundle).not.toHaveBeenCalled()
+    expect(deps.saveExistingHostRelayUpgrade).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not claim a newer pairing epoch while loading the existing host', async () => {
+    const saved = journal()
+    const committed = installed(saved, 'authenticated-direct')
+    const connected = client(async () =>
+      response(endpoints(saved, { state: 'committed', result: committed }))
+    )
+    const deps = dependencies({ journal: saved, connectRelay: vi.fn(() => connected) })
+    let epoch = 1
+    let releaseHostRead: () => void = () => {}
+    const hostRead = new Promise<void>((resolve) => {
+      releaseHostRead = resolve
+    })
+    deps.getHostPairingEpoch.mockImplementation(() => epoch)
+    deps.loadHosts.mockImplementation(async () => {
+      await hostRead
+      return []
+    })
+
+    const recovery = recoverMobileRelayPairing(deps)
+    await vi.waitFor(() => expect(deps.loadHosts).toHaveBeenCalledOnce())
+    epoch = 2
+    releaseHostRead()
+
+    await expect(recovery).resolves.toBe('deferred')
+    expect(deps.saveHostWithRelayCredential).not.toHaveBeenCalled()
+    expect(deps.saveExistingHostRelayUpgrade).not.toHaveBeenCalled()
+    expect(deps.clearJournal).not.toHaveBeenCalled()
+  })
+
+  it('preserves a rotated credential while replaying a stranded pairing journal', async () => {
+    const saved = journal()
+    const committed = installed(saved, 'authenticated-direct')
+    const rotated: MobileRelayCredentialBundle = {
+      v: 1,
+      hostId: saved.metadata.host.id,
+      deviceToken: saved.secrets.deviceToken,
+      current: {
+        token: 'R'.repeat(43),
+        hash: 'S'.repeat(43),
+        version: committed.currentVersion + 1,
+        expiresAt: now + 120_000
+      },
+      grace: {
+        token: saved.secrets.pendingResumeToken,
+        hash: saved.metadata.pendingResumeTokenHash,
+        version: committed.currentVersion,
+        expiresAt: now + 60_000
+      }
+    }
+    const expiredGrace = client(async () => {
+      throw new Error('grace expired')
+    })
+    const connected = client(async () =>
+      response(endpoints(saved, { state: 'committed', result: committed }))
+    )
+    const connectRelay = vi.fn((args: { credential?: string }) =>
+      args.credential === saved.secrets.pendingResumeToken ? expiredGrace : connected
+    )
+    const deps = dependencies({
+      journal: saved,
+      connectRelay,
+      bundle: rotated
+    })
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('recovered')
+    expect(connectRelay.mock.calls.map(([args]) => args.credential)).toEqual([
+      saved.secrets.pendingResumeToken,
+      rotated.current.token
+    ])
+    expect(deps.saveHostWithRelayCredential).toHaveBeenCalledOnce()
+    expect(deps.writeCredentialBundle).not.toHaveBeenCalled()
+    expect(deps.clearJournal).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a server-confirmed current credential after two rotations past the stranded journal', async () => {
+    const saved = journal()
+    const committed = installed(saved, 'authenticated-direct')
+    const currentToken = 'R'.repeat(43)
+    let bundle: MobileRelayCredentialBundle = {
+      v: 1,
+      hostId: saved.metadata.host.id,
+      deviceToken: saved.secrets.deviceToken,
+      current: {
+        token: currentToken,
+        hash: hashMobileRelayCredential(currentToken),
+        version: committed.currentVersion + 2,
+        expiresAt: now + 120_000
+      },
+      grace: {
+        token: 'G'.repeat(43),
+        hash: hashMobileRelayCredential('G'.repeat(43)),
+        version: committed.currentVersion + 1,
+        expiresAt: now + 60_000
+      }
+    }
+    const newerBundle = bundle
+    const currentRelay = endpoints(saved, { state: 'committed', result: committed }).relay
+    const connected = client(async () =>
+      response({
+        ...endpoints(saved, { state: 'committed', result: committed }),
+        resumeConfirmation: {
+          v: 1,
+          reqId: saved.metadata.resumeConfirmReqId,
+          currentVersion: bundle.current.version,
+          acceptedAs: 'current',
+          renewed: false,
+          resumeExpiresAt: bundle.current.expiresAt
+        }
+      })
+    )
+    const rejectedPending = client(async () => {
+      throw new Error('old pairing token expired')
+    })
+    const deps = dependencies({
+      journal: saved,
+      connectRelay: vi.fn((args: { credential?: string }) =>
+        args.credential === currentToken ? connected : rejectedPending
+      ),
+      bundle
+    })
+    let host: HostProfile = {
+      ...saved.metadata.host,
+      name: 'Edited after pairing',
+      deviceToken: saved.secrets.deviceToken,
+      relayHostId: offer.relay.relayHostId,
+      relay: currentRelay,
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: offer.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay-c1.onorca.dev' }
+      ]
+    }
+    deps.loadHosts.mockImplementation(async () => [host])
+    deps.readCredentialBundle.mockImplementation(async () => bundle)
+    deps.writeCredentialBundle.mockImplementation(async (next) => {
+      bundle = next
+    })
+    deps.saveHostWithRelayCredential.mockImplementation(async (next, writeCredential) => {
+      await writeCredential()
+      host = next
+    })
+    deps.saveExistingHostRelayUpgrade.mockImplementation(async (next) => {
+      host = next
+    })
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('recovered')
+    expect(bundle).toEqual(newerBundle)
+    expect(host.name).toBe('Edited after pairing')
+    expect(deps.writeCredentialBundle).not.toHaveBeenCalled()
+    expect(deps.saveHostWithRelayCredential).not.toHaveBeenCalled()
+    expect(deps.saveExistingHostRelayUpgrade).toHaveBeenCalledOnce()
+    expect(deps.clearJournal).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { label: 'missing', confirmedVersion: null },
+    { label: 'different', confirmedVersion: 2 },
+    { label: 'mismatched hash', confirmedVersion: 3, storedHash: 'X'.repeat(43) },
+    { label: 'grace', confirmedVersion: 3, acceptedAs: 'grace' as const }
+  ])(
+    'defers a newer bundle with $label server version evidence',
+    async ({ confirmedVersion, storedHash, acceptedAs }) => {
+      const saved = journal()
+      const committed = installed(saved, 'authenticated-direct')
+      const currentToken = 'R'.repeat(43)
+      const bundle: MobileRelayCredentialBundle = {
+        v: 1,
+        hostId: saved.metadata.host.id,
+        deviceToken: saved.secrets.deviceToken,
+        current: {
+          token: currentToken,
+          hash: storedHash ?? hashMobileRelayCredential(currentToken),
+          version: 3,
+          expiresAt: now + 120_000
+        }
+      }
+      const connected = client(async () =>
+        response({
+          ...endpoints(saved, { state: 'committed', result: committed }),
+          ...(confirmedVersion === null
+            ? {}
+            : {
+                resumeConfirmation: {
+                  v: 1,
+                  reqId: saved.metadata.resumeConfirmReqId,
+                  currentVersion: confirmedVersion,
+                  acceptedAs: acceptedAs ?? 'current',
+                  renewed: false,
+                  resumeExpiresAt: now + 120_000
+                }
+              })
+        })
+      )
+      const deps = dependencies({
+        journal: saved,
+        connectRelay: vi.fn((args: { credential?: string }) =>
+          args.credential === currentToken
+            ? connected
+            : client(async () => {
+                throw new Error('old credential unavailable')
+              })
+        ),
+        bundle
+      })
+
+      await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')
+      expect(deps.writeCredentialBundle).not.toHaveBeenCalled()
+      expect(deps.saveHostWithRelayCredential).not.toHaveBeenCalled()
+      expect(deps.clearJournal).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not mistake another device bundle for a confirmed rotation of this pairing', async () => {
+    const saved = journal()
+    const committed = installed(saved, 'authenticated-direct')
+    const foreignBundle: MobileRelayCredentialBundle = {
+      v: 1,
+      hostId: saved.metadata.host.id,
+      deviceToken: 'previous-device-token',
+      current: {
+        token: 'R'.repeat(43),
+        hash: hashMobileRelayCredential('R'.repeat(43)),
+        version: 3,
+        expiresAt: now + 120_000
+      }
+    }
+    const connected = client(async () =>
+      response({
+        ...endpoints(saved, { state: 'committed', result: committed }),
+        resumeConfirmation: {
+          v: 1,
+          reqId: saved.metadata.resumeConfirmReqId,
+          currentVersion: 3,
+          acceptedAs: 'current',
+          renewed: false,
+          resumeExpiresAt: now + 120_000
+        }
+      })
+    )
+    const deps = dependencies({
+      journal: saved,
+      connectRelay: vi.fn(() => connected),
+      bundle: foreignBundle
+    })
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('recovered')
+    expect(deps.connectRelay).toHaveBeenCalledOnce()
+    expect(deps.connectRelay).toHaveBeenCalledWith(
+      expect.objectContaining({ credential: saved.secrets.pendingResumeToken })
+    )
+    expect(deps.saveExistingHostRelayUpgrade).not.toHaveBeenCalled()
+    expect(deps.saveHostWithRelayCredential).toHaveBeenCalledOnce()
+    expect(deps.writeCredentialBundle).toHaveBeenCalledOnce()
+  })
+
+  it('does not overwrite a newer credential published before the queued recovery callback', async () => {
+    const saved = journal()
+    const committed = installed(saved, 'authenticated-direct')
+    const currentToken = 'R'.repeat(43)
+    const newerBundle: MobileRelayCredentialBundle = {
+      v: 1,
+      hostId: saved.metadata.host.id,
+      deviceToken: saved.secrets.deviceToken,
+      current: {
+        token: currentToken,
+        hash: hashMobileRelayCredential(currentToken),
+        version: 3,
+        expiresAt: now + 120_000
+      }
+    }
+    const deps = dependencies({
+      journal: saved,
+      connectRelay: vi.fn(() =>
+        client(async () => response(endpoints(saved, { state: 'committed', result: committed })))
+      )
+    })
+    deps.readCredentialBundle
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(newerBundle)
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')
+    expect(deps.saveHostWithRelayCredential).toHaveBeenCalledOnce()
+    expect(deps.writeCredentialBundle).not.toHaveBeenCalled()
+    expect(deps.clearJournal).not.toHaveBeenCalled()
+  })
+
+  it('leaves an already published host and credential alone while relay recovery is unavailable', async () => {
+    const saved = journal()
+    const matchingBundle: MobileRelayCredentialBundle = {
+      v: 1,
+      hostId: saved.metadata.host.id,
+      deviceToken: saved.secrets.deviceToken,
+      current: {
+        token: saved.secrets.pendingResumeToken,
+        hash: saved.metadata.pendingResumeTokenHash,
+        version: 1,
+        expiresAt: now + 60_000
+      }
+    }
+    const unavailable = client(async () => {
+      throw new Error('relay unavailable')
+    })
+    const deps = dependencies({
+      journal: saved,
+      connectRelay: vi.fn(() => unavailable),
+      bundle: matchingBundle
+    })
+
+    await expect(recoverMobileRelayPairing(deps)).resolves.toBe('deferred')
+    expect(deps.saveHostWithRelayCredential).not.toHaveBeenCalled()
+    expect(deps.writeCredentialBundle).not.toHaveBeenCalled()
+    expect(deps.clearJournal).not.toHaveBeenCalled()
   })
 
   it('recovers a lost direct-install response with the pending credential first', async () => {
@@ -139,7 +629,7 @@ describe('mobile relay pairing recovery', () => {
       })
     )
     expect(deps.writeCredentialBundle).toHaveBeenCalledOnce()
-    expect(deps.saveHost).toHaveBeenCalledOnce()
+    expect(deps.saveHostWithRelayCredential).toHaveBeenCalledOnce()
     expect(deps.clearJournal).toHaveBeenCalledOnce()
   })
 

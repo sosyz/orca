@@ -47,7 +47,7 @@ type NavigationEvent = 'state'
 type RouteBackHandler = () => boolean
 
 export function shouldDeferHarmonyBackPressToRoute(pathname: string): boolean {
-  return /^\/h\/[^/]+\/session\/[^/]+$/.test(pathname)
+  return pathname === '/mobile-onboarding' || /^\/h\/[^/]+\/session\/[^/]+$/.test(pathname)
 }
 
 const RouterContext = createContext<{

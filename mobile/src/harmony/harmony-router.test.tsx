@@ -84,6 +84,57 @@ describe('Harmony router', () => {
     expect(shouldDeferHarmonyBackPressToRoute('/h/desktop%2Fone')).toBe(false)
   })
 
+  it('lets onboarding consume hardware back after replacing the pairing route', async () => {
+    let observedRouter: ReturnType<typeof useRouter> | null = null
+    let pathname = '/'
+    const blockBack = vi.fn(() => true)
+    function OnboardingRoute() {
+      useEffect(() => {
+        const subscription = backHandlerMock.addEventListener('hardwareBackPress', blockBack)
+        return () => subscription.remove()
+      }, [])
+      return null
+    }
+    function PlainRoute() {
+      return null
+    }
+    function App() {
+      observedRouter = useRouter()
+      pathname = usePathname()
+      return createElement(Stack)
+    }
+    routeRegistry.matchRootRoute.mockImplementation((path: string) => ({
+      component: path === '/mobile-onboarding' ? OnboardingRoute : PlainRoute,
+      params: {}
+    }))
+    await act(async () => {
+      renderer = create(createElement(HarmonyRouterProvider, null, createElement(App)))
+    })
+    act(() => observedRouter!.push('/pair-scan'))
+    act(() => observedRouter!.replace('/mobile-onboarding'))
+    expect(observedRouter!.canGoBack()).toBe(true)
+    act(() => {
+      for (const handler of backHandlerMock.listeners.toReversed()) {
+        if (handler()) {
+          break
+        }
+      }
+    })
+    expect(blockBack).toHaveBeenCalledOnce()
+    expect(pathname).toBe('/mobile-onboarding')
+
+    act(() => observedRouter!.replace('/settings'))
+    act(() => {
+      for (const handler of backHandlerMock.listeners.toReversed()) {
+        if (handler()) {
+          break
+        }
+      }
+    })
+    expect(pathname).toBe('/')
+    expect(blockBack).toHaveBeenCalledOnce()
+  })
+
   it('lets the current route own hardware back without leaking guards to later routes', async () => {
     let observedRouter: ReturnType<typeof useRouter> | null = null
     let pathname = '/'

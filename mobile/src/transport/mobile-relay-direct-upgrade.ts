@@ -5,11 +5,15 @@ import {
   type DeviceCredentialInstalled,
   type PairingGetEndpointsResult
 } from '../../../src/shared/mobile-relay-credential-contract'
-import { MobileRelayUpgradeHostRemovedError, saveExistingHostRelayUpgrade } from './host-store'
+import {
+  getHostPairingEpoch,
+  MobileRelayUpgradeHostRemovedError,
+  saveExistingHostRelayUpgrade,
+  writeForCurrentHostPairing
+} from './host-store'
 import { persistRelayHost } from './mobile-endpoint-supervisor-support'
 import {
   MobileRelayCredentialBundleSchema,
-  deleteMobileRelayCredentialBundle,
   writeMobileRelayCredentialBundle,
   type MobileRelayCredentialBundle
 } from './mobile-relay-credential-bundle'
@@ -33,26 +37,35 @@ type Dependencies = {
   writeJournal: typeof writeMobileRelayDirectUpgradeJournal
   clearJournal: typeof deleteMobileRelayDirectUpgradeJournal
   writeBundle: typeof writeMobileRelayCredentialBundle
-  saveHost: typeof saveExistingHostRelayUpgrade
-  deleteBundle: typeof deleteMobileRelayCredentialBundle
+  saveHost: (host: HostProfile) => Promise<void>
   randomBytes: (length: number) => Uint8Array
 }
 
 export async function upgradeDirectMobileRelay(args: {
   client: RpcClient
   host: HostProfile
+  expectedPairingEpoch?: number
+  isCurrentOwner?: () => boolean
   dependencies?: Partial<Dependencies>
 }): Promise<MobileRelayDirectUpgradeResult | null> {
   if (args.host.relay) {
     return null
   }
+  const pairingEpoch = args.expectedPairingEpoch ?? getHostPairingEpoch(args.host.id)
+  const isCurrentOwner = args.isCurrentOwner ?? (() => true)
+  const guardedWrite = (write: () => Promise<void>): Promise<void> =>
+    writeForCurrentHostPairing(args.host, pairingEpoch, async () => {
+      if (!isCurrentOwner()) {
+        throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade owner stopped')
+      }
+      await write()
+    })
   const dependencies: Dependencies = {
     readJournal: readMobileRelayDirectUpgradeJournal,
-    writeJournal: writeMobileRelayDirectUpgradeJournal,
-    clearJournal: deleteMobileRelayDirectUpgradeJournal,
-    writeBundle: writeMobileRelayCredentialBundle,
-    saveHost: saveExistingHostRelayUpgrade,
-    deleteBundle: deleteMobileRelayCredentialBundle,
+    writeJournal: (journal) => guardedWrite(() => writeMobileRelayDirectUpgradeJournal(journal)),
+    clearJournal: (hostId) => guardedWrite(() => deleteMobileRelayDirectUpgradeJournal(hostId)),
+    writeBundle: (bundle) => guardedWrite(() => writeMobileRelayCredentialBundle(bundle)),
+    saveHost: (host) => saveExistingHostRelayUpgrade(host, pairingEpoch, isCurrentOwner),
     randomBytes: ExpoCrypto.getRandomBytes,
     ...args.dependencies
   }
@@ -117,16 +130,7 @@ async function publishCommitted(
   })
   // Why: the overlay must never advertise relay without its matching credential.
   await dependencies.writeBundle(bundle)
-  let updatedHost: HostProfile
-  try {
-    updatedHost = await persistRelayHost(host, endpoints.relay, dependencies.saveHost)
-  } catch (error) {
-    if (error instanceof MobileRelayUpgradeHostRemovedError) {
-      await dependencies.deleteBundle(host.id)
-      await dependencies.clearJournal(host.id)
-    }
-    throw error
-  }
+  const updatedHost = await persistRelayHost(host, endpoints.relay, dependencies.saveHost)
   await dependencies.clearJournal(host.id)
   return { host: updatedHost, bundle }
 }

@@ -5,7 +5,7 @@ import EditHostScreen from '../app/h/[hostId]/edit'
 
 const dependencies = vi.hoisted(() => ({
   back: vi.fn(),
-  forceReconnectHost: vi.fn(),
+  refreshHostClient: vi.fn(),
   loadHosts: vi.fn(),
   primeHosts: vi.fn(),
   updateHostNameAndEndpoint: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock('./transport/host-store', () => ({
 }))
 
 vi.mock('./transport/client-context', () => ({
-  useForceReconnect: () => dependencies.forceReconnectHost,
+  useRefreshHostClient: () => dependencies.refreshHostClient,
   usePrimeHosts: () => dependencies.primeHosts
 }))
 
@@ -120,7 +120,7 @@ describe('edit host handleSave', () => {
   beforeEach(() => {
     dependencies.hostId = 'host-1'
     dependencies.back.mockReset()
-    dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
+    dependencies.refreshHostClient.mockReset()
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])
     dependencies.primeHosts.mockReset()
     dependencies.updateHostNameAndEndpoint.mockReset().mockResolvedValue(undefined)
@@ -143,7 +143,7 @@ describe('edit host handleSave', () => {
     expect(dependencies.updateHostNameAndEndpoint).toHaveBeenCalledWith('host-1', {
       name: 'Home Desk'
     })
-    expect(dependencies.forceReconnectHost).not.toHaveBeenCalled()
+    expect(dependencies.refreshHostClient).not.toHaveBeenCalled()
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -157,7 +157,9 @@ describe('edit host handleSave', () => {
     expect(dependencies.updateHostNameAndEndpoint).toHaveBeenCalledWith('host-1', {
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.refreshHostClient).toHaveBeenCalledWith('host-1', {
+      reconnectUnowned: true
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -174,7 +176,9 @@ describe('edit host handleSave', () => {
       name: 'Home Desk',
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.refreshHostClient).toHaveBeenCalledWith('host-1', {
+      reconnectUnowned: true
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -185,21 +189,32 @@ describe('edit host handleSave', () => {
     await pressSave(renderer)
 
     expect(dependencies.updateHostNameAndEndpoint).not.toHaveBeenCalled()
-    expect(dependencies.forceReconnectHost).not.toHaveBeenCalled()
+    expect(dependencies.refreshHostClient).not.toHaveBeenCalled()
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
   })
 
-  it('shows the error and does not navigate back or reconnect when the save rejects', async () => {
+  it('keeps the current connection when an endpoint save rejects', async () => {
     dependencies.updateHostNameAndEndpoint.mockRejectedValueOnce(new Error('Host not found'))
     const renderer = await renderEditHostRoute()
-    setFieldValue(renderer, 'Name', 'Home Desk')
+    setFieldValue(renderer, 'Address', '192.168.1.20:6768')
     await pressSave(renderer)
 
     expect(findText(renderer, 'Host not found')).toBe(true)
-    expect(dependencies.forceReconnectHost).not.toHaveBeenCalled()
+    expect(dependencies.refreshHostClient).not.toHaveBeenCalled()
     expect(dependencies.back).not.toHaveBeenCalled()
+
+    act(() => renderer.unmount())
+  })
+
+  it('does not replace the connection for an invalid address', async () => {
+    const renderer = await renderEditHostRoute()
+    setFieldValue(renderer, 'Address', 'https://desk.example.com')
+
+    expect(findSaveButton(renderer).props.disabled).toBe(true)
+    expect(dependencies.updateHostNameAndEndpoint).not.toHaveBeenCalled()
+    expect(dependencies.refreshHostClient).not.toHaveBeenCalled()
 
     act(() => renderer.unmount())
   })
@@ -209,17 +224,22 @@ describe('edit host handleSave', () => {
       .mockResolvedValueOnce([HOST_FIXTURE])
       .mockRejectedValueOnce(new Error('boom'))
     const renderer = await renderEditHostRoute()
-    setFieldValue(renderer, 'Name', 'Home Desk')
+    setFieldValue(renderer, 'Address', '192.168.1.20:6768')
     await pressSave(renderer)
 
     expect(dependencies.primeHosts).not.toHaveBeenCalled()
+    expect(dependencies.refreshHostClient).toHaveBeenCalledWith('host-1', {
+      reconnectUnowned: true
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
   })
 
-  it('still navigates back and shows no error when the post-save reconnect rejects', async () => {
-    dependencies.forceReconnectHost.mockRejectedValueOnce(new Error('connect failed'))
+  it('does not surface a post-save replacement failure as a save error', async () => {
+    dependencies.refreshHostClient.mockImplementationOnce(() => {
+      throw new Error('close failed')
+    })
     const renderer = await renderEditHostRoute()
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
     await pressSave(renderer)
@@ -228,9 +248,11 @@ describe('edit host handleSave', () => {
       await Promise.resolve()
     })
 
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.refreshHostClient).toHaveBeenCalledWith('host-1', {
+      reconnectUnowned: true
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
-    expect(findText(renderer, 'connect failed')).toBe(false)
+    expect(findText(renderer, 'close failed')).toBe(false)
 
     act(() => renderer.unmount())
   })
@@ -269,7 +291,7 @@ describe('edit host load() error states', () => {
   beforeEach(() => {
     dependencies.hostId = 'host-1'
     dependencies.back.mockReset()
-    dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
+    dependencies.refreshHostClient.mockReset()
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])
     dependencies.primeHosts.mockReset()
     dependencies.updateHostNameAndEndpoint.mockReset().mockResolvedValue(undefined)

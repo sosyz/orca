@@ -1,5 +1,10 @@
-import { HostProfileSchema } from './types'
 import type { HostCatalogEntry, HostProfile, StoredHostProfile } from './types'
+import { advanceHostPairingEpoch, resetHostPairingEpochsForTests } from './host-pairing-epoch'
+import {
+  publishExistingHostRelayUpgrade,
+  runForCurrentHostPairing
+} from './host-relay-upgrade-publication'
+import { persistHostPairing } from './host-pairing-publication'
 import { getNextHostNameFromHosts } from './host-names'
 import * as hostListLoads from './host-list-load-sharing'
 import { joinHostCatalogCredentials } from './host-catalog-credential-join'
@@ -13,9 +18,7 @@ import {
 } from './host-credential-cleanup'
 import {
   loadMobileRelayHostOverlayState,
-  removeMobileRelayHostOverlay,
-  removeMobileRelayHostOverlays,
-  saveMobileRelayHostOverlay
+  removeMobileRelayHostOverlay
 } from './mobile-relay-host-overlay-store'
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
 import {
@@ -27,7 +30,6 @@ import { createUnpairedHostCredentialDeletion } from './unpaired-host-credential
 import {
   loadStoredHostProfiles,
   readStoredHostProfilesForMutation,
-  toStoredHostProfile,
   writeStoredHostProfiles
 } from './host-metadata-store'
 
@@ -42,6 +44,11 @@ async function commitDeviceToken(hostId: string, token: string): Promise<void> {
 const tokenCache = new Map<string, string>()
 // Why: serialize host metadata RMW so concurrent writers cannot drop updates.
 let hostListMutation: Promise<void> = Promise.resolve()
+export { getHostPairingEpoch } from './host-pairing-epoch'
+export {
+  MobileRelayUpgradeHostChangedError,
+  MobileRelayUpgradeHostRemovedError
+} from './host-relay-upgrade-publication'
 
 export const loadHosts = async (): Promise<HostProfile[]> => (await loadHostListSnapshot()).profiles
 export const loadHostCatalog = async (): Promise<HostCatalogEntry[]> =>
@@ -149,123 +156,71 @@ function removeOrphanOverlayIfUnpaired(hostId: string): Promise<void> {
 }
 
 async function mutateStoredHosts(
-  update: (hosts: StoredHostProfile[]) => StoredHostProfile[] | Promise<StoredHostProfile[]>
+  update: (hosts: StoredHostProfile[]) => StoredHostProfile[] | Promise<StoredHostProfile[]>,
+  afterWrite?: () => void | Promise<void>
 ): Promise<void> {
   return enqueueHostListMutation(async () => {
     const current = await readStoredHostProfilesForMutation()
     const next = await update(current)
     await writeStoredHostProfiles(next)
     hostListLoads.dropSharedHostListLoad()
+    await afterWrite?.()
   })
 }
 
-export class MobileRelayUpgradeHostRemovedError extends Error {}
+const hostPairingPublication = {
+  mutateStoredHosts,
+  commitDeviceToken,
+  cancelCleanupForDurablyStoredHosts,
+  scheduleUnpairedHostCredentialCleanup,
+  cancelCleanupForStoredHost
+}
 
-export const saveHost = (host: HostProfile): Promise<void> => persistHost(host, false)
+export const saveHost = (host: HostProfile): Promise<void> =>
+  persistHostPairing(host, undefined, hostPairingPublication)
+export const saveHostWithRelayCredential = (
+  host: HostProfile,
+  writeCredential: () => Promise<void>,
+  expectedPairingEpoch?: number
+): Promise<void> =>
+  persistHostPairing(host, writeCredential, hostPairingPublication, expectedPairingEpoch)
 
-export const saveExistingHostRelayUpgrade = (host: HostProfile): Promise<void> =>
-  persistHost(host, true)
+export async function saveExistingHostRelayUpgrade(
+  host: HostProfile,
+  expectedPairingEpoch: number,
+  isCurrentOwner: () => boolean = () => true
+): Promise<void> {
+  return publishExistingHostRelayUpgrade(
+    host,
+    expectedPairingEpoch,
+    enqueueHostListMutation,
+    isCurrentOwner
+  )
+}
 
-async function persistHost(host: HostProfile, requireExisting: boolean): Promise<void> {
-  const validated = HostProfileSchema.parse(host)
-  const stored = toStoredHostProfile(validated)
-  const duplicateHostIds = new Set<string>()
-  let updatedExistingHost = false
-  let cleanupIntentRecordedBeforeMetadata = false
-  let tokenCommittedBeforeMetadata = false
-  try {
-    await mutateStoredHosts(async (hosts) => {
-      const index = hosts.findIndex((h) => h.id === stored.id)
-      for (const candidate of hosts) {
-        if (candidate.id !== stored.id && candidate.publicKeyB64 === stored.publicKeyB64) {
-          duplicateHostIds.add(candidate.id)
-        }
-      }
-      let next: StoredHostProfile[]
-      if (index !== -1) {
-        updatedExistingHost = true
-        // Why: an authoritative save is the safe point to collapse pre-existing duplicate rows to the preserved host id.
-        next = hosts
-          .filter(({ id }) => !duplicateHostIds.has(id))
-          .map((candidate) => (candidate.id === stored.id ? stored : candidate))
-      } else if (requireExisting) {
-        // Why: an in-flight relay upgrade must not resurrect a host the user removed.
-        throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
-      } else {
-        next = [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
-      }
-      if (duplicateHostIds.size > 0) {
-        if (index === -1) {
-          // Why: process death between the early token write and metadata publication must leave cleanup discoverable.
-          await recordHostCredentialCleanupIntent(stored.id)
-          cleanupIntentRecordedBeforeMetadata = true
-        }
-        for (const duplicateHostId of duplicateHostIds) {
-          await recordHostCredentialCleanupIntent(duplicateHostId)
-        }
-        // Why: never remove the only usable same-key row until its replacement credential is durable.
-        await commitDeviceToken(stored.id, validated.deviceToken)
-        tokenCommittedBeforeMetadata = true
-      }
-      return next
-    })
-  } catch (error) {
-    await cancelCleanupForDurablyStoredHosts(duplicateHostIds)
-    if (cleanupIntentRecordedBeforeMetadata) {
-      try {
-        await scheduleUnpairedHostCredentialCleanup(stored.id)
-      } catch {
-        // The write-ahead cleanup intent remains available for retry.
-      }
-    }
-    throw error
-  }
-  if (!tokenCommittedBeforeMetadata) {
-    // Why: the catalog can now surface a failed token write for recovery instead of losing the host.
-    await commitDeviceToken(stored.id, validated.deviceToken)
-  }
-  // Why: a later removal owns its cleanup intent; cancel only while this publication remains authoritative.
-  cancelCleanupForStoredHost(stored.id)
-  if (validated.endpoints) {
-    await saveMobileRelayHostOverlay({
-      v: 2,
-      hostId: stored.id,
-      endpoints: validated.endpoints,
-      relayHostId: validated.relayHostId,
-      relay: validated.relay
-    })
-    hostListLoads.dropSharedHostListLoad()
-  }
-  const overlayRemovalIds = [...duplicateHostIds]
-  if (!validated.endpoints && updatedExistingHost) {
-    overlayRemovalIds.push(stored.id)
-  }
-  if (overlayRemovalIds.length > 0) {
-    // Why: reusing an id for direct-only re-pairing must not retain routing metadata from the previous transport state.
-    await removeMobileRelayHostOverlays(overlayRemovalIds)
-    hostListLoads.dropSharedHostListLoad()
-  }
-  for (const duplicateHostId of duplicateHostIds) {
-    try {
-      await scheduleUnpairedHostCredentialCleanup(duplicateHostId)
-    } catch {
-      // Metadata is already deduplicated; orphan-token recovery is best-effort.
-    }
-  }
+export function writeForCurrentHostPairing(
+  host: HostProfile,
+  expectedPairingEpoch: number,
+  write: () => Promise<void>
+): Promise<void> {
+  return runForCurrentHostPairing(host, expectedPairingEpoch, enqueueHostListMutation, write)
 }
 
 export async function removeHost(hostId: string): Promise<void> {
   let cleanupIntentRecorded = false
   try {
-    await mutateStoredHosts(async (hosts) => {
-      try {
-        await recordHostCredentialCleanupIntent(hostId)
-        cleanupIntentRecorded = true
-      } catch {
-        // Removal remains authoritative when cleanup intent storage is unavailable.
-      }
-      return hosts.filter((h) => h.id !== hostId)
-    })
+    await mutateStoredHosts(
+      async (hosts) => {
+        try {
+          await recordHostCredentialCleanupIntent(hostId)
+          cleanupIntentRecorded = true
+        } catch {
+          // Removal remains authoritative when cleanup intent storage is unavailable.
+        }
+        return hosts.filter((h) => h.id !== hostId)
+      },
+      () => advanceHostPairingEpoch(hostId)
+    )
   } catch (error) {
     if (cleanupIntentRecorded) {
       await cancelCleanupForDurablyStoredHosts([hostId])
@@ -274,7 +229,7 @@ export async function removeHost(hostId: string): Promise<void> {
   }
   tokenCache.delete(hostId)
   try {
-    await removeMobileRelayHostOverlay(hostId)
+    await removeOrphanOverlayIfUnpaired(hostId)
     hostListLoads.dropSharedHostListLoad()
   } catch {
     // Base removal is authoritative; a retained overlay can't resurrect the host and is cleaned on a later retry.
@@ -337,6 +292,7 @@ export async function updateLastConnected(hostId: string): Promise<void> {
 export function resetHostStoreForTests(): void {
   hostListMutation = Promise.resolve()
   tokenCache.clear()
+  resetHostPairingEpochsForTests()
   resetHostCredentialWriteRevisionsForTests()
   hostListLoads.dropSharedHostListLoad()
   resetPairingKeychainForTests()

@@ -2,12 +2,11 @@ import { Platform } from 'react-native'
 import {
   DeviceCredentialInstalledSchema,
   PairingGetEndpointsResultSchema,
-  type DeviceCredentialInstalled,
-  type MobileRelayEndpoint
+  type DeviceCredentialInstalled
 } from '../../../src/shared/mobile-relay-credential-contract'
 import { connect, type ConnectOptions } from './rpc-client'
-import { resolvePairingHostIdentity, saveHost } from './host-store'
-import type { HostProfile, PairingOffer, RpcResponse } from './types'
+import { resolvePairingHostIdentity, saveHost, saveHostWithRelayCredential } from './host-store'
+import type { PairingOffer, RpcResponse } from './types'
 import {
   createMobileRelayPairingJournal,
   type MobileRelayPairingJournal
@@ -31,6 +30,7 @@ import { resolvePairingInviteThroughDirector } from './mobile-relay-invite-direc
 import { createRecoveringPairingRelayCandidate } from './pairing-relay-candidate'
 import { createPairingRelayLogger } from './pairing-relay-log'
 import { redactSocketEndpoint } from './socket-event-debug'
+import { basePairingHost, relayPairingHost } from './pairing-host-profile'
 
 export type PreProfilePairingAttempt = {
   readonly result: Promise<{ hostId: string }>
@@ -44,6 +44,7 @@ type Dependencies = {
   resolveInviteDirector: typeof resolvePairingInviteThroughDirector
   resolveHostIdentity: typeof resolvePairingHostIdentity
   saveHost: typeof saveHost
+  saveHostWithRelayCredential: typeof saveHostWithRelayCredential
   saveJournal: typeof saveMobileRelayPairingJournal
   updateJournal: typeof updateMobileRelayPairingJournal
   clearJournal: typeof clearMobileRelayPairingJournal
@@ -52,12 +53,18 @@ type Dependencies = {
   platform: string
 }
 
+type PairingJournalDispatchState = {
+  journalId: string | null
+  provisionDispatched: boolean
+}
+
 const defaultDependencies: Dependencies = {
   connectDirect: connect,
   connectRelay: connectMobileRelayForPairing,
   resolveInviteDirector: resolvePairingInviteThroughDirector,
   resolveHostIdentity: resolvePairingHostIdentity,
   saveHost,
+  saveHostWithRelayCredential,
   saveJournal: saveMobileRelayPairingJournal,
   updateJournal: updateMobileRelayPairingJournal,
   clearJournal: clearMobileRelayPairingJournal,
@@ -77,6 +84,10 @@ export function startPreProfilePairing(args: {
   let disposed = false
   let timedOut = false
   let timer: ReturnType<typeof setTimeout> | null = null
+  const journalDispatch: PairingJournalDispatchState = {
+    journalId: null,
+    provisionDispatched: false
+  }
 
   const dispose = (): void => {
     if (disposed) {
@@ -98,8 +109,19 @@ export function startPreProfilePairing(args: {
     dispose()
   }, args.timeoutMs)
 
-  const result = runPairing(args.offer, args.connectOptions, dependencies, clients, () => disposed)
-    .catch((error: unknown) => {
+  const result = runPairing(
+    args.offer,
+    args.connectOptions,
+    dependencies,
+    clients,
+    () => disposed,
+    journalDispatch
+  )
+    .catch(async (error: unknown) => {
+      if (journalDispatch.journalId && !journalDispatch.provisionDispatched) {
+        // A newer scan may already own the journal; identity-checking clear leaves it intact.
+        await dependencies.clearJournal(journalDispatch.journalId).catch(() => undefined)
+      }
       if (timedOut) {
         throw new Error('mobile pairing timed out')
       }
@@ -130,7 +152,8 @@ async function runPairing(
   connectOptions: ConnectOptions | undefined,
   dependencies: Dependencies,
   clients: Set<PairingCandidateClient>,
-  isDisposed: () => boolean
+  isDisposed: () => boolean,
+  journalDispatch: PairingJournalDispatchState
 ): Promise<{ hostId: string }> {
   const now = dependencies.now()
   // Why: every pairing artifact must share the preserved host id so re-pairing
@@ -148,6 +171,7 @@ async function runPairing(
       hostName,
       now
     })
+    journalDispatch.journalId = journal.metadata.journalId
     await dependencies.saveJournal(journal)
     assertActive(isDisposed)
   }
@@ -202,7 +226,7 @@ async function runPairing(
   assertActive(isDisposed)
 
   if (!journal) {
-    await dependencies.saveHost(baseHost(offer, hostId, hostName, now))
+    await dependencies.saveHost(basePairingHost(offer, hostId, hostName, now))
     return { hostId }
   }
 
@@ -215,18 +239,23 @@ async function runPairing(
     }
   }
   await dependencies.updateJournal(journal.metadata.journalId, () => journal!.metadata)
+  assertActive(isDisposed)
+  journalDispatch.provisionDispatched = true
   const provision = await winner.client.sendRequest('pairing.provisionRelay', {
     reqId: journal.metadata.installReqId,
     newResumeTokenHash: journal.metadata.pendingResumeTokenHash
   })
   if (isMethodNotFound(provision)) {
+    journalDispatch.provisionDispatched = false
+    assertActive(isDisposed)
     if (winner.path !== 'direct') {
       throw new Error('relay pairing RPC unavailable after relay path authentication')
     }
-    await dependencies.saveHost(baseHost(offer, hostId, hostName, now))
+    await dependencies.saveHost(basePairingHost(offer, hostId, hostName, now))
     await dependencies.clearJournal(journal.metadata.journalId)
     return { hostId }
   }
+  assertActive(isDisposed)
   const installed = DeviceCredentialInstalledSchema.parse(requireSuccess(provision))
   const endpoints = PairingGetEndpointsResultSchema.parse(
     requireSuccess(
@@ -240,47 +269,12 @@ async function runPairing(
     throw new Error('desktop returned no relay endpoint after credential install')
   }
   assertActive(isDisposed)
-  await dependencies.writeCredentialBundle(promotePairingJournalCredential({ journal, installed }))
-  await dependencies.saveHost(relayHost(journal, endpoints.relay))
+  const credential = promotePairingJournalCredential({ journal, installed })
+  await dependencies.saveHostWithRelayCredential(relayPairingHost(journal, endpoints.relay), () =>
+    dependencies.writeCredentialBundle(credential)
+  )
   await dependencies.clearJournal(journal.metadata.journalId)
   return { hostId }
-}
-
-function baseHost(
-  offer: PairingOffer,
-  hostId: string,
-  name: string,
-  lastConnected: number
-): HostProfile {
-  return {
-    id: hostId,
-    name,
-    endpoint: offer.endpoint,
-    deviceToken: offer.deviceToken,
-    publicKeyB64: offer.publicKeyB64,
-    lastConnected
-  }
-}
-
-function relayHost(journal: MobileRelayPairingJournal, relay: MobileRelayEndpoint): HostProfile {
-  const host = journal.metadata.host
-  return {
-    ...host,
-    deviceToken: journal.secrets.deviceToken,
-    endpoints: [
-      { id: 'direct-primary', kind: 'lan', url: host.endpoint },
-      { id: 'relay-primary', kind: 'relay', url: relayWebSocketUrl(relay) }
-    ],
-    relayHostId: relay.relayHostId,
-    relay
-  }
-}
-
-function relayWebSocketUrl(relay: MobileRelayEndpoint): string {
-  const url = new URL(relay.cellUrl)
-  url.protocol = 'wss:'
-  url.pathname = `/v1/connect/${encodeURIComponent(relay.relayHostId)}`
-  return url.toString()
 }
 
 function requireSuccess(response: RpcResponse): unknown {

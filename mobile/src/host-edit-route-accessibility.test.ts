@@ -5,7 +5,7 @@ import EditHostScreen from '../app/h/[hostId]/edit'
 
 const dependencies = vi.hoisted(() => ({
   back: vi.fn(),
-  forceReconnectHost: vi.fn(),
+  refreshHostClient: vi.fn(),
   loadHosts: vi.fn(),
   primeHosts: vi.fn(),
   updateHostNameAndEndpoint: vi.fn()
@@ -42,7 +42,7 @@ vi.mock('./transport/host-store', () => ({
 }))
 
 vi.mock('./transport/client-context', () => ({
-  useForceReconnect: () => dependencies.forceReconnectHost,
+  useRefreshHostClient: () => dependencies.refreshHostClient,
   usePrimeHosts: () => dependencies.primeHosts
 }))
 

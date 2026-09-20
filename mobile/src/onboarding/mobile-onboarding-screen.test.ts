@@ -112,6 +112,13 @@ describe('MobileOnboardingScreen', () => {
     expect(mocks.replace).toHaveBeenCalledWith('/h/paired-host')
   })
 
+  it('preserves a host id containing route separators when onboarding finishes', async () => {
+    mocks.params = { hostId: 'desktop/one?#two', steps: 'session-view' }
+    await renderScreen()
+    await act(async () => pages()[0].props.onSessionChoice('terminal'))
+    expect(mocks.replace).toHaveBeenCalledWith('/h/desktop%2Fone%3F%23two')
+  })
+
   it('keeps the current step retryable when persistence fails', async () => {
     mocks.params = { hostId: 'paired-host', steps: 'session-view' }
     mocks.saveDefaultSessionView

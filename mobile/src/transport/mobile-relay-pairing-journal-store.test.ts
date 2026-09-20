@@ -221,6 +221,9 @@ describe('mobile relay pairing journal store', () => {
 
     await expect(replacementSave).resolves.toBeUndefined()
     await expect(staleUpdate).rejects.toThrow(/stale/)
+    await expect(clearMobileRelayPairingJournal(journal.metadata.journalId)).rejects.toThrow(
+      /stale/
+    )
     await expect(loadMobileRelayPairingJournal()).resolves.toEqual(replacement)
   })
 

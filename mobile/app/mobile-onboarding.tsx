@@ -9,6 +9,7 @@ import {
 } from 'react-native'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { useTranslation } from 'react-i18next'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { ensureNotificationPermissions } from '../src/notifications/mobile-notifications'
 import {
@@ -23,6 +24,7 @@ import {
   type MobileSessionView
 } from '../src/storage/session-view-preferences'
 import { savePushNotificationsEnabled } from '../src/storage/preferences'
+import { hostStackHostRoute } from '../src/navigation/host-stack-navigation'
 
 const SLIDE_DURATION_MS = 280
 
@@ -51,6 +53,7 @@ function MobileOnboardingFlow({
   rawSteps: string | undefined
 }) {
   const router = useRouter()
+  const { t } = useTranslation()
   const steps = useMemo(() => parseMobileOnboardingSteps(rawSteps), [rawSteps])
   const { width } = useWindowDimensions()
   const [activeIndex, setActiveIndex] = useState(0)
@@ -70,7 +73,7 @@ function MobileOnboardingFlow({
   )
 
   const continueToApp = useCallback(() => {
-    router.replace(hostId ? `/h/${hostId}` : '/')
+    router.replace(hostId ? hostStackHostRoute(hostId) : '/')
   }, [hostId, router])
 
   const advanceOrContinue = useCallback(() => {
@@ -109,7 +112,9 @@ function MobileOnboardingFlow({
         await saveDefaultSessionView(view)
         advanceOrContinue()
       } catch {
-        setError('Your choice could not be saved. Try again.')
+        setError(
+          t('mobile.onboarding.errors.sessionView', 'Your choice could not be saved. Try again.')
+        )
         setBusyChoice(null)
         choiceInFlightRef.current = false
       }
@@ -130,7 +135,12 @@ function MobileOnboardingFlow({
         await savePushNotificationsEnabled(enabled)
         advanceOrContinue()
       } catch {
-        setError('Notification settings could not be updated. Try again.')
+        setError(
+          t(
+            'mobile.onboarding.errors.notifications',
+            'Notification settings could not be updated. Try again.'
+          )
+        )
         setBusyChoice(null)
         choiceInFlightRef.current = false
       }
@@ -149,8 +159,13 @@ function MobileOnboardingFlow({
           <View
             accessible
             accessibilityRole="progressbar"
-            accessibilityLabel="Onboarding progress"
-            accessibilityValue={{ text: `Step ${activeIndex + 1} of ${steps.length}` }}
+            accessibilityLabel={t('mobile.onboarding.progressLabel', 'Onboarding progress')}
+            accessibilityValue={{
+              text: t('mobile.onboarding.progressValue', 'Step {{current}} of {{total}}', {
+                current: String(activeIndex + 1),
+                total: String(steps.length)
+              })
+            }}
             style={styles.progress}
           >
             {steps.map((step, index) => (

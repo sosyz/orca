@@ -1,16 +1,54 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
-import { MobileRelayUpgradeHostRemovedError } from './host-store'
+import {
+  getHostPairingEpoch,
+  loadHosts,
+  MobileRelayUpgradeHostChangedError,
+  MobileRelayUpgradeHostRemovedError,
+  resetHostStoreForTests,
+  saveHost,
+  saveHostWithRelayCredential
+} from './host-store'
+import {
+  readMobileRelayCredentialBundle,
+  writeMobileRelayCredentialBundle
+} from './mobile-relay-credential-bundle'
+import { resetMobileRelayHostOverlayStoreForTests } from './mobile-relay-host-overlay-store'
 import {
   createMobileRelayDirectUpgradeJournal,
+  readMobileRelayDirectUpgradeJournal,
   type MobileRelayDirectUpgradeJournal
 } from './mobile-relay-direct-upgrade-journal'
 import { upgradeDirectMobileRelay } from './mobile-relay-direct-upgrade'
 import type { RpcClient } from './rpc-client'
 import type { HostProfile, RpcResponse } from './types'
 
+const runtime = vi.hoisted(() => ({
+  storage: new Map<string, string>(),
+  secrets: new Map<string, string>()
+}))
 vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }))
-vi.mock('expo-secure-store', () => ({ WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'when-unlocked' }))
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: async (key: string) => runtime.storage.get(key) ?? null,
+    setItem: async (key: string, value: string) => {
+      runtime.storage.set(key, value)
+    },
+    removeItem: async (key: string) => {
+      runtime.storage.delete(key)
+    }
+  }
+}))
+vi.mock('expo-secure-store', () => ({
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'when-unlocked',
+  getItemAsync: async (key: string) => runtime.secrets.get(key) ?? null,
+  setItemAsync: async (key: string, value: string) => {
+    runtime.secrets.set(key, value)
+  },
+  deleteItemAsync: async (key: string) => {
+    runtime.secrets.delete(key)
+  }
+}))
 vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length) }))
 
 const relay: MobileRelayEndpoint = {
@@ -70,6 +108,137 @@ function dependencies(journal: MobileRelayDirectUpgradeJournal | null = null) {
 }
 
 describe('existing direct pairing relay upgrade', () => {
+  it('starts a fresh direct-upgrade journal after the host is re-paired', async () => {
+    runtime.storage.clear()
+    runtime.secrets.clear()
+    resetHostStoreForTests()
+    resetMobileRelayHostOverlayStoreForTests()
+    await saveHost(host)
+    const oldClient = clientWith([])
+    let finishOld!: () => void
+    const oldGate = new Promise<void>((resolve) => {
+      finishOld = resolve
+    })
+    oldClient.sendRequest.mockImplementation(async () => {
+      await oldGate
+      return {
+        id: 'rpc',
+        ok: false,
+        error: { code: 'method_not_found', message: 'unsupported' },
+        _meta: { runtimeId: 'runtime' }
+      }
+    })
+    const oldUpgrade = upgradeDirectMobileRelay({
+      client: oldClient,
+      host,
+      dependencies: { randomBytes: (length) => new Uint8Array(length).fill(5) }
+    })
+    await vi.waitFor(() => expect(oldClient.sendRequest).toHaveBeenCalledOnce())
+    const oldJournal = await readMobileRelayDirectUpgradeJournal(host.id)
+    const replacement = { ...host, deviceToken: 'new-device-token' }
+    await saveHost(replacement)
+    const newClient = clientWith([])
+    let finishNew!: () => void
+    const newGate = new Promise<void>((resolve) => {
+      finishNew = resolve
+    })
+    newClient.sendRequest.mockImplementation(async () => {
+      await newGate
+      return {
+        id: 'rpc',
+        ok: false,
+        error: { code: 'method_not_found', message: 'unsupported' },
+        _meta: { runtimeId: 'runtime' }
+      }
+    })
+    const newUpgrade = upgradeDirectMobileRelay({
+      client: newClient,
+      host: replacement,
+      dependencies: { randomBytes: (length) => new Uint8Array(length).fill(9) }
+    })
+    await vi.waitFor(() => expect(newClient.sendRequest).toHaveBeenCalledOnce())
+    const newJournal = await readMobileRelayDirectUpgradeJournal(host.id)
+    const expectedReqId = createMobileRelayDirectUpgradeJournal(host.id, (length) =>
+      new Uint8Array(length).fill(9)
+    ).reqId
+    try {
+      expect(newJournal?.reqId).toBe(expectedReqId)
+      expect(newJournal?.reqId).not.toBe(oldJournal?.reqId)
+    } finally {
+      finishOld()
+      finishNew()
+      await Promise.allSettled([oldUpgrade, newUpgrade])
+    }
+  })
+
+  it('cannot overwrite a same-id re-pair bundle after its committed RPC arrives late', async () => {
+    runtime.storage.clear()
+    runtime.secrets.clear()
+    resetHostStoreForTests()
+    resetMobileRelayHostOverlayStoreForTests()
+    await saveHost(host)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const client = clientWith([])
+    client.sendRequest.mockImplementation(async (_method, params) => {
+      await gate
+      const reqId = (params as { installReqId: string }).installReqId
+      return success({
+        v: 1,
+        relay,
+        installStatus: {
+          v: 1,
+          reqId,
+          state: 'committed',
+          result: {
+            v: 1,
+            reqId,
+            authorizationMode: 'authenticated-direct',
+            currentVersion: 1,
+            resumeExpiresAt: 9_999_999
+          }
+        }
+      })
+    })
+    const oldUpgrade = upgradeDirectMobileRelay({
+      client,
+      host,
+      expectedPairingEpoch: getHostPairingEpoch(host.id)
+    })
+    await vi.waitFor(() => expect(client.sendRequest).toHaveBeenCalledOnce())
+    const replacement: HostProfile = {
+      ...host,
+      name: 'Replacement',
+      deviceToken: 'new-device-token',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: host.endpoint },
+        {
+          id: 'relay-primary',
+          kind: 'relay',
+          url: `wss://c1.relay-staging.onorca.dev/v1/connect/${relay.relayHostId}`
+        }
+      ],
+      relayHostId: relay.relayHostId,
+      relay
+    }
+    const newBundle = {
+      v: 1 as const,
+      hostId: host.id,
+      deviceToken: replacement.deviceToken,
+      current: { token: 'N'.repeat(43), hash: 'H'.repeat(43), version: 2, expiresAt: 9_999_999 }
+    }
+    await saveHostWithRelayCredential(replacement, () =>
+      writeMobileRelayCredentialBundle(newBundle)
+    )
+    release()
+
+    await expect(oldUpgrade).rejects.toBeInstanceOf(MobileRelayUpgradeHostChangedError)
+    expect(await readMobileRelayCredentialBundle(host.id)).toEqual(newBundle)
+    expect(await loadHosts()).toEqual([replacement])
+  })
+
   it('persists pending material before install and publishes only after committed status', async () => {
     const deps = dependencies()
     let journal: MobileRelayDirectUpgradeJournal | null = null
@@ -167,7 +336,7 @@ describe('existing direct pairing relay upgrade', () => {
     expect(deps.clearJournal).not.toHaveBeenCalled()
   })
 
-  it('cleans newly installed secrets instead of resurrecting a removed host', async () => {
+  it('leaves removed-host credential cleanup to the guarded host store', async () => {
     const journal = createMobileRelayDirectUpgradeJournal(host.id, (length) =>
       new Uint8Array(length).fill(5)
     )
@@ -187,7 +356,7 @@ describe('existing direct pairing relay upgrade', () => {
     await expect(
       upgradeDirectMobileRelay({ client, host, dependencies: deps })
     ).rejects.toBeInstanceOf(MobileRelayUpgradeHostRemovedError)
-    expect(deps.deleteBundle).toHaveBeenCalledWith(host.id)
-    expect(deps.clearJournal).toHaveBeenCalledWith(host.id)
+    expect(deps.deleteBundle).not.toHaveBeenCalled()
+    expect(deps.clearJournal).not.toHaveBeenCalled()
   })
 })

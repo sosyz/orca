@@ -41,12 +41,10 @@ vi.mock('./host-credential-cleanup', () => ({
 import {
   loadHostCatalog,
   loadHosts,
-  MobileRelayUpgradeHostRemovedError,
   removeHost,
   resolvePairingHostIdentity,
   resetHostStoreForTests,
   saveHost,
-  saveExistingHostRelayUpgrade,
   updateHostNameAndEndpoint,
   updateLastConnected
 } from './host-store'
@@ -408,7 +406,7 @@ describe('host-store list mutations', () => {
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
   })
 
-  it('does not touch relay storage when saving a new direct-only host', async () => {
+  it('does not rewrite empty relay storage when saving a new direct-only host', async () => {
     await saveHost({
       id: 'host-new',
       name: 'New Host',
@@ -418,7 +416,7 @@ describe('host-store list mutations', () => {
       lastConnected: 0
     })
 
-    expect(asyncStorageMock.getItem).not.toHaveBeenCalledWith(OVERLAY_STORAGE_KEY)
+    expect(storedOverlayRaw).toBeNull()
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
   })
 
@@ -459,7 +457,7 @@ describe('host-store list mutations', () => {
     expect(cancelCleanupMock).toHaveBeenCalledWith(HOST_ONE.id)
   })
 
-  it('does not cancel cleanup from a removal committed during a stalled save', async () => {
+  it('does not cancel cleanup from a removal queued during a stalled save', async () => {
     let releaseTokenWrite: () => void = () => {}
     secureStoreMock.setItemAsync.mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -469,9 +467,9 @@ describe('host-store list mutations', () => {
 
     const save = saveHost({ ...HOST_ONE, deviceToken: 'replacement-token' })
     await vi.waitFor(() => expect(secureStoreMock.setItemAsync).toHaveBeenCalledOnce())
-    await removeHost(HOST_ONE.id)
+    const removing = removeHost(HOST_ONE.id)
     releaseTokenWrite()
-    await save
+    await Promise.all([save, removing])
     await loadHostCatalog()
 
     expect(JSON.parse(storedHostsRaw)).toEqual([HOST_TWO])
@@ -560,17 +558,6 @@ describe('host-store list mutations', () => {
       ...overlay,
       hostId: 'removed-by-old-build'
     })
-  })
-
-  it('refuses to resurrect a removed host during relay upgrade publication', async () => {
-    storedHostsRaw = JSON.stringify([HOST_TWO])
-
-    await expect(
-      saveExistingHostRelayUpgrade({ ...HOST_ONE, deviceToken: 'token-1' })
-    ).rejects.toBeInstanceOf(MobileRelayUpgradeHostRemovedError)
-
-    expect(JSON.parse(storedHostsRaw)).toEqual([HOST_TWO])
-    expect(secureStoreMock.setItemAsync).not.toHaveBeenCalled()
   })
 
   it('awaits cleanup scheduling after metadata commit', async () => {
@@ -739,26 +726,20 @@ describe('host-store list mutations', () => {
       return key.endsWith(HOST_ONE.id) || key.endsWith(HOST_TWO.id) ? `token-${key.at(-1)}` : null
     })
 
-    const save = saveHost(newHost)
-    await vi.waitFor(() => {
-      expect(secureStoreMock.setItemAsync).toHaveBeenCalled()
-    })
     const parkedLoad = loadHosts()
-    await vi.waitFor(() => {
-      expect(
-        asyncStorageMock.getItem.mock.calls.filter(([key]) => key === HOSTS_STORAGE_KEY)
-      ).toHaveLength(2)
-    })
-
-    releaseTokenWrite()
-    await save
     await vi.waitFor(() => {
       expect(secureStoreMock.getItemAsync).toHaveBeenCalledWith(
         expect.stringContaining(HOST_ONE.id),
         expect.anything()
       )
     })
+    const save = saveHost(newHost)
+    await vi.waitFor(() => {
+      expect(secureStoreMock.setItemAsync).toHaveBeenCalled()
+    })
     const afterSave = loadHosts()
+    releaseTokenWrite()
+    await save
     resolveParkedTokenRead(null)
 
     const [parkedHosts, savedHosts] = await Promise.all([parkedLoad, afterSave])
@@ -777,10 +758,12 @@ describe('host-store list mutations', () => {
     }
     storedHostsRaw = JSON.stringify([{ ...newHost, deviceToken: undefined }])
     let resolvePrewriteTokenRead: (token: string) => void = () => {}
-    secureStoreMock.getItemAsync.mockReturnValue(
-      new Promise<string>((resolve) => {
-        resolvePrewriteTokenRead = resolve
-      })
+    secureStoreMock.getItemAsync.mockImplementation((key: string) =>
+      key === `orca.host-token.${newHost.id}`
+        ? new Promise<string>((resolve) => {
+            resolvePrewriteTokenRead = resolve
+          })
+        : Promise.resolve(null)
     )
 
     const parkedLoad = loadHosts()

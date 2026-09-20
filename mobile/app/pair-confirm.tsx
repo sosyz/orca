@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Pressable, ActivityIndicator, BackHandler } fro
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
+import { useTranslation } from 'react-i18next'
 import { resolvePairConfirmRouteState } from '../src/transport/pair-confirm-state'
 import {
   startPreProfilePairing,
@@ -33,6 +34,7 @@ const PAIRING_OVERALL_TIMEOUT_MS = 25_000
 
 export default function PairConfirmScreen() {
   const router = useRouter()
+  const { t } = useTranslation()
   const refreshHostClient = useRefreshHostClient()
   const insets = useSafeAreaInsets()
   const params = useLocalSearchParams<{ code?: string }>()
@@ -52,7 +54,9 @@ export default function PairConfirmScreen() {
     status === 'awaiting-confirm' && routeState.kind === 'error' ? 'error' : status
   const resolvedErrorMessage =
     status === 'awaiting-confirm' && routeState.kind === 'error'
-      ? routeState.errorMessage
+      ? routeState.errorMessage === 'Missing pairing code'
+        ? t('mobile.pairing.errors.missingCode', 'Missing pairing code')
+        : t('mobile.pairing.errors.invalidCode', 'Not a valid pairing code')
       : errorMessage
 
   const cancel = useCallback(() => {
@@ -82,14 +86,12 @@ export default function PairConfirmScreen() {
   }, [])
 
   async function confirm() {
-    if (!offer) {
+    if (!offer || activePairingAttemptRef.current) {
       return
     }
     setStatus('connecting')
     logsRef.current = []
     setLogs([])
-    activePairingAttemptRef.current?.dispose()
-
     const attempt = startPreProfilePairing({
       offer,
       timeoutMs: PAIRING_OVERALL_TIMEOUT_MS,
@@ -135,14 +137,20 @@ export default function PairConfirmScreen() {
         return
       }
       const failureMessage = redactConnectionLogText(
-        formatUnknownErrorMessage(err, 'Unknown error')
+        formatUnknownErrorMessage(err, t('mobile.pairing.errors.unknown', 'Unknown error'))
       )
       console.warn('[pair-confirm] connect failed')
       setStatus('error')
       setErrorMessage(
         timedOut
-          ? `Couldn't connect within ${PAIRING_OVERALL_TIMEOUT_MS / 1000}s — see log below for where it stalled`
-          : `Pairing failed: ${failureMessage}`
+          ? t(
+              'mobile.pairing.errors.timeout',
+              "Couldn't connect within {{seconds}}s - see log below for where it stalled",
+              { seconds: String(PAIRING_OVERALL_TIMEOUT_MS / 1000) }
+            )
+          : t('mobile.pairing.errors.failed', 'Pairing failed: {{message}}', {
+              message: failureMessage
+            })
       )
     }
   }
@@ -155,7 +163,7 @@ export default function PairConfirmScreen() {
         style={styles.backButton}
         onPress={cancel}
         accessibilityRole="button"
-        accessibilityLabel="Back"
+        accessibilityLabel={t('common.back', 'Back')}
       >
         <ChevronLeft size={22} color={colors.textSecondary} />
       </Pressable>
@@ -163,16 +171,23 @@ export default function PairConfirmScreen() {
       <View style={styles.content}>
         {offer && resolvedStatus === 'awaiting-confirm' && (
           <>
-            <Text style={styles.title}>Pair with this desktop?</Text>
+            <Text style={styles.title}>
+              {t('mobile.pairing.confirm.title', 'Pair with this desktop?')}
+            </Text>
             <Text style={styles.subtitle}>
-              You opened a pairing link from your desktop. Confirm to add it to your hosts.
+              {t(
+                'mobile.pairing.confirm.body',
+                'You opened a pairing link from your desktop. Confirm to add it to your hosts.'
+              )}
             </Text>
             <View style={styles.actionStack}>
               <Pressable style={styles.primaryButton} onPress={() => void confirm()}>
-                <Text style={styles.primaryButtonText}>Pair</Text>
+                <Text style={styles.primaryButtonText}>
+                  {t('mobile.pairing.confirm.pair', 'Pair')}
+                </Text>
               </Pressable>
               <Pressable style={styles.secondaryButton} onPress={cancel}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
+                <Text style={styles.secondaryButtonText}>{t('common.cancel', 'Cancel')}</Text>
               </Pressable>
             </View>
           </>
@@ -181,9 +196,9 @@ export default function PairConfirmScreen() {
         {resolvedStatus === 'connecting' && (
           <>
             <ActivityIndicator size="large" color={colors.textSecondary} />
-            <Text style={styles.connectingText}>Connecting…</Text>
+            <Text style={styles.connectingText}>{t('common.connecting', 'Connecting…')}</Text>
             <View style={styles.logSlot}>
-              <ConnectionLog entries={logs} title="Pairing log" />
+              <ConnectionLog entries={logs} title={t('mobile.pairing.logTitle', 'Pairing log')} />
             </View>
           </>
         )}
@@ -193,12 +208,14 @@ export default function PairConfirmScreen() {
             <Text style={styles.errorText}>{resolvedErrorMessage}</Text>
             {logs.length > 0 && (
               <View style={styles.logSlot}>
-                <ConnectionLog entries={logs} title="Pairing log" />
+                <ConnectionLog entries={logs} title={t('mobile.pairing.logTitle', 'Pairing log')} />
               </View>
             )}
             <View style={styles.actionStack}>
               <Pressable style={styles.primaryButton} onPress={cancel}>
-                <Text style={styles.primaryButtonText}>Back to home</Text>
+                <Text style={styles.primaryButtonText}>
+                  {t('common.backToHome', 'Back to home')}
+                </Text>
               </Pressable>
             </View>
           </>

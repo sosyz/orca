@@ -586,6 +586,42 @@ describe('settings host client lifecycle', () => {
     expect(replacementClient?.closeMock).toHaveBeenCalledOnce()
   })
 
+  it('reopens an unowned Relay client from current metadata after an endpoint edit', async () => {
+    const original = host('edited-relay-host', 1, { relayHostId: 'AbCdEf0123_-xyZ9' })
+    const edited = { ...original, endpoint: 'wss://new.example.test:8787' }
+    const oldClient = Object.assign(makeFakeClient('connected'), {
+      getActivePath: () => 'relay' as const
+    })
+    const newClient = makeFakeClient('connecting')
+    connectMock.mockReturnValueOnce(oldClient).mockReturnValueOnce(newClient)
+    loadHostsMock.mockResolvedValue([edited])
+
+    const renderer = await renderScreen('empty')
+    if (!context) {
+      throw new Error('client context was not captured')
+    }
+    context.primeHosts([original])
+    await act(async () => {
+      await context?.forceReconnect(original.id)
+    })
+    expect(connectMock).toHaveBeenCalledWith(original, expect.any(Function))
+    expect(activeHostIds()).toEqual([original.id])
+
+    await act(async () => {
+      context?.refreshHostClient(original.id, { reconnectUnowned: true })
+      await Promise.resolve()
+    })
+
+    expect(oldClient.closeMock).toHaveBeenCalledOnce()
+    expect(oldClient.notifyForeground).not.toHaveBeenCalled()
+    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(connectMock).toHaveBeenLastCalledWith(edited, expect.any(Function))
+    expect(loadHostsMock).toHaveBeenCalledOnce()
+    expect(activeHostIds()).toEqual([original.id])
+    act(() => renderer.unmount())
+    expect(newClient.closeMock).toHaveBeenCalledOnce()
+  })
+
   it('releases a manual host after Home demotes or stops tracking it', async () => {
     const manualHost = host('manual-relay-host', 1, { relayHostId: 'AbCdEf0123_-xyZ9' })
     const clients: FakeClient[] = []

@@ -135,6 +135,25 @@ describe('pair-confirm route', () => {
     )
   })
 
+  it('starts one pairing attempt when Pair is pressed twice before the screen updates', () => {
+    const instance = renderScreen()
+    const attempt = {
+      result: new Promise<{ hostId: string }>(() => {}),
+      timedOut: false,
+      dispose: vi.fn()
+    }
+    mocks.startPreProfilePairing.mockReturnValue(attempt)
+    const pressPair = pairButton(instance)!.props.onPress
+
+    act(() => {
+      pressPair()
+      pressPair()
+    })
+
+    expect(mocks.startPreProfilePairing).toHaveBeenCalledOnce()
+    expect(attempt.dispose).not.toHaveBeenCalled()
+  })
+
   it('refreshes the paired host and navigates after successful pairing', async () => {
     const instance = renderScreen()
     let resolveResult!: (value: { hostId: string }) => void

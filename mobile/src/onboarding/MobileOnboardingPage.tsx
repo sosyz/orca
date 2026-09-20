@@ -1,5 +1,6 @@
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native'
 import { BellRing, MessageSquare } from 'lucide-react-native'
+import { useTranslation } from 'react-i18next'
 import type { MobileOnboardingStep } from './mobile-onboarding-plan'
 import { mobileOnboardingStyles as styles } from './mobile-onboarding-styles'
 import type { MobileSessionView } from '../storage/session-view-preferences'
@@ -27,6 +28,7 @@ export function MobileOnboardingPage({
   onSessionChoice,
   onNotificationChoice
 }: Props) {
+  const { t } = useTranslation()
   const busy = busyChoice !== null
   const isSessionView = step === 'session-view'
 
@@ -47,12 +49,20 @@ export function MobileOnboardingPage({
           )}
         </View>
         <Text style={styles.title}>
-          {isSessionView ? 'How should sessions open?' : 'Stay updated while away'}
+          {isSessionView
+            ? t('mobile.onboarding.sessionView.title', 'How should sessions open?')
+            : t('mobile.onboarding.notifications.title', 'Stay updated while away')}
         </Text>
         <Text style={styles.body}>
           {isSessionView
-            ? 'Choose whether supported agent sessions open in the terminal or Chat UI on this device. Press and hold a session tab to switch its view, or change the default later in Settings.'
-            : 'Get notified on this device when an agent needs your input or finishes a task.'}
+            ? t(
+                'mobile.onboarding.sessionView.body',
+                'Choose whether supported agent sessions open in the terminal or Chat UI on this device. Press and hold a session tab to switch its view, or change the default later in Settings.'
+              )
+            : t(
+                'mobile.onboarding.notifications.body',
+                'Get notified on this device when an agent needs your input or finishes a task.'
+              )}
         </Text>
       </View>
 
@@ -85,19 +95,24 @@ function SessionViewChoices({
   disabled: boolean
   onChoice: (view: MobileSessionView) => void
 }) {
+  const { t } = useTranslation()
+
   return (
     <>
       <ChoiceButton
-        label="Use Chat UI"
-        accessibilityLabel="Open sessions in Chat UI"
+        label={t('mobile.onboarding.sessionView.chat', 'Use Chat UI')}
+        accessibilityLabel={t('mobile.onboarding.sessionView.chatA11y', 'Open sessions in Chat UI')}
         primary
         busy={busyChoice === 'chat'}
         disabled={disabled}
         onPress={() => onChoice('chat')}
       />
       <ChoiceButton
-        label="Keep terminal"
-        accessibilityLabel="Open sessions in the terminal"
+        label={t('mobile.onboarding.sessionView.terminal', 'Keep terminal')}
+        accessibilityLabel={t(
+          'mobile.onboarding.sessionView.terminalA11y',
+          'Open sessions in the terminal'
+        )}
         busy={busyChoice === 'terminal'}
         disabled={disabled}
         onPress={() => onChoice('terminal')}
@@ -115,19 +130,27 @@ function NotificationChoices({
   disabled: boolean
   onChoice: (choice: NotificationOnboardingChoice) => void
 }) {
+  const { t } = useTranslation()
+
   return (
     <>
       <ChoiceButton
-        label="Enable notifications"
-        accessibilityLabel="Enable agent notifications"
+        label={t('mobile.onboarding.notifications.enable', 'Enable notifications')}
+        accessibilityLabel={t(
+          'mobile.onboarding.notifications.enableA11y',
+          'Enable agent notifications'
+        )}
         primary
         busy={busyChoice === 'enable'}
         disabled={disabled}
         onPress={() => onChoice('enable')}
       />
       <ChoiceButton
-        label="Not now"
-        accessibilityLabel="Skip notifications for now"
+        label={t('mobile.onboarding.notifications.skip', 'Not now')}
+        accessibilityLabel={t(
+          'mobile.onboarding.notifications.skipA11y',
+          'Skip notifications for now'
+        )}
         busy={busyChoice === 'skip'}
         disabled={disabled}
         onPress={() => onChoice('skip')}

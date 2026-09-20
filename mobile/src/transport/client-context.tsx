@@ -150,10 +150,13 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   )
 
   const refreshHostClient = useCallback(
-    (hostId: string) => {
+    (hostId: string, options?: { reconnectUnowned?: boolean }) => {
+      if (options?.reconnectUnowned) {
+        manualDemandRef.current.add(hostId)
+      }
       closeEntry(hostId, { forgetPrimedHost: true, preserveAcquisitions: true })
-      if ((pendingAcquisitionsRef.current.get(hostId) ?? 0) > 0) {
-        void openEntry(hostId)
+      if (options?.reconnectUnowned || (pendingAcquisitionsRef.current.get(hostId) ?? 0) > 0) {
+        void openEntry(hostId, options?.reconnectUnowned)
       }
     },
     [closeEntry, openEntry]
@@ -434,25 +437,21 @@ export function useHostClient(hostId: string | undefined): {
 }
 
 // Why: host-store's removeHost() must close the live client but has no React-side handle; this hook bridges to it.
-export function useRefreshHostClient(): (hostId: string) => void {
-  const ctx = useRpcClientContext()
-  return ctx.refreshHostClient
+export function useRefreshHostClient(): RpcClientContextValue['refreshHostClient'] {
+  return useRpcClientContext().refreshHostClient
 }
 
 export function useForgetHostClient(): (hostId: string) => void {
-  const ctx = useRpcClientContext()
-  return ctx.forgetHostClient
+  return useRpcClientContext().forgetHostClient
 }
 
 export function useDisconnectHostClient(): (hostId: string) => void {
-  const ctx = useRpcClientContext()
-  return ctx.disconnectHostClient
+  return useRpcClientContext().disconnectHostClient
 }
 
 // Why: future-proof "Connection issues — try again" affordance.
 export function useForceReconnect(): (hostId: string) => Promise<void> {
-  const ctx = useRpcClientContext()
-  return ctx.forceReconnect
+  return useRpcClientContext().forceReconnect
 }
 
 // Why: primes already-loaded HostProfiles so the provider can skip a second loadHosts()/Keychain pass on cold start.

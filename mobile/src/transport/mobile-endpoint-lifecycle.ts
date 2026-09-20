@@ -8,7 +8,12 @@ import {
   readMobileRelayCredentialBundle,
   writeMobileRelayCredentialBundle
 } from './mobile-relay-credential-bundle'
-import { saveHost } from './host-store'
+import {
+  getHostPairingEpoch,
+  MobileRelayUpgradeHostRemovedError,
+  saveExistingHostRelayUpgrade,
+  writeForCurrentHostPairing
+} from './host-store'
 import { upgradeDirectMobileRelay } from './mobile-relay-direct-upgrade'
 import { MobileRelayDirectUpgradeController } from './mobile-relay-direct-upgrade-controller'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
@@ -31,12 +36,20 @@ export function startMobileEndpointLifecycle(
   let stopped = false
   let foreground = true
   let owner: EndpointOwner
+  const pairingEpoch = getHostPairingEpoch(initialHost.id)
 
   const startSupervisor = async (host: HostProfile): Promise<void> => {
-    if (stopped) {
+    if (stopped || getHostPairingEpoch(host.id) !== pairingEpoch) {
+      owner.stop()
       return
     }
-    const supervisor = createSupervisor(logical, host, onLog)
+    const supervisor = createSupervisor(
+      logical,
+      host,
+      pairingEpoch,
+      onLog,
+      (candidate) => !stopped && owner === candidate
+    )
     owner.stop()
     owner = supervisor
     supervisor.setForeground(foreground)
@@ -44,7 +57,13 @@ export function startMobileEndpointLifecycle(
   }
 
   if (initialHost.relay) {
-    owner = createSupervisor(logical, initialHost, onLog)
+    owner = createSupervisor(
+      logical,
+      initialHost,
+      pairingEpoch,
+      onLog,
+      (candidate) => !stopped && owner === candidate
+    )
     void owner.start()
   } else {
     owner = new MobileRelayDirectUpgradeController(logical, initialHost, {
@@ -52,7 +71,11 @@ export function startMobileEndpointLifecycle(
         upgradeDirectMobileRelay({
           client,
           host,
-          dependencies: { randomBytes: ExpoCrypto.getRandomBytes }
+          expectedPairingEpoch: pairingEpoch,
+          isCurrentOwner: () => !stopped,
+          dependencies: {
+            randomBytes: ExpoCrypto.getRandomBytes
+          }
         }),
       onUpgraded: ({ host }) => startSupervisor(host)
     })
@@ -82,9 +105,12 @@ export function startMobileEndpointLifecycle(
 function createSupervisor(
   logical: StableLogicalRpcClient,
   host: HostProfile,
-  onLog: ConnectionLogSink
+  pairingEpoch: number,
+  onLog: ConnectionLogSink,
+  isCurrentOwner: (supervisor: MobileEndpointSupervisor) => boolean
 ): MobileEndpointSupervisor {
-  return new MobileEndpointSupervisor(logical, host, {
+  let supervisor: MobileEndpointSupervisor
+  supervisor = new MobileEndpointSupervisor(logical, host, {
     openDirect: (endpoint) => connect(endpoint, host.deviceToken, host.publicKeyB64, { onLog }),
     openRelay: (relay, credential, confirmReqId) =>
       connectMobileRelayRpcSession({
@@ -98,12 +124,20 @@ function createSupervisor(
       }),
     resolveRelay: resolveMobileRelayEndpoint,
     readBundle: readMobileRelayCredentialBundle,
-    writeBundle: writeMobileRelayCredentialBundle,
-    saveHost,
+    writeBundle: (bundle) =>
+      writeForCurrentHostPairing(host, pairingEpoch, async () => {
+        if (!isCurrentOwner(supervisor)) {
+          throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade owner stopped')
+        }
+        await writeMobileRelayCredentialBundle(bundle)
+      }),
+    saveHost: (updated) =>
+      saveExistingHostRelayUpgrade(updated, pairingEpoch, () => isCurrentOwner(supervisor)),
     onLog,
     now: Date.now,
     randomBytes: ExpoCrypto.getRandomBytes,
     setTimer: setTimeout,
     clearTimer: clearTimeout
   })
+  return supervisor
 }
