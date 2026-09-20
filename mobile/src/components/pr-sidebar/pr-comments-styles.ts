@@ -1,4 +1,5 @@
 import { StyleSheet } from 'react-native'
+import { mobileEmojiTextStyle } from '../../theme/mobile-emoji-font-family'
 import { colors, radii, spacing, typography } from '../../theme/mobile-theme'
 
 // Styles for the PR comments timeline (body + audience tabs + comment cards +
@@ -164,6 +165,9 @@ export const prCommentsStyles = StyleSheet.create({
   reactionText: {
     color: colors.textPrimary,
     fontSize: typography.metaSize
+  },
+  reactionEmoji: {
+    ...mobileEmojiTextStyle
   },
   // Collapsible header for a resolved thread/comment group.
   resolvedHeader: {

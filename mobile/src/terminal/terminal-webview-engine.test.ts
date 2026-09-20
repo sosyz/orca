@@ -9,6 +9,7 @@ import {
   XTERM_MESLO_FONT_WOFF2_BASE64,
   XTERM_NERD_FONT_WOFF2_BASE64
 } from './terminal-webview-engine.generated'
+import { XTERM_EMOJI_FONT_WOFF2_BASE64 } from './terminal-webview-emoji-font.generated.harmony'
 import { XTERM_HTML } from './terminal-webview-html'
 import { TERMINAL_WEBGL_RECOVERY_JS } from './terminal-webview-webgl-recovery-injected'
 
@@ -18,6 +19,13 @@ const terminalHtmlSource = readFileSync(
 )
 const mesloFont = readFileSync(
   new URL('../../assets/fonts/MesloLGS-NF-Regular.woff2', import.meta.url)
+)
+const notoEmojiWebFont = readFileSync(
+  new URL('../../assets/fonts/Noto-COLRv1.woff2', import.meta.url)
+)
+const harmonyFontFacesSource = readFileSync(
+  new URL('./terminal-webview-font-faces.harmony.ts', import.meta.url),
+  'utf8'
 )
 
 function createWebglRecoveryHarness(failSecondAttach = false) {
@@ -123,7 +131,7 @@ describe('terminal WebView bundled engine', () => {
     expect(XTERM_HTML).toContain('unicode-range: U+E000-F8FF')
     expect(XTERM_HTML).toContain('font-style: normal; font-weight: 400')
     expect(XTERM_HTML).toContain(
-      'var terminalFontFamily = \'"MesloLGS NF", "Orca Nerd Font Symbols", \' '
+      'var terminalFontFamily = \'"MesloLGS NF", "Orca Nerd Font Symbols", \' + harmonyEmojiFontFamily'
     )
     expect(XTERM_HTML).toContain("fontWeight: '400'")
     expect(XTERM_HTML).toContain("fontWeightBold: '700'")
@@ -133,6 +141,27 @@ describe('terminal WebView bundled engine', () => {
     expect(XTERM_HTML).toContain(
       "waitForTerminalFont().then(function() { notify({ type: 'web-ready' }); });"
     )
+  })
+
+  it('embeds the Harmony emoji face after terminal text fonts without rawfile font loads', () => {
+    expect(notoEmojiWebFont.subarray(0, 4).toString()).toBe('wOF2')
+    expect(createHash('sha256').update(notoEmojiWebFont).digest('hex')).toBe(
+      'eea43aa18f7ae8ac50828d3b0907d2a881d0896a8ca4f5f6da471beecc7c13a2'
+    )
+    expect(Buffer.from(XTERM_EMOJI_FONT_WOFF2_BASE64, 'base64').equals(notoEmojiWebFont)).toBe(true)
+    expect(harmonyFontFacesSource.indexOf('font-family: "MesloLGS NF"')).toBeLessThan(
+      harmonyFontFacesSource.indexOf('font-family: "Orca Nerd Font Symbols"')
+    )
+    expect(harmonyFontFacesSource.indexOf('font-family: "Orca Nerd Font Symbols"')).toBeLessThan(
+      harmonyFontFacesSource.indexOf('font-family: "Orca Emoji"')
+    )
+    const emojiFaceStart = harmonyFontFacesSource.indexOf('font-family: "Orca Emoji"')
+    const emojiFaceEnd = harmonyFontFacesSource.indexOf('}`', emojiFaceStart)
+    expect(harmonyFontFacesSource.slice(emojiFaceStart, emojiFaceEnd)).not.toContain(
+      'unicode-range'
+    )
+    expect(harmonyFontFacesSource).toContain('data:font/woff2;base64,')
+    expect(harmonyFontFacesSource).not.toContain('resource://rawfile')
   })
 
   it('parses the bundled engine at the Chrome 74 syntax floor', () => {

@@ -173,7 +173,8 @@ function Prose({
     }
     return (
       <Text style={[styles.imageRef, { fontSize: TEXT_SIZE * fontScale }]}>
-        🖼 {block.alt ?? block.path ?? block.url ?? 'image'}
+        <Text style={styles.imageRefEmoji}>🖼</Text>{' '}
+        {block.alt ?? block.path ?? block.url ?? 'image'}
       </Text>
     )
   }

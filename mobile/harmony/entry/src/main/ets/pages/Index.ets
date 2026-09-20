@@ -30,7 +30,8 @@ struct Index {
             name: 'orca-mobile',
             createRNPackages: getRNOHPackages,
             fontResourceByFontFamily: {
-              'MesloLGS NF': $rawfile('fonts/MesloLGS-NF-Regular.ttf')
+              'MesloLGS NF': $rawfile('fonts/MesloLGS-NF-Regular.ttf'),
+              'Orca Emoji': $rawfile('fonts/Noto-COLRv1.ttf')
             },
             enableDebugger: this.rnohCoreContext.isDebugModeEnabled
           },

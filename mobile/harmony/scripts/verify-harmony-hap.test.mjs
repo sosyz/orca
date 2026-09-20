@@ -16,13 +16,36 @@ const mesloWoff2Path = join(
   'MesloLGS-NF-Regular.woff2'
 )
 const mesloWoff2 = readFileSync(mesloWoff2Path)
-const hermesBundleWithMesloWoff2 = Buffer.concat([
+const notoEmojiWoff2Path = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  'assets',
+  'fonts',
+  'Noto-COLRv1.woff2'
+)
+const notoEmojiWoff2 = readFileSync(notoEmojiWoff2Path)
+const notoColorEmojiPath = join(
+  import.meta.dirname,
+  '..',
+  'entry',
+  'src',
+  'main',
+  'resources',
+  'rawfile',
+  'fonts',
+  'Noto-COLRv1.ttf'
+)
+const notoColorEmoji = readFileSync(notoColorEmojiPath)
+const hermesBundleWithTerminalFonts = Buffer.concat([
   Buffer.from('c61fbc03c103191f00', 'hex'),
-  Buffer.from(mesloWoff2.toString('base64'))
+  Buffer.from(mesloWoff2.toString('base64')),
+  Buffer.from(notoEmojiWoff2.toString('base64'))
 ])
 const verifyOptions = {
   expectedVersion,
   mesloWoff2Path,
+  notoEmojiWoff2Path,
   verifySourceResources: false
 }
 
@@ -68,8 +91,10 @@ function requiredEntries(overrides = {}) {
     'resources/rawfile/fonts/Apache-2.0.txt': 'license'.repeat(30),
     'resources/rawfile/fonts/MesloLGS-NF-License.txt': 'license'.repeat(30),
     'resources/rawfile/fonts/MesloLGS-NF-Regular.ttf': Buffer.from('0001000000', 'hex'),
+    'resources/rawfile/fonts/Noto-COLRv1.ttf': notoColorEmoji,
+    'resources/rawfile/fonts/NotoEmoji-OFL-1.1.txt': 'license'.repeat(30),
     'resources/rawfile/fonts/SymbolsNerdFontMono-OFL.txt': 'license'.repeat(30),
-    'resources/rawfile/hermes_bundle.hbc': hermesBundleWithMesloWoff2,
+    'resources/rawfile/hermes_bundle.hbc': hermesBundleWithTerminalFonts,
     ...overrides
   }
 }
@@ -221,15 +246,16 @@ test('rejects plaintext JavaScript in the final HAP', () => {
   })
 })
 
-test('rejects the duplicate legacy rawfile terminal font', () => {
-  withHap(
-    requiredEntries({
-      'resources/rawfile/fonts/MesloLGS-NF-Regular.woff2': mesloWoff2
-    }),
-    (path) => {
-      assert.throws(() => verifyHarmonyReleaseHap(path, verifyOptions), /duplicate terminal WOFF2/u)
-    }
-  )
+test('rejects duplicate rawfile terminal WOFF2 fonts', () => {
+  const cases = [
+    ['resources/rawfile/fonts/MesloLGS-NF-Regular.woff2', mesloWoff2],
+    ['resources/rawfile/fonts/Noto-COLRv1.woff2', notoEmojiWoff2]
+  ]
+  for (const [name, value] of cases) {
+    withHap(requiredEntries({ [name]: value }), (path) => {
+      assert.throws(() => verifyHarmonyReleaseHap(path, verifyOptions), /duplicate terminal/u)
+    })
+  }
 })
 
 test('rejects a debug HAP even when its payload is otherwise valid', () => {
@@ -296,10 +322,32 @@ test('rejects HBC without the embedded build-time terminal font', () => {
   )
 })
 
+test('rejects HBC without the embedded terminal emoji font', () => {
+  withHap(
+    requiredEntries({
+      'resources/rawfile/hermes_bundle.hbc': Buffer.concat([
+        Buffer.from('c61fbc03c103191f00', 'hex'),
+        Buffer.from(mesloWoff2.toString('base64'))
+      ])
+    }),
+    (path) => {
+      assert.throws(() => verifyHarmonyReleaseHap(path, verifyOptions), /terminal WebView emoji/u)
+    }
+  )
+})
+
 test('rejects malformed packaged native font and native binaries', () => {
   withHap(
     requiredEntries({
       'resources/rawfile/fonts/MesloLGS-NF-Regular.ttf': 'not-a-font'
+    }),
+    (path) => {
+      assert.throws(() => verifyHarmonyReleaseHap(path, verifyOptions), /not TTF/u)
+    }
+  )
+  withHap(
+    requiredEntries({
+      'resources/rawfile/fonts/Noto-COLRv1.ttf': 'not-a-font'
     }),
     (path) => {
       assert.throws(() => verifyHarmonyReleaseHap(path, verifyOptions), /not TTF/u)
@@ -314,7 +362,7 @@ test('rejects resources that do not match the release source tree', () => {
   const entries = requiredEntries()
   withSourceResources(entries, (harmonyRoot) => {
     entries['resources/rawfile/hermes_bundle.hbc'] = Buffer.concat([
-      hermesBundleWithMesloWoff2,
+      hermesBundleWithTerminalFonts,
       Buffer.from([1])
     ])
     withHap(entries, (path) => {
@@ -323,7 +371,8 @@ test('rejects resources that do not match the release source tree', () => {
           verifyHarmonyReleaseHap(path, {
             expectedVersion,
             harmonyRoot,
-            mesloWoff2Path
+            mesloWoff2Path,
+            notoEmojiWoff2Path
           }),
         /contains stale resources\/rawfile\/hermes_bundle\.hbc/u
       )

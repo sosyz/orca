@@ -1,4 +1,5 @@
 import { StyleSheet } from 'react-native'
+import { mobileEmojiTextStyle } from '../theme/mobile-emoji-font-family'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 
 export const TEXT_SIZE = 17
@@ -130,6 +131,9 @@ export const styles = StyleSheet.create({
   imageRef: {
     color: colors.textSecondary,
     fontSize: TEXT_SIZE
+  },
+  imageRefEmoji: {
+    ...mobileEmojiTextStyle
   },
   imageThumb: {
     width: 200,

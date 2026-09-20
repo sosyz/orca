@@ -24,6 +24,9 @@ vi.mock('lucide-react-native', () => ({
   SquareChevronRight: 'SquareChevronRight'
 }))
 vi.mock('../components/MobileMarkdown', () => ({ MobileMarkdown: 'MobileMarkdown' }))
+vi.mock('../theme/mobile-emoji-font-family', () => ({
+  mobileEmojiTextStyle: { fontFamily: 'Orca Emoji' }
+}))
 
 import { MobileNativeChatMessage } from './MobileNativeChatMessage'
 
@@ -76,10 +79,15 @@ describe('MobileNativeChatMessage', () => {
     // A host temp path (e.g. on an SSH host) is not loadable on the device.
     const tree = render(userMessage([{ type: 'image-ref', path: '/tmp/host.png' }]))
     expect(tree.root.findAllByType('Image' as never)).toHaveLength(0)
-    const texts = tree.root
+    const placeholder = tree.root
       .findAllByType('Text' as never)
-      .map((node) => String(node.children.join('')))
-    expect(texts.some((text) => text.includes('/tmp/host.png'))).toBe(true)
+      .find((node) => String(node.children.join('')).includes('/tmp/host.png'))
+    const emoji = tree.root
+      .findAllByType('Text' as never)
+      .find((node) => String(node.children.join('')) === '🖼')
+    expect(placeholder).toBeDefined()
+    expect(placeholder?.props.style[0]).not.toHaveProperty('fontFamily')
+    expect(emoji?.props.style).toEqual(expect.objectContaining({ fontFamily: 'Orca Emoji' }))
   })
 
   it('labels a tool row with the target path instead of raw input JSON', () => {

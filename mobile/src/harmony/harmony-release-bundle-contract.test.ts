@@ -15,20 +15,27 @@ describe('Harmony release bundle contract', () => {
     )
   })
 
-  it('registers the packaged Nerd Font for Harmony native monospace text', () => {
+  it('registers the packaged fonts for Harmony native text', () => {
     const index = readFileSync(join(harmonyRoot, 'entry/src/main/ets/pages/Index.ets'), 'utf8')
     const harmonyFontFamily = readFileSync(
       join(mobileRoot, 'src/theme/mobile-mono-font-family.harmony.ts'),
       'utf8'
     )
-    const font = readFileSync(
+    const monoFont = readFileSync(
       join(harmonyRoot, 'entry/src/main/resources/rawfile/fonts/MesloLGS-NF-Regular.ttf')
+    )
+    const emojiFont = readFileSync(
+      join(harmonyRoot, 'entry/src/main/resources/rawfile/fonts/Noto-COLRv1.ttf')
     )
 
     expect(index).toContain("'MesloLGS NF': $rawfile('fonts/MesloLGS-NF-Regular.ttf')")
+    expect(index).toContain("'Orca Emoji': $rawfile('fonts/Noto-COLRv1.ttf')")
     expect(harmonyFontFamily).toContain("mobileMonoFontFamily = 'MesloLGS NF'")
-    expect(createHash('sha256').update(font).digest('hex')).toBe(
+    expect(createHash('sha256').update(monoFont).digest('hex')).toBe(
       'd97946186e97f8d7c0139e8983abf40a1d2d086924f2c5dbf1c29bd8f2c6e57d'
+    )
+    expect(createHash('sha256').update(emojiFont).digest('hex')).toBe(
+      '0ae57fe58645638523ba35f388d93739d292539a9acb84df5700c81b1e1a28d2'
     )
   })
 

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react-native'
 import { Image, StyleSheet, Text, View } from 'react-native'
 import type { RepoIcon } from '../../../src/shared/repo-icon'
+import { mobileEmojiTextStyle } from '../theme/mobile-emoji-font-family'
 import { colors } from '../theme/mobile-theme'
 
 // The lucide names the desktop repo-icon picker offers (src/renderer/src/
@@ -83,6 +84,7 @@ export function MobileRepoIcon({ repoIcon, size = 14, color = colors.textSeconda
 
 const styles = StyleSheet.create({
   emoji: {
+    ...mobileEmojiTextStyle,
     textAlign: 'center'
   },
   glyph: {

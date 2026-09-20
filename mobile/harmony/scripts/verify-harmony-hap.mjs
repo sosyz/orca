@@ -10,11 +10,15 @@ const ELF_MAGIC = '7f454c46'
 const TTF_MAGIC = '00010000'
 const WOFF2_MAGIC = '774f4632'
 const MESLO_WOFF2_SOURCE_PATH = ['assets', 'fonts', 'MesloLGS-NF-Regular.woff2']
+const NOTO_COLRV1_WOFF2_SOURCE_PATH = ['assets', 'fonts', 'Noto-COLRv1.woff2']
 const DUPLICATE_TERMINAL_WOFF2_ENTRY = 'resources/rawfile/fonts/MesloLGS-NF-Regular.woff2'
+const DUPLICATE_EMOJI_WOFF2_ENTRY = 'resources/rawfile/fonts/Noto-COLRv1.woff2'
 const REQUIRED_ENTRIES = [
   'resources/rawfile/hermes_bundle.hbc',
   'resources/rawfile/fonts/MesloLGS-NF-Regular.ttf',
+  'resources/rawfile/fonts/Noto-COLRv1.ttf',
   'resources/rawfile/fonts/MesloLGS-NF-License.txt',
+  'resources/rawfile/fonts/NotoEmoji-OFL-1.1.txt',
   'resources/rawfile/fonts/Apache-2.0.txt',
   'resources/rawfile/fonts/SymbolsNerdFontMono-OFL.txt',
   'libs/arm64-v8a/librnoh_app.so'
@@ -88,6 +92,22 @@ function assertEmbeddedTerminalFontMatchesSource(archive, harmonyRoot, options) 
   )
 }
 
+function assertEmbeddedTerminalEmojiFontMatchesSource(archive, harmonyRoot, options) {
+  const fontPath =
+    options.notoEmojiWoff2Path ?? join(harmonyRoot, '..', ...NOTO_COLRV1_WOFF2_SOURCE_PATH)
+  const terminalEmojiFont = readFileSync(fontPath)
+  assert(
+    terminalEmojiFont.subarray(0, 4).toString('hex') === WOFF2_MAGIC,
+    'Build-time terminal emoji font is not WOFF2'
+  )
+  const embeddedFont = Buffer.from(terminalEmojiFont.toString('base64'))
+  const hbc = archive.readEntry('resources/rawfile/hermes_bundle.hbc')
+  assert(
+    hbc.includes(embeddedFont),
+    'Release HAP terminal WebView emoji font does not match the build-time Noto COLRv1 WOFF2'
+  )
+}
+
 export function verifyHarmonyReleaseHap(hapPath, options = {}) {
   const resolvedPath = resolve(hapPath)
   const harmonyRoot = options.harmonyRoot ?? resolve(import.meta.dirname, '..')
@@ -139,6 +159,10 @@ export function verifyHarmonyReleaseHap(hapPath, options = {}) {
     !entrySet.has(DUPLICATE_TERMINAL_WOFF2_ENTRY),
     'Release HAP still packages duplicate terminal WOFF2 rawfile'
   )
+  assert(
+    !entrySet.has(DUPLICATE_EMOJI_WOFF2_ENTRY),
+    'Release HAP still packages duplicate terminal emoji WOFF2 rawfile'
+  )
   const plaintextEntries = archive.entryNames.filter((name) =>
     /(?:^|\/)(?:bundle\.harmony\.js|[^/]+\.js(?:\.map)?|[^/]+\.map)$/iu.test(name)
   )
@@ -173,10 +197,16 @@ export function verifyHarmonyReleaseHap(hapPath, options = {}) {
   assert(hbc.length > 8, 'Release HAP contains empty Hermes bytecode')
   assert(hbc.subarray(0, 8).toString('hex') === HERMES_MAGIC, 'Release HAP bundle is not HBC')
   assertEmbeddedTerminalFontMatchesSource(archive, harmonyRoot, options)
+  assertEmbeddedTerminalEmojiFontMatchesSource(archive, harmonyRoot, options)
   const nativeFont = archive.readEntry('resources/rawfile/fonts/MesloLGS-NF-Regular.ttf')
   assert(
     nativeFont.subarray(0, 4).toString('hex') === TTF_MAGIC,
     'Release HAP native monospace font is not TTF'
+  )
+  const nativeEmojiFont = archive.readEntry('resources/rawfile/fonts/Noto-COLRv1.ttf')
+  assert(
+    nativeEmojiFont.subarray(0, 4).toString('hex') === TTF_MAGIC,
+    'Release HAP native emoji font is not TTF'
   )
   const nativeLibrary = archive.readEntry('libs/arm64-v8a/librnoh_app.so')
   assert(
@@ -186,6 +216,7 @@ export function verifyHarmonyReleaseHap(hapPath, options = {}) {
   for (const licenseEntry of [
     'resources/rawfile/fonts/MesloLGS-NF-License.txt',
     'resources/rawfile/fonts/Apache-2.0.txt',
+    'resources/rawfile/fonts/NotoEmoji-OFL-1.1.txt',
     'resources/rawfile/fonts/SymbolsNerdFontMono-OFL.txt'
   ]) {
     assert(

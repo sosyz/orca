@@ -59,6 +59,7 @@ export const XTERM_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <script>
 window.__engineErrors = [];
+if (window.__ORCA_HARMONY_WEBVIEW__ === true) document.documentElement.classList.add('orca-harmony-webview');
 window.onerror = function(msg) {
   // Why: a degraded engine can throw per frame; cap so the capture buffer
   // and downstream reporting stay bounded for the document's lifetime.
@@ -86,6 +87,7 @@ window.onerror = function(msg) {
     display: inline-block;
   }
   .xterm { -webkit-user-select: none; user-select: none; font-variant-emoji: text; }
+  html.orca-harmony-webview .xterm { font-variant-emoji: normal; }
   .xterm .xterm-viewport {
     overflow-y: hidden !important;
     scrollbar-width: none !important;
@@ -268,10 +270,12 @@ window.onerror = function(msg) {
     if (/iP(ad|hone|od)/.test(navigator.userAgent)) return true;
     return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
   }
+  function isHarmonyWebView() { return window.__ORCA_HARMONY_WEBVIEW__ === true; }
   // Why: both faces are embedded because ArkWeb blocks resource:// font subrequests;
   // Meslo matches Powerlevel10k while the symbols face covers newer Nerd Font prompts.
   var SYSTEM_MONOSPACE_FALLBACKS = '"Menlo", "Monaco", "Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
-  var terminalFontFamily = '"MesloLGS NF", "Orca Nerd Font Symbols", ' + (isIOSWebView() ? 'ui-monospace, ' : '"SF Mono", ') + SYSTEM_MONOSPACE_FALLBACKS;
+  var harmonyEmojiFontFamily = isHarmonyWebView() ? '"Orca Emoji", ' : '';
+  var terminalFontFamily = '"MesloLGS NF", "Orca Nerd Font Symbols", ' + harmonyEmojiFontFamily + (isIOSWebView() ? 'ui-monospace, ' : '"SF Mono", ') + SYSTEM_MONOSPACE_FALLBACKS;
   // Why: change the real font size, then resize the grid to fit the viewport at
   // the new cell metrics so the text shows at its true size immediately. RN's
   // refit (measure → updateViewport) then makes the server reflow the PTY to the

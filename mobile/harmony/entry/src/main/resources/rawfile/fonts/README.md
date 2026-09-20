@@ -30,3 +30,24 @@ The shared terminal WebView code embeds a generated base64 WOFF2 payload
 (`XTERM_NERD_FONT_WOFF2_BASE64`) from `SymbolsNerdFontMono-Regular.woff2` as a
 cross-platform glyph fallback. Its notice and SIL OFL 1.1 terms are included
 in `SymbolsNerdFontMono-OFL.txt`.
+
+# Noto COLRv1 emoji
+
+Harmony packages Google Noto Emoji `Noto-COLRv1.ttf` as `Orca Emoji`, sourced
+from `googlefonts/noto-emoji` tag `v2.051`. The TTF is registered for native
+React Native text through RNOH.
+
+The matching `../../../../../../../assets/fonts/Noto-COLRv1.woff2` was
+losslessly encoded from the TTF with FontTools 4.60.2 and is embedded as a
+Harmony-only terminal WebView data URL by
+`scripts/build-terminal-webview-engine.mjs`. The terminal keeps Meslo and Nerd
+Font first for text/cell metrics, then adds `Orca Emoji` before system fallback.
+Device rendering evidence, not this packaging note alone, verifies that Harmony
+ArkWeb actually uses the bundled COLRv1 face.
+
+| Font              | Source                         | SHA-256                                                            |
+| ----------------- | ------------------------------ | ------------------------------------------------------------------ |
+| Noto-COLRv1.ttf   | `fonts/Noto-COLRv1.ttf` v2.051 | `0ae57fe58645638523ba35f388d93739d292539a9acb84df5700c81b1e1a28d2` |
+| Noto-COLRv1.woff2 | FontTools 4.60.2 from the TTF  | `eea43aa18f7ae8ac50828d3b0907d2a881d0896a8ca4f5f6da471beecc7c13a2` |
+
+Distributed under the SIL Open Font License 1.1 in `NotoEmoji-OFL-1.1.txt`.

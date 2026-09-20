@@ -36,11 +36,14 @@ output = chunks.map(function(chunk) { return normalizeStatusDotPresentation(chun
   return context.output ?? ''
 }
 
-function resolveTerminalFontFamily(navigatorValue: {
-  userAgent: string
-  platform: string
-  maxTouchPoints: number
-}) {
+function resolveTerminalFontFamily(
+  navigatorValue: {
+    userAgent: string
+    platform: string
+    maxTouchPoints: number
+  },
+  isHarmony = false
+) {
   // Slice only the font block itself (isIOSWebView + terminalFontFamily), anchored
   // on font-related markers so unrelated edits below it can't break this extraction.
   const functionStart = terminalHtmlSource.indexOf('  function isIOSWebView()')
@@ -49,8 +52,9 @@ function resolveTerminalFontFamily(navigatorValue: {
   expect(functionStart).toBeGreaterThanOrEqual(0)
   expect(declarationLine).toBeGreaterThan(functionStart)
   expect(declarationEnd).toBeGreaterThan(declarationLine)
-  const context: { navigator: typeof navigatorValue; output?: string } = {
-    navigator: navigatorValue
+  const context: { navigator: typeof navigatorValue; output?: string; window: object } = {
+    navigator: navigatorValue,
+    window: { __ORCA_HARMONY_WEBVIEW__: isHarmony }
   }
   new Script(`
 ${terminalHtmlSource.slice(functionStart, declarationEnd)}
@@ -100,6 +104,12 @@ describe('TerminalWebView text zoom', () => {
 
   it('forces the Claude status dot to text presentation before xterm writes', () => {
     expect(terminalHtmlSource).toContain('font-variant-emoji: text')
+    expect(terminalHtmlSource).toContain(
+      'html.orca-harmony-webview .xterm { font-variant-emoji: normal; }'
+    )
+    expect(terminalHtmlSource).toContain(
+      "document.documentElement.classList.add('orca-harmony-webview')"
+    )
     expect(terminalHtmlSource).toContain('var CLAUDE_STATUS_DOT = String.fromCharCode(0x23fa)')
     expect(terminalHtmlSource).toContain('TEXT_PRESENTATION_SELECTOR = String.fromCharCode(0xfe0e)')
     expect(terminalHtmlSource).toContain(
@@ -224,5 +234,16 @@ describe('TerminalWebView text zoom', () => {
     const iosFontFamily = resolveTerminalFontFamily(IOS_IPHONE_NAVIGATOR)
     const tailFrom = (family: string) => family.slice(family.indexOf('"Menlo"'))
     expect(tailFrom(androidFontFamily)).toBe(tailFrom(iosFontFamily))
+  })
+
+  it('starts Harmony WebViews with terminal text fonts before the embedded emoji face', () => {
+    const harmonyFontFamily = resolveTerminalFontFamily(ANDROID_NAVIGATOR, true)
+
+    expect(
+      harmonyFontFamily.startsWith(
+        '"MesloLGS NF", "Orca Nerd Font Symbols", "Orca Emoji", "SF Mono", "Menlo"'
+      )
+    ).toBe(true)
+    expect(harmonyFontFamily.endsWith(', monospace')).toBe(true)
   })
 })

@@ -51,7 +51,7 @@ function Reactions({ reactions }: { reactions?: GitHubReaction[] }) {
     <View style={styles.reactionsRow}>
       {visible.map((r) => (
         <View key={r.content} style={styles.reactionChip}>
-          <Text>{REACTION_EMOJI[r.content]}</Text>
+          <Text style={styles.reactionEmoji}>{REACTION_EMOJI[r.content]}</Text>
           <Text style={styles.reactionText}>{r.count}</Text>
         </View>
       ))}
