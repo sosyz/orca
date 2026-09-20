@@ -1,5 +1,6 @@
 import type { MobileTerminalTheme } from '../terminal/terminal-webview-contract'
 import type { AgentStatusEntry } from '../../../src/shared/agent-status-types'
+import type { RuntimeMobileSessionHistoricalDiff } from '../../../src/shared/runtime-mobile-session-tab-contracts'
 
 export type TerminalRecord = {
   handle: string
@@ -47,6 +48,9 @@ type MobileSessionTabLike =
       filePath?: string
       relativePath?: string
       language?: string
+      mode?: 'edit' | 'diff'
+      diffSource?: 'staged' | 'unstaged' | 'branch' | 'commit'
+      historicalDiff?: RuntimeMobileSessionHistoricalDiff
       isDirty?: boolean
       isActive?: boolean
     }
@@ -140,6 +144,9 @@ function mobileSessionTabEqual(
         a.filePath === b.filePath &&
         a.relativePath === b.relativePath &&
         a.language === b.language &&
+        a.mode === b.mode &&
+        a.diffSource === b.diffSource &&
+        JSON.stringify(a.historicalDiff ?? null) === JSON.stringify(b.historicalDiff ?? null) &&
         a.isDirty === b.isDirty
       )
     case 'browser':

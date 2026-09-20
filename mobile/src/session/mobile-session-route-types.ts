@@ -1,6 +1,7 @@
 import type { DiffComment } from '../../../src/shared/diff-comment-types'
 import type { TuiAgent } from '../../../src/shared/tui-agent'
 import type { AgentStatusEntry } from '../../../src/shared/agent-status-types'
+import type { RuntimeMobileSessionHistoricalDiff } from '../../../src/shared/runtime-mobile-session-tab-contracts'
 import type { MobileBrowserTab } from '../browser/MobileBrowserPane'
 import type { MobileTerminalTheme } from '../terminal/terminal-webview-contract'
 import type { MobileDiffLine } from './mobile-diff-lines'
@@ -49,6 +50,7 @@ export type MobileSessionTab =
       language?: string
       mode?: 'edit' | 'diff'
       diffSource?: 'staged' | 'unstaged' | 'branch' | 'commit'
+      historicalDiff?: RuntimeMobileSessionHistoricalDiff
       isDirty: boolean
       isActive: boolean
     }

@@ -1579,19 +1579,23 @@ export default function SessionScreen() {
         const doc = await resolveMobileFileTabDoc(client, {
           worktreeId,
           relativePath: tab.relativePath,
-          diffSource: tab.diffSource
+          mode: tab.mode,
+          diffSource: tab.diffSource,
+          historicalDiff: tab.historicalDiff
         })
         setFileDocs((prev) => new Map(prev).set(tab.id, doc))
       } catch (err) {
         const message = err instanceof Error ? err.message : ''
         const previewMessage =
-          message === 'binary_file'
-            ? 'Binary preview unavailable'
-            : message === 'file_too_large'
-              ? 'File too large for mobile preview'
-              : tab.diffSource === 'staged' || tab.diffSource === 'unstaged'
-                ? "Couldn't load diff preview"
-                : "Couldn't load file preview"
+          message === 'historical_diff_unavailable'
+            ? 'Historical diff unavailable. Update the host and reopen this tab.'
+            : message === 'binary_file'
+              ? 'Binary preview unavailable'
+              : message === 'file_too_large'
+                ? 'File too large for mobile preview'
+                : tab.mode === 'diff' || tab.diffSource || tab.historicalDiff
+                  ? "Couldn't load diff preview"
+                  : "Couldn't load file preview"
         setFileDocs((prev) =>
           new Map(prev).set(tab.id, {
             status: 'error',

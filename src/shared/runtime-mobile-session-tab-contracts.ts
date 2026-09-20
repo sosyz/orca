@@ -51,6 +51,10 @@ export type RuntimeMobileSessionMarkdownTab = {
   isPinned?: boolean
 }
 
+export type RuntimeMobileSessionHistoricalDiff =
+  | { kind: 'branch'; mergeBase: string; headOid: string; oldPath?: string }
+  | { kind: 'commit'; commitOid: string; parentOid: string | null; oldPath?: string }
+
 export type RuntimeMobileSessionFileTab = {
   type: 'file'
   id: string
@@ -60,6 +64,8 @@ export type RuntimeMobileSessionFileTab = {
   language: string
   mode?: 'edit' | 'diff'
   diffSource?: 'staged' | 'unstaged'
+  /** Fixed comparison endpoints; absent on hosts that cannot publish historical diffs. */
+  historicalDiff?: RuntimeMobileSessionHistoricalDiff
   isDirty: boolean
   color?: string | null
   isPinned?: boolean

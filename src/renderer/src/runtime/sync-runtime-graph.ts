@@ -562,6 +562,7 @@ function buildRuntimeMobileOpenFilesProjection(openFiles: AppState['openFiles'])
       language: file.language,
       mode: file.mode,
       diffSource: file.diffSource,
+      historicalDiff: buildMobileHistoricalDiff(file),
       isDirty: file.isDirty,
       isUntitled: file.isUntitled,
       deleteUntouchedOnClose: file.deleteUntouchedOnClose,
@@ -2063,6 +2064,32 @@ function buildMobileMarkdownTab(
   }
 }
 
+function buildMobileHistoricalDiff(
+  file: AppState['openFiles'][number]
+): RuntimeMobileSessionFileTab['historicalDiff'] {
+  return file.mode === 'diff' &&
+    file.diffSource === 'branch' &&
+    file.branchCompare?.mergeBase &&
+    file.branchCompare.headOid
+    ? {
+        kind: 'branch',
+        mergeBase: file.branchCompare.mergeBase,
+        headOid: file.branchCompare.headOid,
+        ...(file.branchOldPath ? { oldPath: file.branchOldPath } : {})
+      }
+    : file.mode === 'diff' &&
+        file.diffSource === 'commit' &&
+        file.commitCompare?.commitOid &&
+        file.commitCompare.parentOid !== undefined
+      ? {
+          kind: 'commit',
+          commitOid: file.commitCompare.commitOid,
+          parentOid: file.commitCompare.parentOid,
+          ...(file.branchOldPath ? { oldPath: file.branchOldPath } : {})
+        }
+      : undefined
+}
+
 function buildMobileFileTab(
   inputs: MobileSessionWorktreeInputs,
   file: AppState['openFiles'][number],
@@ -2070,6 +2097,7 @@ function buildMobileFileTab(
 ): RuntimeMobileSessionFileTab {
   const title = file.relativePath.split(/[\\/]/).pop() || file.relativePath || 'File'
   const diffSource = isMobileFileDiffSource(file.diffSource) ? file.diffSource : undefined
+  const historicalDiff = buildMobileHistoricalDiff(file)
   const unifiedTabId = unifiedTab?.id
 
   return {
@@ -2081,6 +2109,7 @@ function buildMobileFileTab(
     language: file.language,
     mode: file.mode === 'diff' ? 'diff' : 'edit',
     ...(diffSource ? { diffSource } : {}),
+    ...(historicalDiff ? { historicalDiff } : {}),
     isDirty: file.isDirty,
     color: unifiedTab?.color ?? null,
     isPinned: unifiedTab?.isPinned === true,

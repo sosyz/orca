@@ -1,9 +1,11 @@
 import { buildImageDataUri } from '../../../src/shared/image-data-uri'
+import type { RuntimeMobileSessionHistoricalDiff } from '../../../src/shared/runtime-mobile-session-tab-contracts'
 import { classifyMobileArtifact } from '../session/mobile-artifact-kind'
 import { buildMobileDiffLines, type MobileDiffLine } from '../session/mobile-diff-lines'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcFailure, RpcSuccess } from '../transport/types'
 import { mobileDiffImageDataUri, type MobileBinaryDiffResult } from './mobile-diff-image-preview'
+import { isMobileMethodUnavailableError } from './file-list-fallback'
 
 type FileTabDocClient = Pick<RpcClient, 'sendRequest'>
 
@@ -18,7 +20,9 @@ export type MobileFileTabDoc =
 export type MobileFileTabDocRequest = {
   worktreeId: string
   relativePath: string
+  mode?: 'edit' | 'diff'
   diffSource?: 'staged' | 'unstaged' | 'branch' | 'commit'
+  historicalDiff?: RuntimeMobileSessionHistoricalDiff
 }
 
 // Throws 'binary_file'/'file_too_large'/the RPC error message; callers map those
@@ -29,14 +33,19 @@ export async function resolveMobileFileTabDoc(
 ): Promise<MobileFileTabDoc> {
   const worktree = `id:${request.worktreeId}`
   const { relativePath } = request
-  if (request.diffSource === 'staged' || request.diffSource === 'unstaged') {
-    const response = await client.sendRequest('git.diff', {
+  const diffRequest = resolveDiffRequest(request)
+  if (diffRequest) {
+    const response = await client.sendRequest(diffRequest.method, {
       worktree,
       filePath: relativePath,
-      staged: request.diffSource === 'staged'
+      ...diffRequest.params
     })
     if (!response.ok) {
-      throw new Error((response as RpcFailure).error.message)
+      const { error } = response as RpcFailure
+      if (request.historicalDiff && isMobileMethodUnavailableError(error.code, error.message)) {
+        throw new Error('historical_diff_unavailable')
+      }
+      throw new Error(error.message)
     }
     const result = (response as RpcSuccess).result as
       | { kind: 'text'; originalContent: string; modifiedContent: string }
@@ -91,4 +100,37 @@ export async function resolveMobileFileTabDoc(
     truncated: result.truncated,
     byteLength: result.byteLength
   }
+}
+
+function resolveDiffRequest(request: MobileFileTabDocRequest) {
+  const comparison = request.historicalDiff
+  if (comparison?.kind === 'branch' && comparison.mergeBase && comparison.headOid) {
+    return {
+      method: 'git.branchDiff',
+      params: {
+        compare: { mergeBase: comparison.mergeBase, headOid: comparison.headOid },
+        ...(comparison.oldPath ? { oldPath: comparison.oldPath } : {})
+      }
+    }
+  }
+  if (comparison?.kind === 'commit' && comparison.commitOid && comparison.parentOid !== undefined) {
+    return {
+      method: 'git.commitDiff',
+      params: {
+        commitOid: comparison.commitOid,
+        parentOid: comparison.parentOid,
+        ...(comparison.oldPath ? { oldPath: comparison.oldPath } : {})
+      }
+    }
+  }
+  if (comparison) {
+    throw new Error('historical_diff_unavailable')
+  }
+  if (request.diffSource === 'staged' || request.diffSource === 'unstaged') {
+    return { method: 'git.diff', params: { staged: request.diffSource === 'staged' } }
+  }
+  if (request.mode === 'diff' || request.diffSource) {
+    throw new Error('historical_diff_unavailable')
+  }
+  return null
 }
