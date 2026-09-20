@@ -9,18 +9,14 @@ export interface HarmonyNetworkState {
 
 export class HarmonyNetworkService {
   private destroyed = false;
+  private registrationState: 'idle' | 'registering' | 'registered' = 'idle';
+  private registrationGeneration = 0;
   private publicationGeneration = 0;
   private lastPublished: HarmonyNetworkState | null = null;
   private readonly netConnection = connection.createNetConnection();
   private readonly emit: (eventName: string, payload: Object) => void;
-  private readonly networkCallback = (error: BusinessError): void => {
-    if (error) {
-      this.publishObserved(this.unknown());
-      return;
-    }
-    this.publishCurrent();
-  };
-
+  // Unregister's callback reports its own completion, not a listener identity.
+  private readonly unregisterCallback = (_error: BusinessError): void => {};
   constructor(emit: (eventName: string, payload: Object) => void) {
     this.emit = emit;
     this.netConnection.on('netAvailable', () => this.publishCurrent());
@@ -32,11 +28,11 @@ export class HarmonyNetworkService {
     this.netConnection.on('netCapabilitiesChange', (info) => {
       this.publishObserved(this.fromCapabilities(info.netCap));
     });
-    try {
-      this.netConnection.register(this.networkCallback);
-    } catch (_) {
-      this.publishObserved(this.unknown());
-    }
+    this.register();
+  }
+
+  onForeground(): void {
+    this.register();
   }
 
   async getState(): Promise<HarmonyNetworkState> {
@@ -53,9 +49,48 @@ export class HarmonyNetworkService {
     }
     this.destroyed = true;
     this.publicationGeneration += 1;
+    this.unregister();
+  }
+
+  private unregister(): void {
     try {
-      this.netConnection.unregister(this.networkCallback);
+      this.netConnection.unregister(this.unregisterCallback);
     } catch (_) {
+    }
+  }
+
+  private register(): void {
+    if (this.destroyed || this.registrationState !== 'idle') {
+      return;
+    }
+    this.registrationState = 'registering';
+    const generation = ++this.registrationGeneration;
+    try {
+      this.netConnection.register((error: BusinessError): void => {
+        if (generation !== this.registrationGeneration || this.registrationState !== 'registering') {
+          return;
+        }
+        if (this.destroyed) {
+          this.registrationState = 'idle';
+          if (!error) {
+            this.unregister();
+          }
+          return;
+        }
+        if (error) {
+          this.registrationState = 'idle';
+          this.publishObserved(this.unknown());
+          return;
+        }
+        this.registrationState = 'registered';
+        this.publishCurrent();
+      });
+    } catch (_) {
+      if (generation === this.registrationGeneration && this.registrationState === 'registering') {
+        this.registrationState = 'idle';
+        this.registrationGeneration += 1;
+        this.publishObserved(this.unknown());
+      }
     }
   }
 
@@ -65,6 +100,9 @@ export class HarmonyNetworkService {
   }
 
   private publishCurrent(publishFailure = true): void {
+    if (this.destroyed) {
+      return;
+    }
     const generation = this.nextPublicationGeneration();
     void this.readCurrentState().then(
       (state) => {
@@ -81,6 +119,9 @@ export class HarmonyNetworkService {
   }
 
   private publishObserved(state: HarmonyNetworkState): void {
+    if (this.destroyed) {
+      return;
+    }
     this.nextPublicationGeneration();
     this.emitState(state);
   }

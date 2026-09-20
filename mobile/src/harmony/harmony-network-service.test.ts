@@ -49,9 +49,9 @@ function capabilities(bearerType: string, validated = true): NetworkCapabilities
   }
 }
 
-function setupNetworkService() {
+function setupNetworkService(initialRegistrationError?: Error) {
   const handlers = new Map<NetEventName, (payload?: { netCap: NetworkCapabilities }) => void>()
-  let registeredCallback: ((error?: Error | null) => void) | null = null
+  const registrationCallbacks: Array<(error?: Error | null) => void> = []
   const emissions: Array<{ eventName: string; state: HarmonyNetworkState }> = []
   const netConnection = {
     on: vi.fn(
@@ -60,9 +60,12 @@ function setupNetworkService() {
       }
     ),
     register: vi.fn((callback: (error?: Error | null) => void) => {
-      registeredCallback = callback
+      registrationCallbacks.push(callback)
+      if (registrationCallbacks.length === 1 && initialRegistrationError) {
+        throw initialRegistrationError
+      }
     }),
-    unregister: vi.fn()
+    unregister: vi.fn<(_callback: (error?: Error | null) => void) => void>()
   }
   const getDefaultNet = vi.fn<() => Promise<string>>()
   const getNetCapabilities = vi.fn<(handle: string) => Promise<NetworkCapabilities>>()
@@ -70,6 +73,7 @@ function setupNetworkService() {
     HarmonyNetworkService: new (emit: (eventName: string, payload: object) => void) => {
       destroy(): void
       getState(): Promise<HarmonyNetworkState>
+      onForeground(): void
     }
   }>('HarmonyNetworkService.ets', {
     '@kit.NetworkKit': {
@@ -96,7 +100,7 @@ function setupNetworkService() {
     getDefaultNet,
     getNetCapabilities,
     netConnection,
-    registeredCallback,
+    registrationCallbacks,
     service
   }
 }
@@ -193,7 +197,77 @@ describe('HarmonyNetworkService', () => {
     await flushPromises()
 
     expect(setup.emissions).toEqual([])
-    expect(setup.netConnection.unregister).toHaveBeenCalledWith(setup.registeredCallback)
+    expect(setup.netConnection.unregister).toHaveBeenCalledWith(expect.any(Function))
+    expect(setup.netConnection.unregister.mock.calls[0][0]).not.toBe(setup.registrationCallbacks[0])
+  })
+
+  it('unregisters again when registration succeeds after destroy', () => {
+    const setup = setupNetworkService()
+
+    setup.service.destroy()
+    expect(setup.netConnection.unregister).toHaveBeenCalledTimes(1)
+    setup.netConnection.unregister.mock.calls[0][0](new Error('callback not registered yet'))
+
+    setup.registrationCallbacks[0](null)
+    expect(setup.netConnection.unregister).toHaveBeenCalledTimes(2)
+    setup.netConnection.unregister.mock.calls[1][0](null)
+    expect(setup.netConnection.unregister).toHaveBeenCalledTimes(2)
+    setup.emitNative('netAvailable')
+    expect(setup.getDefaultNet).not.toHaveBeenCalled()
+    expect(setup.emissions).toEqual([])
+  })
+
+  it('retries a failed registration on foreground and then observes the current network', async () => {
+    const setup = setupNetworkService()
+    setup.getDefaultNet.mockResolvedValue('wifi')
+    setup.getNetCapabilities.mockResolvedValue(capabilities(NetBearType.BEARER_WIFI))
+
+    setup.registrationCallbacks[0](new Error('network service temporarily unavailable'))
+    expect(setup.emissions.map(({ state }) => state.type)).toEqual(['UNKNOWN'])
+
+    setup.service.onForeground()
+    expect(setup.netConnection.register).toHaveBeenCalledTimes(2)
+    setup.registrationCallbacks[1](null)
+    await vi.waitFor(() => {
+      expect(setup.emissions.map(({ state }) => state.type)).toEqual(['UNKNOWN', 'WIFI'])
+    })
+  })
+
+  it('retries a synchronous registration failure without accepting its late callback', async () => {
+    const setup = setupNetworkService(new Error('network service unavailable'))
+    setup.getDefaultNet.mockResolvedValue('cellular')
+    setup.getNetCapabilities.mockResolvedValue(capabilities(NetBearType.BEARER_CELLULAR))
+    expect(setup.emissions.map(({ state }) => state.type)).toEqual(['UNKNOWN'])
+
+    setup.service.onForeground()
+    expect(setup.netConnection.register).toHaveBeenCalledTimes(2)
+    setup.registrationCallbacks[0](null)
+    expect(setup.getDefaultNet).not.toHaveBeenCalled()
+    setup.registrationCallbacks[1](null)
+    await vi.waitFor(() => {
+      expect(setup.emissions.map(({ state }) => state.type)).toEqual(['UNKNOWN', 'CELLULAR'])
+    })
+  })
+
+  it('does not duplicate an in-flight or completed registration on foreground', () => {
+    const setup = setupNetworkService()
+
+    setup.service.onForeground()
+    expect(setup.netConnection.register).toHaveBeenCalledTimes(1)
+
+    setup.registrationCallbacks[0](null)
+    setup.service.onForeground()
+    expect(setup.netConnection.register).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry registration after destroy', () => {
+    const setup = setupNetworkService()
+
+    setup.registrationCallbacks[0](new Error('registration failed'))
+    setup.service.destroy()
+    setup.service.onForeground()
+
+    expect(setup.netConnection.register).toHaveBeenCalledTimes(1)
   })
 
   it('reports failed current-state reads as unknown rather than confirmed offline', async () => {

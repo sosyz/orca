@@ -8,6 +8,7 @@ type NetworkListener = (state: NetworkSnapshot) => void
 let appStateListener: AppStateListener | null = null
 let networkListener: NetworkListener | null = null
 let seededNetworkState: NetworkSnapshot = { isConnected: true, type: 'WIFI' }
+let seededNetworkPromise: Promise<NetworkSnapshot> | null = null
 const appStateRemove = vi.fn()
 const networkRemove = vi.fn()
 
@@ -21,7 +22,7 @@ vi.mock('react-native', () => ({
 }))
 
 vi.mock('expo-network', () => ({
-  getNetworkStateAsync: () => Promise.resolve(seededNetworkState),
+  getNetworkStateAsync: () => seededNetworkPromise ?? Promise.resolve(seededNetworkState),
   addNetworkStateListener: (listener: NetworkListener) => {
     networkListener = listener
     return { remove: networkRemove }
@@ -44,6 +45,7 @@ describe('subscribeConnectionRevivalTriggers', () => {
     appStateListener = null
     networkListener = null
     seededNetworkState = { isConnected: true, type: 'WIFI' }
+    seededNetworkPromise = null
     nudge = vi.fn()
   })
 
@@ -81,6 +83,42 @@ describe('subscribeConnectionRevivalTriggers', () => {
     networkListener?.({ isConnected: true, type: 'WIFI' })
     networkListener?.({ isConnected: true, type: 'WIFI' })
     expect(nudge).not.toHaveBeenCalled()
+  })
+
+  it('nudges on the first online event while the initial snapshot is still pending', async () => {
+    let resolveSeed!: (state: NetworkSnapshot) => void
+    seededNetworkPromise = new Promise((resolve) => {
+      resolveSeed = resolve
+    })
+    const unsubscribe = subscribeConnectionRevivalTriggers(nudge)
+
+    networkListener?.({ isConnected: true, type: 'WIFI' })
+    expect(nudge).toHaveBeenCalledExactlyOnceWith('network-change')
+
+    resolveSeed({ isConnected: false, type: 'NONE' })
+    await Promise.resolve()
+    networkListener?.({ isConnected: true, type: 'WIFI' })
+    expect(nudge).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
+  it('ignores queued app and network events after unsubscribe', async () => {
+    let resolveSeed!: (state: NetworkSnapshot) => void
+    seededNetworkPromise = new Promise((resolve) => {
+      resolveSeed = resolve
+    })
+    const unsubscribe = subscribeConnectionRevivalTriggers(nudge)
+    unsubscribe()
+    unsubscribe()
+
+    appStateListener?.('active')
+    networkListener?.({ isConnected: true, type: 'WIFI' })
+    resolveSeed({ isConnected: false, type: 'NONE' })
+    await Promise.resolve()
+
+    expect(nudge).not.toHaveBeenCalled()
+    expect(appStateRemove).toHaveBeenCalledTimes(1)
+    expect(networkRemove).toHaveBeenCalledTimes(1)
   })
 
   it('ignores a stale seed that resolves after unsubscribe', async () => {

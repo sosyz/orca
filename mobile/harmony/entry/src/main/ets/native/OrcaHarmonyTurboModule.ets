@@ -139,6 +139,7 @@ export class OrcaHarmonyTurboModule extends UITurboModule implements HarmonyAppL
   }
 
   onHarmonyForeground(): void {
+    this.network.onForeground();
     void this.keepAwake.setForeground(true).catch(() => undefined);
   }
 

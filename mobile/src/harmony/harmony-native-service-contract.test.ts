@@ -106,11 +106,14 @@ describe('Harmony native service safety contract', () => {
     expect(source).toContain('private sameState(')
     expect(source).toContain('if (this.destroyed)')
     expect(source).toContain('this.destroyed = true')
-    expect(source).toContain('private readonly networkCallback')
-    expect(source).toContain('register(this.networkCallback)')
-    expect(source).toContain('unregister(this.networkCallback)')
+    expect(source).toContain("private registrationState: 'idle' | 'registering' | 'registered'")
+    expect(source).toContain('this.register()')
+    expect(source).toContain('unregister(this.unregisterCallback)')
+    expect(source).toContain("this.registrationState !== 'idle'")
+    expect(source).toContain("this.registrationState !== 'registering'")
+    expect(source).toContain('if (!error) {\n            this.unregister()')
     expect(source).toContain('try {\n      this.netConnection.unregister(')
-    expect(source).toContain('private readonly networkCallback = (error: BusinessError)')
+    expect(source).toContain('this.netConnection.register((error: BusinessError): void => {')
     expect(source).toContain('this.publishObserved(this.unknown())')
     expect(source).toContain("type: 'UNKNOWN'")
   })
@@ -340,6 +343,16 @@ describe('Harmony native service safety contract', () => {
     expect(passiveChecks).toContain('this.permissions.isGranted(PASTEBOARD_PERMISSION)')
     expect(passiveChecks).toContain('return false')
     expect(passiveChecks).not.toContain('this.permissions.request(PASTEBOARD_PERMISSION)')
+  })
+
+  it('retries a failed network listener registration when Harmony returns to foreground', () => {
+    const source = readNativeSource('OrcaHarmonyTurboModule.ets')
+    const foreground = source.slice(
+      source.indexOf('onHarmonyForeground(): void'),
+      source.indexOf('onHarmonyBackground(): void')
+    )
+
+    expect(foreground).toContain('this.network.onForeground()')
   })
 
   it('keeps microphone permission status queries separate from explicit requests', () => {
