@@ -6,6 +6,7 @@ import { getAppEnvironment } from '../../shared/app-environment'
 import { requireSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
 import { assertClipboardImageByteLengthWithinLimit } from '../../shared/clipboard-image'
+import { detectRasterImageFileFormat } from '../../shared/raster-image-format'
 
 export type SaveClipboardImageAsTempFileArgs = {
   connectionId?: string | null
@@ -27,7 +28,8 @@ export async function saveClipboardImageBufferAsTempFile(
 ): Promise<string> {
   assertClipboardImageByteLengthWithinLimit(buffer.byteLength)
 
-  const fileName = `orca-paste-${Date.now()}-${randomUUID()}.png`
+  const extension = detectRasterImageFileFormat(buffer)?.extension ?? '.png'
+  const fileName = `orca-paste-${Date.now()}-${randomUUID()}${extension}`
 
   if (args?.connectionId) {
     const provider = requireSshFilesystemProvider(args.connectionId)
