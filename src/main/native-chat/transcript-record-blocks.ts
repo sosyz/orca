@@ -81,7 +81,13 @@ function claudeContentBlock(record: Record<string, unknown>): NativeChatBlock | 
     }
     case 'tool_use': {
       const name = extractString(record.name) ?? 'tool'
-      return { type: 'tool-call', name, input: record.input }
+      const toolCallId = extractString(record.id)
+      return {
+        type: 'tool-call',
+        name,
+        input: record.input,
+        ...(toolCallId ? { toolCallId } : {})
+      }
     }
     case 'tool_result':
       return toolResultBlock(record)

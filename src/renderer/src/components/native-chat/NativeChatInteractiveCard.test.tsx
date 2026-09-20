@@ -23,6 +23,7 @@ const storeState = {
     'tab-1:leaf-1': {
       interactivePrompt: INITIAL_PROMPT as string | undefined,
       toolName: 'AskUserQuestion' as string | undefined,
+      interactiveRequestKey: undefined as string | undefined,
       state: undefined as string | undefined
     }
   }
@@ -111,6 +112,7 @@ describe('NativeChatInteractiveCard answer lifecycle', () => {
     vi.clearAllMocks()
     storeState.agentStatusByPaneKey['tab-1:leaf-1'].interactivePrompt = INITIAL_PROMPT
     storeState.agentStatusByPaneKey['tab-1:leaf-1'].state = undefined
+    storeState.agentStatusByPaneKey['tab-1:leaf-1'].interactiveRequestKey = undefined
   })
 
   afterEach(() => {
@@ -126,6 +128,61 @@ describe('NativeChatInteractiveCard answer lifecycle', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     expect(mocks.sendAnswer).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows a new identical approval only when its host request identity changes', () => {
+    const status = storeState.agentStatusByPaneKey['tab-1:leaf-1']
+    status.interactivePrompt = JSON.stringify({ approval: { tool: 'Bash', summary: 'pwd' } })
+    status.interactiveRequestKey = 'request-a'
+    const rendered = renderCard()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
+    expect(mocks.sendRaw).toHaveBeenCalledWith('1')
+    rendered.rerender(cardElement())
+    expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+
+    status.interactiveRequestKey = 'request-b'
+    rendered.rerender(cardElement())
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
+  })
+
+  it('retains content-based approval dismissal for hosts without request identity', () => {
+    const status = storeState.agentStatusByPaneKey['tab-1:leaf-1']
+    status.interactivePrompt = JSON.stringify({
+      approval: { tool: 'Bash', summary: 'pwd' }
+    })
+    const rendered = renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
+    rendered.rerender(cardElement())
+    expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+
+    status.interactiveRequestKey = 'first-known-request'
+    rendered.rerender(cardElement())
+    expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+    status.interactiveRequestKey = 'next-known-request'
+    rendered.rerender(cardElement())
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
+  })
+
+  it('keeps a dismissed approval hidden when its sticky status loses request identity', () => {
+    const status = storeState.agentStatusByPaneKey['tab-1:leaf-1']
+    status.interactivePrompt = JSON.stringify({ approval: { tool: 'Bash', summary: 'pwd' } })
+    status.interactiveRequestKey = 'request-a'
+    const rendered = renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
+
+    status.state = 'working'
+    status.interactiveRequestKey = undefined
+    rendered.rerender(cardElement())
+    expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+
+    status.state = 'waiting'
+    status.interactiveRequestKey = 'request-a'
+    rendered.rerender(cardElement())
+    expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument()
+    status.interactiveRequestKey = 'request-b'
+    rendered.rerender(cardElement())
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
   })
 
   it('cancels delayed PTY writes when the owning card unmounts', () => {
@@ -227,6 +284,40 @@ describe('NativeChatInteractiveCard transcript fallback', () => {
     cleanup()
   })
 
+  it('shows a new identical transcript tool request without resurfacing its sticky live predecessor', () => {
+    const call = (id: string): NativeChatMessage => ({
+      id: `message-${id}`,
+      role: 'assistant',
+      timestamp: 0,
+      source: 'transcript',
+      blocks: [
+        {
+          type: 'tool-call',
+          toolCallId: id,
+          name: 'AskUserQuestion',
+          input: JSON.parse(INITIAL_PROMPT)
+        }
+      ]
+    })
+    let settle: ((delivered: boolean) => void) | undefined
+    mocks.sendAnswer.mockImplementation((_prompt, _selections, callback) => {
+      settle = callback
+      return { settleAfterMs: 500, waitsForVerifiedDelivery: true }
+    })
+    const messages = [call('tool-a')]
+    const rendered = render(cardElement(true, messages))
+    chooseSpacesAndSubmit()
+    act(() => settle?.(true))
+    expect(screen.queryByText('Tabs or spaces?')).not.toBeInTheDocument()
+
+    storeState.agentStatusByPaneKey['tab-1:leaf-1'].interactivePrompt = INITIAL_PROMPT
+    rendered.rerender(cardElement(true, messages))
+    expect(screen.queryByText('Tabs or spaces?')).not.toBeInTheDocument()
+    storeState.agentStatusByPaneKey['tab-1:leaf-1'].interactivePrompt = undefined
+    rendered.rerender(cardElement(true, [messages[0]!, askResultMessage(), call('tool-b')]))
+    expect(screen.getByText('Tabs or spaces?')).toBeInTheDocument()
+  })
+
   it('renders a pending transcript ask and reports the composer replacement', () => {
     const onShowingQuestionChange = vi.fn()
     render(cardElement(true, [askCallMessage('Tabs or spaces?')], onShowingQuestionChange))
@@ -273,6 +364,42 @@ describe('NativeChatInteractiveCard transcript fallback', () => {
     rendered.rerender(cardElement(true, messages))
 
     expect(screen.queryByText('Tabs or spaces?')).not.toBeInTheDocument()
+  })
+
+  it('keeps the dismissal while a reconnect transcript read is unsettled', () => {
+    const messages = [askCallMessage('Tabs or spaces?')]
+    let settle: ((delivered: boolean) => void) | undefined
+    mocks.sendAnswer.mockImplementation((_prompt, _selections, callback) => {
+      settle = callback
+      return { settleAfterMs: 500, waitsForVerifiedDelivery: true }
+    })
+    const rendered = render(cardElement(true, messages))
+    chooseSpacesAndSubmit()
+    act(() => settle?.(true))
+    rendered.rerender(cardElement(true, messages, undefined, false))
+    rendered.rerender(cardElement(true, messages))
+    expect(screen.queryByText('Tabs or spaces?')).not.toBeInTheDocument()
+  })
+
+  it('keeps paced answers in flight while request identity metadata appears or disappears', () => {
+    const legacy = askCallMessage('Tabs or spaces?')
+    const identified = (id: string): NativeChatMessage => ({
+      ...legacy,
+      blocks: legacy.blocks.map((block) => ({ ...block, toolCallId: id }))
+    })
+    mocks.sendAnswer.mockReturnValue({ settleAfterMs: 500, waitsForVerifiedDelivery: true })
+    const rendered = render(cardElement(true, [legacy]))
+    chooseSpacesAndSubmit()
+    rendered.rerender(cardElement(true, [identified('tool-a')]))
+    expect(mocks.cancelPending).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Sending…' })).toBeDisabled()
+    rendered.rerender(cardElement(true, [legacy]))
+    expect(mocks.cancelPending).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Sending…' })).toBeDisabled()
+
+    rendered.rerender(cardElement(true, [identified('tool-b')]))
+    expect(mocks.cancelPending).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'Sending…' })).not.toBeInTheDocument()
   })
 
   it('clears once the FIFO tool result lands', () => {

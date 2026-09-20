@@ -29,6 +29,26 @@ describe('createHookStatusSessionTabsInvalidator', () => {
     expect(changed(working())).toBe(false)
   })
 
+  it('republishes a new Claude permission with identical content and a different tool id', () => {
+    const changed = createHookStatusSessionTabsInvalidator()
+    const permission = (toolUseId?: string): AgentHookEventPayload =>
+      working(
+        {
+          source: 'claude',
+          hookEventName: 'PermissionRequest',
+          providerSession: { key: 'session_id', id: 'session-a' },
+          toolUseId
+        },
+        { state: 'waiting', toolName: 'Bash', toolInput: 'npm test' }
+      )
+
+    expect(changed(permission('tool-a'))).toBe(true)
+    expect(changed(permission('tool-a'))).toBe(false)
+    expect(changed(permission('tool-b'))).toBe(true)
+    expect(changed(permission())).toBe(true)
+    expect(changed(permission())).toBe(false)
+  })
+
   it('invalidates when a restored row is confirmed by live activity', () => {
     const changed = createHookStatusSessionTabsInvalidator()
     changed(working({ restoredUnconfirmed: true }))

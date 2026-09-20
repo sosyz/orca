@@ -8,7 +8,11 @@ export type AskQuestion = {
   multiSelect: boolean
   options: AskOption[]
 }
-export type AskPrompt = { questions: AskQuestion[] }
+export type AskPrompt = {
+  questions: AskQuestion[]
+  /** Explicit source-owned request identity, never inferred from prompt content. */
+  requestKey?: string
+}
 
 /** A parser turns one agent's interactive-question tool input into the normalized
  *  AskPrompt the card renders. */

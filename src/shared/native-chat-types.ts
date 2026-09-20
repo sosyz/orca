@@ -51,6 +51,8 @@ export type NativeChatToolCallBlock = {
   type: 'tool-call'
   name: string
   input: unknown
+  /** Provider-authored invocation identity; absent on legacy transcripts/hosts. */
+  toolCallId?: string
 }
 
 /** The result returned to the agent for a prior tool call. */

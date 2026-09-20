@@ -1,10 +1,12 @@
 import type { AgentHookEventPayload } from '../../shared/agent-hook-listener/listener-event'
 import type { ParsedAgentStatusPayload } from '../../shared/agent-status-types'
+import { claudeInteractiveRequestKey } from './interactive-request-key'
 
 type KnownStatus = {
   connectionId: string | null
   payload: ParsedAgentStatusPayload
   restoredUnconfirmed: boolean
+  interactiveRequestKey?: string
 }
 
 /** Reports whether a hook status event changed anything the `session.tabs`
@@ -25,10 +27,12 @@ export function createHookStatusSessionTabsInvalidator(): {
     const previous = known.get(event.paneKey)
     const next = event.payload
     const restoredUnconfirmed = event.restoredUnconfirmed === true
+    const interactiveRequestKey = claudeInteractiveRequestKey(event)
     known.set(event.paneKey, {
       connectionId: event.connectionId,
       payload: next,
-      restoredUnconfirmed
+      restoredUnconfirmed,
+      interactiveRequestKey
     })
     return (
       !previous ||
@@ -41,7 +45,8 @@ export function createHookStatusSessionTabsInvalidator(): {
       (previous.payload.interrupted ?? false) !== (next.interrupted ?? false) ||
       (previous.payload.turnCompletedAt ?? null) !== (next.turnCompletedAt ?? null) ||
       (previous.payload.lastAssistantMessage ?? null) !== (next.lastAssistantMessage ?? null) ||
-      previous.restoredUnconfirmed !== restoredUnconfirmed
+      previous.restoredUnconfirmed !== restoredUnconfirmed ||
+      previous.interactiveRequestKey !== interactiveRequestKey
     )
   }
   // Why: a cleared pane must re-arm, else the memo swallows the first event of the

@@ -158,6 +158,8 @@ export type AgentStatusEntry = {
   terminalResumeEligible?: false
   /** Live-only Command Code turn boundary key; not persisted to last-status.json. */
   promptInteractionKey?: string
+  /** Opaque live request identity; absent on older hosts and hooks without an id. */
+  interactiveRequestKey?: string
   /** True for a nonterminal state hydrated from last-status.json with no live hook since:
    *  the transition may have been missed while no receiver was up, so freshness gates
    *  treat the row as stale immediately. Cleared by any accepted live event. */

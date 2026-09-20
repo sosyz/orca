@@ -71,6 +71,55 @@ describe('applyWebSessionTabsSnapshot', () => {
     expect(patch.sortEpoch).toBe(1)
   })
 
+  it('replaces a mirrored permission when only its request identity changes', () => {
+    const hostPaneKey = makePaneKey('host-tab-1', LEAF_ID)
+    const snapshot = (interactiveRequestKey: string, snapshotVersion: number) =>
+      makeSnapshot(
+        [
+          {
+            type: 'terminal' as const,
+            id: HOST_SURFACE_ID,
+            title: 'Claude',
+            parentTabId: 'host-tab-1',
+            leafId: LEAF_ID,
+            isActive: true,
+            status: 'ready' as const,
+            terminal: 'terminal-1',
+            agentStatus: {
+              state: 'waiting' as const,
+              prompt: 'same prompt',
+              updatedAt: NOW - 100,
+              stateStartedAt: NOW - 1_000,
+              agentType: 'claude' as const,
+              paneKey: hostPaneKey,
+              stateHistory: [],
+              interactiveRequestKey
+            }
+          }
+        ],
+        { snapshotVersion }
+      )
+    const initialPatch = applyWebSessionTabsSnapshot(
+      makeState(),
+      snapshot('request-a', 1),
+      ENV,
+      NOW
+    )
+    const initialState = { ...makeState(), ...initialPatch }
+    const mirroredPaneKey = Object.keys(initialPatch.agentStatusByPaneKey ?? {})[0]!
+
+    const replacement = applyWebSessionTabsSnapshot(
+      initialState,
+      snapshot('request-b', 2),
+      ENV,
+      NOW
+    )
+
+    expect(replacement.agentStatusByPaneKey?.[mirroredPaneKey]?.interactiveRequestKey).toBe(
+      'request-b'
+    )
+  })
+
   it('applies a marker-only host restart degradation to mirrored agent status', () => {
     const hostPaneKey = makePaneKey('host-tab-1', LEAF_ID)
     const snapshot = makeSnapshot([

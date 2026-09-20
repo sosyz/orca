@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../../store'
 import { resolveNativeChatAsk } from '../../../../shared/native-chat-ask'
+import {
+  advanceNativeChatPromptIdentity,
+  nativeChatPromptIdentityKey
+} from '../../../../shared/native-chat-prompt-identity'
 import type { NativeChatMessage } from '../../../../shared/native-chat-types'
 import { parseInteractivePrompt } from './native-chat-interactive-prompt'
 import { nativeChatCardDismissKey } from './native-chat-dismiss-key'
@@ -57,6 +61,9 @@ export function NativeChatInteractiveCard({
   // Thread the sibling `toolName` from the same status entry so the question
   // parser can dispatch through the tool's registered parser (mobile parity).
   const interactiveToolName = useAppStore((s) => s.agentStatusByPaneKey[paneKey]?.toolName ?? null)
+  const interactiveRequestKey = useAppStore(
+    (s) => s.agentStatusByPaneKey[paneKey]?.interactiveRequestKey
+  )
   const { sendAnswer, sendRaw, cancelPending, cancel } = send
 
   const card = useMemo(() => {
@@ -71,7 +78,20 @@ export function NativeChatInteractiveCard({
     })
     return prompt ? { kind: 'question' as const, prompt } : null
   }, [interactivePrompt, interactiveToolName, messages, transcriptSettled])
-  const cardKey = useMemo(() => nativeChatCardDismissKey(card), [card])
+  const contentKey = nativeChatCardDismissKey(card)
+  const scopedContentKey = contentKey === null ? null : JSON.stringify([paneKey, contentKey])
+  const requestKey = card?.kind === 'question' ? card.prompt.requestKey : interactiveRequestKey
+  const [identity, setIdentity] = useState(() =>
+    advanceNativeChatPromptIdentity(null, scopedContentKey, requestKey)
+  )
+  const nextIdentity =
+    card || transcriptSettled
+      ? advanceNativeChatPromptIdentity(identity, scopedContentKey, requestKey)
+      : identity
+  if (nextIdentity !== identity) {
+    setIdentity(nextIdentity)
+  }
+  const cardKey = card ? nativeChatPromptIdentityKey(identity) : null
   const [dismissedKey, setDismissedKey] = useState<string | null>(null)
   // A question answer is a paced multi-step write (body→Enter per question); keep
   // the card up until it settles instead of dismissing on the click, so it doesn't
@@ -101,10 +121,12 @@ export function NativeChatInteractiveCard({
   const present = card != null
   useEffect(() => {
     if (!present) {
-      setDismissedKey(null)
+      if (transcriptSettled) {
+        setDismissedKey(null)
+      }
       clearDismissTimer()
     }
-  }, [present, clearDismissTimer])
+  }, [present, transcriptSettled, clearDismissTimer])
 
   // Tell the view when a question card is up so it can hide the composer (this
   // card supplies its own input). Reset on unmount so the composer comes back.

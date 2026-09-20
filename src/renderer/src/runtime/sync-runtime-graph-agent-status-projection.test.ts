@@ -33,6 +33,7 @@ function referenceProjection(map: AppState['agentStatusByPaneKey']): string {
         toolName: entry.toolName ?? null,
         toolInput: entry.toolInput ?? null,
         interactivePrompt: entry.interactivePrompt ?? null,
+        interactiveRequestKey: entry.interactiveRequestKey ?? null,
         lastAssistantMessage: entry.lastAssistantMessage ?? null,
         interrupted: entry.interrupted ?? null
       }))
@@ -61,6 +62,17 @@ function makeEntry(index: number, overrides: Record<string, unknown> = {}): neve
 }
 
 describe('mobile agent-status projection equivalence', () => {
+  it('changes when a new request has the same visible prompt and timestamp bucket', () => {
+    resetRuntimeMobileAgentStatusProjectionCacheForTests()
+    const first = buildRuntimeMobileAgentStatusProjectionForTests({
+      'tab-0:leaf-0': makeEntry(0, { interactiveRequestKey: 'request-a' })
+    })
+    const second = buildRuntimeMobileAgentStatusProjectionForTests({
+      'tab-0:leaf-0': makeEntry(0, { interactiveRequestKey: 'request-b' })
+    })
+
+    expect(second).not.toBe(first)
+  })
   it('matches the whole-array serialization across shapes and cache reuse', () => {
     resetRuntimeMobileAgentStatusProjectionCacheForTests()
     const shapes: AppState['agentStatusByPaneKey'][] = []

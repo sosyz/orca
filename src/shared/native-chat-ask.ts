@@ -104,8 +104,8 @@ export function extractPendingAsk(messages: readonly NativeChatMessage[]): AskPr
   const outstanding: (AskPrompt | null)[] = []
   for (const message of messages) {
     // A new user turn (or an interrupt row) ends the turn that owns whatever
-    // calls are still in flight: their results never arrive, and `tool_use_id`
-    // is dropped at decode time so those orphans can never be matched by id.
+    // calls are still in flight: their results never arrive, and result ids
+    // are absent from the legacy wire model, so resolution remains FIFO.
     // Without this reset one orphan shifts the result FIFO for the rest of the
     // transcript and strands an answered ask as a permanent card over the
     // composer (#11761). Claude's tool-result turns decode as role 'tool'.
@@ -116,10 +116,15 @@ export function extractPendingAsk(messages: readonly NativeChatMessage[]): AskPr
     for (const block of message.blocks) {
       if (block.type === 'tool-call') {
         const parsed = parseToolInput(block.name, block.input)
-        if (parsed) {
-          pending = parsed
+        const toolCallId = typeof block.toolCallId === 'string' ? block.toolCallId.trim() : ''
+        const identified =
+          parsed && toolCallId
+            ? { ...parsed, requestKey: JSON.stringify(['transcript-tool', toolCallId]) }
+            : parsed
+        if (identified) {
+          pending = identified
         }
-        outstanding.push(parsed)
+        outstanding.push(identified)
       } else if (block.type === 'tool-result' && outstanding.length > 0) {
         const resolved = outstanding.shift()
         if (resolved && resolved === pending) {

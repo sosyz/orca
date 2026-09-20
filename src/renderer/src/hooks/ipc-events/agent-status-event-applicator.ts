@@ -234,10 +234,13 @@ export function createAgentStatusEventApplicator(args: {
         ...(ownershipConnectionId !== undefined ? { connectionId: ownershipConnectionId } : {})
       },
       metadata:
-        data.providerSession || data.launchToken
+        data.providerSession || data.launchToken || data.interactiveRequestKey
           ? {
               ...(data.providerSession ? { providerSession: data.providerSession } : {}),
-              ...(data.launchToken ? { launchToken: data.launchToken } : {})
+              ...(data.launchToken ? { launchToken: data.launchToken } : {}),
+              ...(data.interactiveRequestKey
+                ? { interactiveRequestKey: data.interactiveRequestKey }
+                : {})
             }
           : undefined
     }

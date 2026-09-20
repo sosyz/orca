@@ -307,6 +307,7 @@ import { StarNagService } from './star-nag/service'
 import { agentHookServer, type AgentHookProviderSessionIdentity } from './agent-hooks/server'
 import { createHookProviderSessionInvalidator } from './agent-hooks/hook-provider-session-invalidation'
 import { createHookStatusSessionTabsInvalidator } from './agent-hooks/hook-status-session-tabs-invalidation'
+import { claudeInteractiveRequestKey } from './agent-hooks/interactive-request-key'
 import { wslHookRelayManager } from './agent-hooks/wsl-hook-relay-manager'
 import { maybeAutoRenameBranchOnFirstWork } from './agent-hooks/first-work-branch-rename'
 import { rememberBranchRenameFailureOutput } from './agent-hooks/branch-rename-failure-output'
@@ -1730,6 +1731,9 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
       providerSession,
       providerSessionOnly,
       promptInteractionKey,
+      source,
+      hookEventName,
+      toolUseId,
       restoredUnconfirmed,
       observation,
       isReplay
@@ -1768,6 +1772,16 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
               launchConfig: runtime?.getAgentStatusLaunchConfigForPaneKey(paneKey, { launchToken })
             })
           : false
+      const interactiveRequestKey = claudeInteractiveRequestKey({
+        paneKey,
+        connectionId,
+        payload,
+        source,
+        hookEventName,
+        toolUseId,
+        providerSession,
+        launchToken
+      })
       const statusEvent = {
         ...payload,
         paneKey,
@@ -1780,6 +1794,7 @@ function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}): Brow
         stateStartedAt,
         ...(providerSession ? { providerSession } : {}),
         ...(promptInteractionKey ? { promptInteractionKey } : {}),
+        ...(interactiveRequestKey ? { interactiveRequestKey } : {}),
         ...(restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
         ...(observation ? { observation } : {}),
         ...(orchestration ? { orchestration } : {})

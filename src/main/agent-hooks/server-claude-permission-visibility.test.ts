@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentHookServer, _internals } from './server'
-import { buildBody, PANE } from './server.test-fixtures'
+import { buildBody, PANE, postHookEvent } from './server.test-fixtures'
 
 const { getCohortAtEmitMock, trackMock } = vi.hoisted(() => ({
   getCohortAtEmitMock: vi.fn(),
@@ -27,6 +27,50 @@ afterEach(() => {
 })
 
 describe('AgentHookServer listener replay', () => {
+  it('gives distinct same-content Claude permission requests a session-scoped public key', async () => {
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const permission = (sessionId: string, toolUseId?: string) =>
+        buildBody({
+          hook_event_name: 'PermissionRequest',
+          session_id: sessionId,
+          tool_use_id: toolUseId,
+          tool_name: 'Bash',
+          tool_input: { command: 'npm test' }
+        })
+      const readKey = (): unknown => server.getStatusSnapshot()[0]?.interactiveRequestKey
+
+      await postHookEvent(server, permission('session-a', 'tool-a'))
+      const first = readKey()
+      expect(first).toEqual(expect.any(String))
+      expect(first).not.toContain('tool-a')
+      await postHookEvent(server, permission('session-a', 'tool-a'))
+      expect(readKey()).toBe(first)
+      await postHookEvent(server, permission('session-a', 'tool-b'))
+      expect(readKey()).not.toBe(first)
+      const second = readKey()
+      await postHookEvent(server, permission('session-b', 'tool-b'))
+      expect(readKey()).not.toBe(second)
+      await postHookEvent(
+        server,
+        buildBody({
+          hook_event_name: 'PostToolUse',
+          session_id: 'session-b',
+          tool_use_id: 'tool-b',
+          tool_name: 'Bash',
+          tool_input: { command: 'npm test' }
+        })
+      )
+      expect(server.getStatusSnapshot()[0]?.state).toBe('working')
+      expect(readKey()).toBeUndefined()
+      await postHookEvent(server, permission('session-b'))
+      expect(readKey()).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
   it('keeps Claude permission visible when another subagent reports tool activity', async () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production' })

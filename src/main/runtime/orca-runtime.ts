@@ -1915,6 +1915,7 @@ type RuntimeAgentRowSnapshot = {
   // When the current payload.state was first observed for this pane (ms).
   stateStartedAt: number
   updatedAt: number
+  interactiveRequestKey?: string
 }
 
 type RuntimeWorkingTerminalEvidence = {
@@ -1947,7 +1948,7 @@ type RuntimeWorktreeAgentSource = {
  *  snapshot so one projection branch can consume either carrier. */
 type HookLiveAgentRow = Pick<
   RuntimeAgentRowSnapshot,
-  'payload' | 'updatedAt' | 'stateStartedAt' | 'worktreeId'
+  'payload' | 'updatedAt' | 'stateStartedAt' | 'worktreeId' | 'interactiveRequestKey'
 >
 
 type RuntimeHeadlessTerminal = {
@@ -36736,6 +36737,13 @@ export class OrcaRuntimeService {
     // Why: OSC 9999 hook payload carries real state/prompt/agent; without preferring it, hook-only transitions never surfaced (#7970).
     const liveRow = retained ?? this.resolveHookLiveAgentRow(hookRow.live, pty, nonAgentTitle)
     if (liveRow) {
+      const interactiveRequestKey =
+        liveRow.interactiveRequestKey ??
+        (retained &&
+        hookRow.live?.interactiveRequestKey &&
+        terminalStatusPayloadMatchesHook(hookRow.live.payload, retained.payload, true)
+          ? hookRow.live.interactiveRequestKey
+          : undefined)
       const liveStatus = normalizeCompatibleAgentStatusEntryForOwner(
         {
           ...liveRow.payload,
@@ -36759,7 +36767,13 @@ export class OrcaRuntimeService {
         preserveQuestionUnderShellTitle: true
       })
       if (renewedStatus) {
-        return { agentStatus: renewedStatus }
+        return {
+          agentStatus:
+            (renewedStatus.state === 'waiting' || renewedStatus.state === 'blocked') &&
+            interactiveRequestKey
+              ? { ...renewedStatus, interactiveRequestKey }
+              : renewedStatus
+        }
       }
     }
     // Last resort: the pane's hook evidence is identity only (resume rows, stale
@@ -36891,6 +36905,9 @@ export class OrcaRuntimeService {
             payload: pickParsedAgentStatusPayload(live),
             updatedAt: live.receivedAt,
             stateStartedAt: live.stateStartedAt ?? live.receivedAt,
+            ...(live.interactiveRequestKey
+              ? { interactiveRequestKey: live.interactiveRequestKey }
+              : {}),
             ...(live.worktreeId ? { worktreeId: live.worktreeId } : {})
           }
         : null

@@ -147,6 +147,20 @@ describe('headless hook agent-status projection (#11761)', () => {
     )
   })
 
+  it('publishes a distinct optional request key for otherwise identical live hook requests', async () => {
+    const first = await projectAgentStatus([
+      hookRow({ interactiveRequestKey: 'request-a' } as Partial<AgentStatusIpcPayload>)
+    ])
+    const second = await projectAgentStatus([
+      hookRow({ interactiveRequestKey: 'request-b' } as Partial<AgentStatusIpcPayload>)
+    ])
+    const legacy = await projectAgentStatus([hookRow()])
+
+    expect(first?.interactiveRequestKey).toBe('request-a')
+    expect(second?.interactiveRequestKey).toBe('request-b')
+    expect(legacy).not.toHaveProperty('interactiveRequestKey')
+  })
+
   it('publishes a gated turn end as event metadata, not stored agent status', async () => {
     const turnCompletedAt = Date.now()
     const runtime = await createRuntimeWithHookRows([
@@ -237,6 +251,29 @@ describe('headless hook agent-status projection (#11761)', () => {
 
     expect(tab?.type === 'terminal' && tab.agentStatus).toEqual(
       expect.objectContaining({ state: 'working', prompt: 'fix the tests' })
+    )
+  })
+
+  it('keeps a matching hook request key when an OSC row supplies the visible status', async () => {
+    const runtime = await createRuntimeWithHookRows([
+      hookRow({ interactiveRequestKey: 'request-a' } as Partial<AgentStatusIpcPayload>)
+    ])
+    runtime.onPtyData(
+      PTY_ID,
+      `\x1b]9999;${JSON.stringify({
+        state: 'waiting',
+        prompt: 'Tabs or spaces?',
+        agentType: 'claude',
+        toolName: 'AskUserQuestion',
+        interactivePrompt: ASK_PROMPT
+      })}\x07`,
+      100
+    )
+
+    const result = await runtime.listMobileSessionTabs(`id:${WORKTREE_ID}`)
+    const tab = result.tabs[0]
+    expect(tab?.type === 'terminal' && tab.agentStatus).toEqual(
+      expect.objectContaining({ state: 'waiting', interactiveRequestKey: 'request-a' })
     )
   })
 

@@ -62,6 +62,18 @@ describe('nativeChatAskDismissKey', () => {
 })
 
 describe('extractPendingAsk', () => {
+  it('carries explicit invocation identity without changing the canonical question content', () => {
+    const ask = (toolCallId: string) =>
+      extractPendingAsk([
+        message('message', [
+          { type: 'tool-call', name: 'AskUserQuestion', input: QUESTIONS_INPUT, toolCallId }
+        ])
+      ])!
+    expect(ask('a').requestKey).toBe(ask('a').requestKey)
+    expect(ask('a').requestKey).not.toBe(ask('b').requestKey)
+    expect(nativeChatAskDismissKey(ask('a'))).toBe(nativeChatAskDismissKey(ask('b')))
+  })
+
   it('recognizes an unregistered tool whose input matches the canonical questions shape', () => {
     // The live path (parseAskFromStatus) accepts this shape from any tool name;
     // transcript replay must not silently drop the same pending question.

@@ -11,6 +11,40 @@ describe('agent status tool + assistant fields', () => {
     vi.useRealTimers()
   })
 
+  it('replaces a proved permission request key and clears it on work or legacy status', () => {
+    vi.useFakeTimers()
+    const store = createTestStore()
+    const paneKey = 'tab-1:1'
+    const waiting = { state: 'waiting' as const, prompt: 'same', agentType: 'claude' as const }
+    store.getState().setAgentStatus(paneKey, waiting, undefined, undefined, undefined, {
+      interactiveRequestKey: 'request-a'
+    })
+    expect(store.getState().agentStatusByPaneKey[paneKey]?.interactiveRequestKey).toBe('request-a')
+
+    store.getState().setAgentStatus(paneKey, waiting, undefined, undefined, undefined, {
+      interactiveRequestKey: 'request-b'
+    })
+    expect(store.getState().agentStatusByPaneKey[paneKey]?.interactiveRequestKey).toBe('request-b')
+
+    store.getState().setAgentStatus(paneKey, waiting)
+    expect(store.getState().agentStatusByPaneKey[paneKey]).not.toHaveProperty(
+      'interactiveRequestKey'
+    )
+    store
+      .getState()
+      .setAgentStatus(
+        paneKey,
+        { state: 'working', prompt: 'same', agentType: 'claude' },
+        undefined,
+        undefined,
+        undefined,
+        { interactiveRequestKey: 'stale' }
+      )
+    expect(store.getState().agentStatusByPaneKey[paneKey]).not.toHaveProperty(
+      'interactiveRequestKey'
+    )
+  })
+
   it('writes toolName, toolInput, and lastAssistantMessage straight onto the entry', () => {
     vi.useFakeTimers()
     const store = createTestStore()

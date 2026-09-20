@@ -133,6 +133,7 @@ export type AgentStatusMetadata = {
   providerSession?: AgentProviderSessionMetadata
   launchConfig?: SleepingAgentLaunchConfig
   launchToken?: string
+  interactiveRequestKey?: string
   terminalResumeEligible?: false
 }
 
@@ -2368,6 +2369,10 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             ? { terminalResumeEligible: false as const }
             : {}),
           ...(promptInteractionKey ? { promptInteractionKey } : {}),
+          ...((payload.state === 'waiting' || payload.state === 'blocked') &&
+          metadata?.interactiveRequestKey
+            ? { interactiveRequestKey: metadata.interactiveRequestKey }
+            : {}),
           ...(payload.restoredUnconfirmed ? { restoredUnconfirmed: true } : {}),
           // Why: `updatedAt` cannot order two writes inside one millisecond — and the accept check
           // above admits equal timestamps — so a deferred process-exit drop needs a token ordered by
