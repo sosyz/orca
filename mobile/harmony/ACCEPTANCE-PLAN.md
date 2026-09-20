@@ -259,3 +259,26 @@ Post-incident code work continues without changing the paired device:
 - If production/device acceptance needs credentials, hardware or an independent
   approval that is unavailable, record the specific missing evidence while
   continuing all other actionable work. Do not replace it with mock approval.
+
+## 2026-09-19 source checkpoint and device follow-up
+
+The current team, source checks and exact unsigned HAP are recorded in
+[the September 19 review](./REVIEW-2026-09-19.md). That artifact has not been
+installed and does not replace the older installed-candidate evidence above.
+The following device checks remain open; deterministic regression tests already
+cover the corresponding callback and queue orderings.
+
+| Flow | Device scenario | Required result |
+| --- | --- | --- |
+| Session mutations | With a slow isolated host, rename/create/activate a terminal and switch workspace before completion | The original operation may complete on its host; its old receipt cannot replace the current tabs, focus, title or feedback |
+| Rename parity | Clear a custom terminal title; separately disconnect and reconnect while editing a title | Empty title restores automatic naming; a brief disconnect retains the editing draft |
+| Unsaved Markdown | Copy drafts and leave, then type or navigate before completion; repeat with system Back immediately after typing | New input remains recoverable; another page is never popped by the old copy receipt; pending input still triggers the unsaved prompt |
+| Retained Expo route | Push Settings from a session, use system Back, then return to the session | The background session does not consume Back; returning does not reactivate an old leave intent |
+| Modal closing | Cancel pairing input or draft discard, including rapid presses during the closing animation; reopen immediately | Cancelled callbacks cannot pair, discard or close a tab; each new opening remains usable |
+| Native-chat retention | Keep an unsent draft or attachment in A, then visit 33 otherwise empty conversations and return to A | Rebuildable inactive caches are evicted before A; 32 remains the existing capacity threshold, not an unlimited-draft guarantee |
+| Image and voice resources | Repeatedly pick/cancel large images; interrupt recording with backgrounding and permission changes | Original uploads retain their bytes; previews stay bounded; temporary files, image objects, streams and microphone ownership are released |
+| Mixed hosts and execution | Repeat affected document/tab operations with an older host, an SSH workspace and a folder workspace | Optional metadata degrades safely; execution remains on the owning host; loss of contact is never treated as process exit |
+
+Record the actual installed artifact identity, host version and platform for
+each completed row. Keep device observations separate from source-test results;
+the existing preserve-data runner does not verify installed-artifact identity.

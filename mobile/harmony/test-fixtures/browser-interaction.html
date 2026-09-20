@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orca browser interaction fixture</title>
+  <style>
+    header { position: sticky; top: 0; background: Canvas; border: 1px solid; }
+    section { margin-block: 1rem; }
+    #nested { height: 240px; overflow: auto; border: 1px solid; }
+    p { padding-block: 1rem; border-bottom: 1px solid; }
+    #drag { touch-action: none; width: 100px; height: 64px; border: 1px solid; }
+  </style>
+  <header>
+    <h1>Orca 远程网页交互测试</h1>
+    <output id="status" aria-live="polite"></output>
+  </header>
+  <section>
+    <h2>点击与输入</h2>
+    <button id="counter">点击计数</button>
+    <label>测试文本 <input id="text" autocomplete="off"></label>
+  </section>
+  <section>
+    <h2>独立滚动容器</h2>
+    <div id="nested" tabindex="0" aria-label="内层滚动区"></div>
+  </section>
+  <section>
+    <h2>滑块与拖拽</h2>
+    <label>滑块 <input id="range" type="range" min="0" max="100" value="0"></label>
+    <output id="rangeValue">0</output>
+    <div id="drag">拖动此方块</div>
+  </section>
+  <main id="rows"></main>
+  <script>
+    const nested = document.getElementById('nested');
+    const status = document.getElementById('status');
+    const drag = document.getElementById('drag');
+    let clicks = 0;
+    let dragStart = null;
+    function report() {
+      status.textContent = `页面 Y=${Math.round(scrollY)} · 内层 Y=${nested.scrollTop} · 点击=${clicks}`;
+    }
+    for (const [id, count, label] of [['nested', 30, '内层'], ['rows', 60, '页面']]) {
+      const host = document.getElementById(id);
+      for (let index = 1; index <= count; index++) {
+        const row = document.createElement('p');
+        row.textContent = `${label}第 ${index} 行 · English / 中文 / 😀 👩🏽‍💻 1️⃣`;
+        host.append(row);
+      }
+    }
+    addEventListener('scroll', report, { passive: true });
+    nested.addEventListener('scroll', report, { passive: true });
+    document.getElementById('counter').onclick = () => { clicks++; report(); };
+    document.getElementById('range').oninput = (event) => {
+      document.getElementById('rangeValue').value = event.target.value;
+    };
+    drag.onpointerdown = (event) => {
+      dragStart = { x: event.clientX, y: event.clientY };
+      drag.setPointerCapture(event.pointerId);
+    };
+    drag.onpointermove = (event) => {
+      if (dragStart) {
+        drag.style.transform = `translate(${event.clientX - dragStart.x}px, ${event.clientY - dragStart.y}px)`;
+      }
+    };
+    drag.onpointerup = drag.onpointercancel = () => { dragStart = null; };
+    report();
+  </script>
+</html>
