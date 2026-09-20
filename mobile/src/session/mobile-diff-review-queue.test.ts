@@ -87,6 +87,85 @@ describe('mobile diff review queue', () => {
     expect(queue[0]).toMatchObject({ noteCount: 2, unsentNoteCount: 1, staleNoteCount: 1 })
   })
 
+  it('keeps legacy, scope, rename, sent, and stale note counts separate by review item', () => {
+    const input = {
+      worktreeId: 'wt-1',
+      statusEntries: [
+        statusEntry({ path: 'src/shared.ts', area: 'unstaged' }),
+        statusEntry({ path: 'src/shared.ts', area: 'staged' }),
+        statusEntry({
+          path: 'src/renamed.ts',
+          oldPath: 'src/previous.ts',
+          area: 'unstaged',
+          status: 'renamed'
+        })
+      ],
+      branchEntries: [
+        branchEntry({ path: 'src/shared.ts' }),
+        branchEntry({ path: 'src/renamed.ts', oldPath: 'src/older.ts', status: 'renamed' })
+      ],
+      branchHeadOid: 'head',
+      branchMergeBase: 'base',
+      reviewState: emptyReviewState
+    }
+    const currentUnstagedIdentity = buildMobileDiffReviewQueue({ ...input, comments: [] }).find(
+      (item) => item.scope === 'unstaged' && item.filePath === 'src/shared.ts'
+    )!.diffIdentity
+    const queue = buildMobileDiffReviewQueue({
+      ...input,
+      comments: [
+        comment({ id: 'legacy', filePath: 'src/shared.ts', source: undefined, scope: undefined }),
+        comment({ id: 'staged-sent', filePath: 'src/shared.ts', scope: 'staged', sentAt: 20 }),
+        comment({
+          id: 'branch-stale',
+          filePath: 'src/shared.ts',
+          scope: 'branch',
+          diffIdentity: 'old'
+        }),
+        comment({
+          id: 'unstaged-current',
+          filePath: 'src/shared.ts',
+          scope: 'unstaged',
+          diffIdentity: currentUnstagedIdentity
+        }),
+        comment({ id: 'markdown', filePath: 'src/shared.ts', source: 'markdown' }),
+        comment({ id: 'other-file', filePath: 'src/other.ts' }),
+        comment({
+          id: 'legacy-rename',
+          filePath: 'src/renamed.ts',
+          scope: undefined,
+          oldPath: undefined
+        }),
+        comment({
+          id: 'exact-rename',
+          filePath: 'src/renamed.ts',
+          scope: 'unstaged',
+          oldPath: 'src/previous.ts',
+          diffIdentity: 'old'
+        }),
+        comment({ id: 'other-old-path', filePath: 'src/renamed.ts', oldPath: 'src/unrelated.ts' }),
+        comment({
+          id: 'branch-rename',
+          filePath: 'src/renamed.ts',
+          scope: 'branch',
+          oldPath: 'src/older.ts'
+        })
+      ]
+    })
+    const counts = (scope: string, filePath: string) => {
+      const item = queue.find(
+        (candidate) => candidate.scope === scope && candidate.filePath === filePath
+      )!
+      return [item.noteCount, item.unsentNoteCount, item.staleNoteCount]
+    }
+
+    expect(counts('unstaged', 'src/shared.ts')).toEqual([2, 2, 0])
+    expect(counts('staged', 'src/shared.ts')).toEqual([2, 1, 0])
+    expect(counts('branch', 'src/shared.ts')).toEqual([2, 2, 1])
+    expect(counts('unstaged', 'src/renamed.ts')).toEqual([2, 2, 1])
+    expect(counts('branch', 'src/renamed.ts')).toEqual([2, 2, 0])
+  })
+
   it('filters unreviewed files and noted files', () => {
     const reviewState: MobileDiffReviewState = {
       version: 1,

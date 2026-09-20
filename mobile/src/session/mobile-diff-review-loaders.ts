@@ -32,7 +32,7 @@ type BranchCompareLoadResult = {
 type DiffLoadInput = {
   client: RpcClient
   worktreeId: string
-  item: MobileDiffReviewQueueItem
+  item: Pick<MobileDiffReviewQueueItem, 'key' | 'scope' | 'filePath' | 'oldPath' | 'status'>
   branchCompare: MobileGitBranchCompareResult | null
 }
 
@@ -162,7 +162,7 @@ export async function loadMobileDiffReviewDiff(input: DiffLoadInput): Promise<Re
 async function loadBranchFileDiff(
   client: RpcClient,
   worktreeId: string,
-  item: MobileDiffReviewQueueItem,
+  item: DiffLoadInput['item'],
   branchCompare: MobileGitBranchCompareResult | null
 ) {
   const summary = branchCompare?.summary

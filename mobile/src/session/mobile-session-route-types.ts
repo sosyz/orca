@@ -100,6 +100,9 @@ export type RenderableDiffLine = MobileHighlightedDiffLine<MobileDiffLine>
 export type DiffCommentActions = {
   comments: DiffComment[]
   busy: boolean
+  loading?: boolean
+  loadError?: string | null
+  onRetry?: () => Promise<void>
   onAdd: (filePath: string, lineNumber: number, body: string) => Promise<boolean>
   onDelete: (commentId: string) => Promise<void>
   onCopyAll: () => Promise<void>

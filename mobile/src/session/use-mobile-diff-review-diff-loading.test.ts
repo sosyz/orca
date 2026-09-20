@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, useLayoutEffect } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
@@ -13,7 +13,12 @@ vi.mock('./mobile-diff-review-loaders', () => ({ loadMobileDiffReviewDiff: loadD
 const client = { sendRequest: vi.fn() } as unknown as RpcClient
 // Stable identity, like the controller's useState setter: it is an effect dependency.
 const setActiveHunkIndex = () => {}
-const currentItem = { key: 'item-1', filePath: 'src/app.ts' } as MobileDiffReviewQueueItem
+const currentItem = {
+  key: 'item-1',
+  filePath: 'src/app.ts',
+  scope: 'unstaged',
+  status: 'modified'
+} as MobileDiffReviewQueueItem
 const readyScreen = { kind: 'ready', branchCompare: null } as unknown as ReviewScreenState
 
 function readyDiff(firstLine: string): ReviewDiffState {
@@ -29,15 +34,23 @@ function readyDiff(firstLine: string): ReviewDiffState {
 describe('useMobileDiffReviewDiffLoading', () => {
   let renderer: ReactTestRenderer | null = null
   let diffState: ReviewDiffState = { kind: 'idle' }
+  let inputClient = client
+  let inputWorktreeId = 'wt-1'
+  let inputHostId = 'host-1'
+  const frames: ReviewDiffState[] = []
 
   function Probe({ connState }: { connState: ConnectionState }): null {
     diffState = useMobileDiffReviewDiffLoading({
-      client,
+      client: inputClient,
       connState,
-      worktreeId: 'wt-1',
+      hostId: inputHostId,
+      worktreeId: inputWorktreeId,
       currentItem,
       screenState: readyScreen,
       setActiveHunkIndex
+    })
+    useLayoutEffect(() => {
+      frames.push(diffState)
     })
     return null
   }
@@ -58,6 +71,10 @@ describe('useMobileDiffReviewDiffLoading', () => {
 
   beforeEach(() => {
     loadDiff.mockReset()
+    inputClient = client
+    inputWorktreeId = 'wt-1'
+    inputHostId = 'host-1'
+    frames.length = 0
   })
 
   afterEach(() => {
@@ -115,4 +132,26 @@ describe('useMobileDiffReviewDiffLoading', () => {
     await update('disconnected')
     expect(diffState).toMatchObject({ kind: 'error', message: 'Waiting for desktop...' })
   })
+
+  it.each(['client', 'host', 'worktree'])(
+    'does not retain a same-key diff after %s changes',
+    async (change) => {
+      loadDiff
+        .mockResolvedValueOnce(readyDiff('previous source'))
+        .mockReturnValueOnce(new Promise(() => {}))
+      await render('connected')
+      frames.length = 0
+      if (change === 'client') {
+        inputClient = { sendRequest: vi.fn() } as unknown as RpcClient
+      } else if (change === 'host') {
+        inputHostId = 'host-2'
+      } else {
+        inputWorktreeId = 'wt-2'
+      }
+      await update('connected')
+      expect(frames.every((frame) => frame.kind !== 'ready')).toBe(true)
+      expect(diffState.kind).toBe('loading')
+      expect(loadDiff).toHaveBeenCalledTimes(2)
+    }
+  )
 })

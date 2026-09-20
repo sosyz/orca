@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FlatList } from 'react-native'
 import type { DiffComment } from '../../../src/shared/diff-comment-types'
 import type { ConnectionState } from '../transport/types'
@@ -17,13 +17,12 @@ import {
   findMobileDiffReviewInitialIndex,
   type MobileDiffReviewInitialTarget
 } from './mobile-diff-review-positioning'
-import { loadMobileDiffReviewSnapshot } from './mobile-diff-review-loaders'
+import { useMobileDiffReviewSnapshot } from './use-mobile-diff-review-snapshot'
 import { useMobileDiffReviewDiffLoading } from './use-mobile-diff-review-diff-loading'
 import { canOpenMobileBranchCompareDiff } from '../source-control/mobile-branch-compare'
 import type {
   ComposerState,
   ReviewDiffLine,
-  ReviewScreenState,
   SendSheetState
 } from './mobile-diff-review-screen-model'
 import { useMobileDiffReviewInteractions } from './use-mobile-diff-review-interactions'
@@ -54,10 +53,8 @@ export function useMobileDiffReviewController(input: ControllerInput) {
     onReconnect
   } = input
   const listRef = useRef<FlatList<ReviewDiffLine> | null>(null)
-  const loadGenerationRef = useRef(0)
   const seededInitialTargetRef = useRef(false)
   const initialTargetKey = initialTarget ? `${initialTarget.area}\0${initialTarget.filePath}` : ''
-  const [screenState, setScreenState] = useState<ReviewScreenState>({ kind: 'loading' })
   const [filter, setFilter] = useState<MobileDiffReviewQueueFilter>(initialFilter)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [activeHunkIndex, setActiveHunkIndex] = useState<number | null>(null)
@@ -71,47 +68,29 @@ export function useMobileDiffReviewController(input: ControllerInput) {
   const [showCompletion, setShowCompletion] = useState(false)
   const worktreeLabel = getWorktreeLabel(name, worktreeId)
 
-  const loadReviewData = useCallback(async () => {
-    const generation = loadGenerationRef.current + 1
-    loadGenerationRef.current = generation
-    const isCurrent = () => generation === loadGenerationRef.current
-    if (!worktreeId) {
-      setScreenState({ kind: 'error', message: 'Missing worktree' })
-      return
-    }
-    // Why (F10): a loaded review outlives a blip — the waiting state is for a screen with nothing
-    // to show, and this branch (not the one below it) is the one a drop actually reaches.
-    const keepReady = (fallback: ReviewScreenState) => (prev: ReviewScreenState) =>
-      prev.kind === 'ready' ? prev : fallback
-    if (!client || connState !== 'connected') {
-      setScreenState(keepReady({ kind: 'error', message: 'Waiting for desktop...' }))
-      return
-    }
-    setScreenState(keepReady({ kind: 'loading' }))
-    try {
-      const nextState = await loadMobileDiffReviewSnapshot(client, worktreeId)
-      if (!isCurrent()) {
-        return
-      }
-      setScreenState(nextState)
-      setActionError(nextState.kind === 'ready' ? (nextState.branchError ?? null) : null)
-    } catch (err) {
-      if (isCurrent()) {
-        // Why (F10): a failed refresh after reconnect must not destroy the review
-        // already on screen; the error state is for a screen with nothing to show.
-        setScreenState(
-          keepReady({
-            kind: 'error',
-            message: err instanceof Error ? err.message : 'Unable to load review'
-          })
-        )
-      }
-    }
-  }, [client, connState, worktreeId])
-
-  useEffect(() => {
-    void loadReviewData()
-  }, [loadReviewData])
+  const { source, screenState, setScreenState, loadReviewData } = useMobileDiffReviewSnapshot({
+    client,
+    connState,
+    hostId,
+    worktreeId,
+    setActionError
+  })
+  const [interactionSource, setInteractionSource] = useState(source)
+  if (interactionSource !== source) {
+    // Reset before commit so old drawers cannot expose actions for the new source.
+    setInteractionSource(source)
+    setFilter(initialFilter)
+    setCurrentIndex(0)
+    setActiveHunkIndex(null)
+    setComposer(null)
+    setComposerBody('')
+    setActionError(null)
+    setBusyAction(null)
+    setDiscardTarget(null)
+    setShowOverflow(false)
+    setSendSheet(null)
+    setShowCompletion(false)
+  }
 
   const queue = useMemo(() => {
     if (screenState.kind !== 'ready') {
@@ -143,7 +122,7 @@ export function useMobileDiffReviewController(input: ControllerInput) {
 
   useEffect(() => {
     seededInitialTargetRef.current = false
-  }, [initialTargetKey])
+  }, [initialTargetKey, source])
 
   useEffect(() => {
     if (seededInitialTargetRef.current || filteredQueue.length === 0) {
@@ -168,6 +147,7 @@ export function useMobileDiffReviewController(input: ControllerInput) {
   const diffState = useMobileDiffReviewDiffLoading({
     client,
     connState,
+    hostId,
     worktreeId,
     currentItem,
     screenState,

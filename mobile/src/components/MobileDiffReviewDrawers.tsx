@@ -71,9 +71,11 @@ function useSendActions(controller: ReturnType<typeof useMobileDiffReviewControl
         ? controller.sendSheet.terminals.map((terminal) => ({
             label: `${terminal.title || 'Terminal'} (${terminal.terminal.slice(0, 6)})`,
             icon: Send,
-            disabled: comments.length === 0,
+            disabled: comments.length === 0 || controller.sendBusy,
+            loading: controller.sendBusy,
             skipAutoClose: true,
-            onPress: () => void controller.sendPromptToTerminal(terminal.terminal, comments)
+            onPress: () =>
+              void controller.sendPromptToTerminal(terminal.terminal, comments).catch(() => {})
           }))
         : []
     return [
@@ -81,9 +83,10 @@ function useSendActions(controller: ReturnType<typeof useMobileDiffReviewControl
       {
         label: 'New Agent Session',
         icon: Plus,
-        disabled: comments.length === 0,
+        disabled: comments.length === 0 || controller.sendBusy,
+        loading: controller.sendBusy,
         skipAutoClose: true,
-        onPress: () => void controller.createTerminalAndSend(comments)
+        onPress: () => void controller.createTerminalAndSend(comments).catch(() => {})
       },
       {
         label: 'Copy Notes',

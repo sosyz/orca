@@ -1,6 +1,12 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type Dispatch,
+  type SetStateAction
+} from 'react'
 import type { DiffComment, MobileDiffReviewState } from '../../../src/shared/diff-comment-types'
-import { triggerError, triggerSuccess } from '../platform/haptics'
 import type { ConnectionState } from '../transport/types'
 import type { RpcClient } from '../transport/rpc-client'
 import { addMobileDiffComment, removeMobileDiffComments } from './mobile-diff-comments'
@@ -19,6 +25,7 @@ import {
   nextReviewIndexAfterMarkReviewed,
   reviewDescriptorFromItem
 } from './mobile-diff-review-screen-model'
+import { useMobileDiffReviewMetadataSave } from './use-mobile-diff-review-metadata-save'
 
 type CommentActionsInput = {
   client: RpcClient | null
@@ -60,52 +67,32 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
     setActionError,
     setShowCompletion
   } = input
-
-  const persistMetadata = useCallback(
-    async (comments: readonly DiffComment[], reviewState: MobileDiffReviewState) => {
-      if (!client || connState !== 'connected') {
-        throw new Error('Waiting for desktop...')
-      }
-      const response = await client.sendRequest('worktree.set', {
-        worktree: `id:${worktreeId}`,
-        diffComments: comments,
-        mobileDiffReview: reviewState
-      })
-      if (!response.ok) {
-        throw new Error(response.error?.message || 'Failed to save review state')
-      }
-    },
-    [client, connState, worktreeId]
+  const composerSnapshot = useMemo(
+    () => ({ client, worktreeId, composer, composerBody }),
+    [client, worktreeId, composer, composerBody]
   )
-
-  const updateReadyState = useCallback(
-    (updater: (state: Extract<ReviewScreenState, { kind: 'ready' }>) => ReviewScreenState) => {
-      setScreenState((prev) => (prev.kind === 'ready' ? updater(prev) : prev))
-    },
-    [setScreenState]
-  )
-
-  const saveCommentsAndReviewState = useCallback(
-    async (comments: DiffComment[], reviewState: MobileDiffReviewState) => {
-      const previous = screenState
-      updateReadyState((state) => ({ ...state, comments, reviewState }))
-      try {
-        await persistMetadata(comments, reviewState)
-        triggerSuccess()
-      } catch (err) {
-        if (previous.kind === 'ready') {
-          setScreenState(previous)
-        }
-        triggerError()
-        setActionError(err instanceof Error ? err.message : 'Failed to save review')
-        throw err
+  const currentComposerRef = useRef<typeof composerSnapshot | null>(null)
+  const pendingComposerRef = useRef<typeof composerSnapshot | null>(null)
+  useLayoutEffect(() => {
+    currentComposerRef.current = composerSnapshot
+    return () => {
+      if (currentComposerRef.current === composerSnapshot) {
+        currentComposerRef.current = null
       }
-    },
-    [persistMetadata, screenState, setActionError, setScreenState, updateReadyState]
-  )
+    }
+  }, [composerSnapshot])
+  const { saveCommentsAndReviewState, markSentComments } = useMobileDiffReviewMetadataSave({
+    client,
+    connState,
+    worktreeId,
+    screenState,
+    setScreenState,
+    setActionError
+  })
 
   const openComposer = useCallback(
     (lineNumber: number) => {
+      currentComposerRef.current = null
       setComposer({ mode: 'create', lineNumber })
       setComposerBody('')
     },
@@ -114,6 +101,7 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
 
   const openEditComposer = useCallback(
     (comment: DiffComment) => {
+      currentComposerRef.current = null
       setComposer({ mode: 'edit', comment })
       setComposerBody(comment.body)
     },
@@ -121,9 +109,40 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
   )
 
   const closeComposer = useCallback(() => {
+    currentComposerRef.current = null
     setComposer(null)
     setComposerBody('')
   }, [setComposer, setComposerBody])
+
+  const saveComposerMetadata = useCallback(
+    async (comments: DiffComment[], reviewState: MobileDiffReviewState): Promise<void> => {
+      if (!composerSnapshot.composer || currentComposerRef.current !== composerSnapshot) {
+        return
+      }
+      const pending = pendingComposerRef.current
+      if (
+        pending?.composer === composerSnapshot.composer &&
+        pending.client === client &&
+        pending.worktreeId === worktreeId
+      ) {
+        return
+      }
+      pendingComposerRef.current = composerSnapshot
+      try {
+        if (
+          (await saveCommentsAndReviewState(comments, reviewState)) &&
+          currentComposerRef.current === composerSnapshot
+        ) {
+          closeComposer()
+        }
+      } finally {
+        if (pendingComposerRef.current === composerSnapshot) {
+          pendingComposerRef.current = null
+        }
+      }
+    },
+    [client, closeComposer, composerSnapshot, saveCommentsAndReviewState, worktreeId]
+  )
 
   const saveComposer = useCallback(async () => {
     if (!composer || !currentItem || screenState.kind !== 'ready') {
@@ -151,17 +170,8 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
     if (!result.comment) {
       return
     }
-    await saveCommentsAndReviewState(result.comments, screenState.reviewState)
-    closeComposer()
-  }, [
-    closeComposer,
-    composer,
-    composerBody,
-    currentItem,
-    saveCommentsAndReviewState,
-    screenState,
-    worktreeId
-  ])
+    await saveComposerMetadata(result.comments, screenState.reviewState)
+  }, [composer, composerBody, currentItem, saveComposerMetadata, screenState, worktreeId])
 
   const deleteComment = useCallback(async () => {
     if (!composer || composer.mode !== 'edit' || screenState.kind !== 'ready') {
@@ -171,9 +181,8 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
       screenState.comments,
       new Set([composer.comment.id])
     )
-    await saveCommentsAndReviewState(nextComments, screenState.reviewState)
-    closeComposer()
-  }, [closeComposer, composer, saveCommentsAndReviewState, screenState])
+    await saveComposerMetadata(nextComments, screenState.reviewState)
+  }, [composer, saveComposerMetadata, screenState])
 
   const markReviewed = useCallback(async () => {
     if (!currentItem || screenState.kind !== 'ready') {
@@ -188,7 +197,9 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
     if (queue.every((item) => item.key === currentItem.key || item.isReviewed)) {
       nextReviewState = completeMobileDiffReviewState(nextReviewState, now)
     }
-    await saveCommentsAndReviewState(screenState.comments, nextReviewState)
+    if (!(await saveCommentsAndReviewState(screenState.comments, nextReviewState))) {
+      return
+    }
     const nextIndex = nextReviewIndexAfterMarkReviewed({
       currentIndex,
       currentItemKey: currentItem.key,
@@ -232,6 +243,7 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
     closeComposer,
     deleteComment,
     markReviewed,
+    markSentComments,
     markUnreviewed,
     openComposer,
     openEditComposer,

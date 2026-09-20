@@ -87,6 +87,7 @@ export function useMobileDiffReviewInteractions(input: InteractionInput) {
     deleteComment,
     markReviewed,
     markUnreviewed,
+    markSentComments,
     openComposer,
     openEditComposer,
     saveCommentsAndReviewState,
@@ -121,16 +122,23 @@ export function useMobileDiffReviewInteractions(input: InteractionInput) {
     loadReviewData
   })
 
-  const { clearSentNotes, copyNotes, createTerminalAndSend, openSendSheet, sendPromptToTerminal } =
-    useMobileDiffReviewSendActions({
-      client,
-      connState,
-      worktreeId,
-      screenState,
-      setActionError,
-      setSendSheet,
-      saveCommentsAndReviewState
-    })
+  const {
+    clearSentNotes,
+    copyNotes,
+    createTerminalAndSend,
+    openSendSheet,
+    sendBusy,
+    sendPromptToTerminal
+  } = useMobileDiffReviewSendActions({
+    client,
+    connState,
+    worktreeId,
+    screenState,
+    setActionError,
+    setSendSheet,
+    saveCommentsAndReviewState,
+    markSentComments
+  })
 
   return {
     clearSentNotes,
@@ -203,6 +211,7 @@ export function useMobileDiffReviewInteractions(input: InteractionInput) {
     },
     runGitMutation,
     saveComposer,
+    sendBusy,
     selectFilter: (nextFilter: MobileDiffReviewQueueFilter) => {
       setFilter(nextFilter)
       setCurrentIndex(0)

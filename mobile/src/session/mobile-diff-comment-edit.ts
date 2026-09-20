@@ -1,5 +1,25 @@
 import type { DiffComment } from '../../../src/shared/diff-comment-types'
 
+export function isSameMobileDiffCommentVersion(first: DiffComment, second: DiffComment): boolean {
+  return (
+    first.id === second.id &&
+    first.worktreeId === second.worktreeId &&
+    first.filePath === second.filePath &&
+    (first.source ?? 'diff') === (second.source ?? 'diff') &&
+    first.selectedText === second.selectedText &&
+    first.startLine === second.startLine &&
+    first.lineNumber === second.lineNumber &&
+    first.body === second.body &&
+    first.createdAt === second.createdAt &&
+    first.updatedAt === second.updatedAt &&
+    first.sentAt === second.sentAt &&
+    first.scope === second.scope &&
+    first.oldPath === second.oldPath &&
+    first.diffIdentity === second.diffIdentity &&
+    first.side === second.side
+  )
+}
+
 export type UpdateMobileDiffCommentInput = {
   id: string
   body: string
