@@ -42,6 +42,7 @@ export function renderMobileTasksCreateDrawer(model: ConnectionPresentationModel
     setShowCreateTargetPicker,
     setShowCreateTask,
     showCreateTask,
+    taskCreateAttempts,
     taskUiReady
   } = model
   return (
@@ -151,7 +152,10 @@ export function renderMobileTasksCreateDrawer(model: ConnectionPresentationModel
         <TextInput
           style={styles.input}
           value={createTitle}
-          onChangeText={setCreateTitle}
+          onChangeText={(next) => {
+            taskCreateAttempts.noteDraftEdit()
+            setCreateTitle(next)
+          }}
           placeholder="Task title"
           placeholderTextColor={colors.textMuted}
           autoCapitalize="sentences"
@@ -162,7 +166,10 @@ export function renderMobileTasksCreateDrawer(model: ConnectionPresentationModel
         <TextInput
           style={[styles.input, styles.bodyInput]}
           value={createBody}
-          onChangeText={setCreateBody}
+          onChangeText={(next) => {
+            taskCreateAttempts.noteDraftEdit()
+            setCreateBody(next)
+          }}
           placeholder="Add context"
           placeholderTextColor={colors.textMuted}
           multiline
@@ -198,6 +205,7 @@ export function renderMobileTasksCreateTargetPicker(model: ConnectionPresentatio
     setShowCreateTargetPicker,
     showCreateTargetPicker,
     showCreateTask,
+    taskCreateAttempts,
     taskUiReady
   } = model
   return (
@@ -211,6 +219,7 @@ export function renderMobileTasksCreateTargetPicker(model: ConnectionPresentatio
           : ((selectedCreateTarget as LinearTeam | null)?.id ?? '')
       }
       onSelect={(value) => {
+        taskCreateAttempts.noteDraftEdit()
         if (provider === 'github' || provider === 'gitlab') {
           setCreateRepoId(value)
         } else {

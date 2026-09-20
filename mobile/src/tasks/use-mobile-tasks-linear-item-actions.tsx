@@ -1,7 +1,8 @@
 import type { GithubReplyMergeActionsModel } from './use-mobile-tasks-github-reply-merge-actions'
 import { useCallback } from './mobile-tasks-dependencies'
+import { sendLinearTaskComment } from './mobile-task-comment-rpc'
+import { appendMobileTaskDetailComment } from './mobile-task-detail-comment-result'
 import {
-  type DetailComment,
   type LinearIssue,
   type LinearIssueChild,
   type TaskItem,
@@ -12,6 +13,8 @@ import {
 export function useMobileTasksLinearItemActions(model: GithubReplyMergeActionsModel) {
   const {
     client,
+    detailCommentAttempts,
+    hostId,
     linearCommentDraft,
     linearSubIssueTitle,
     mutatingStatus,
@@ -31,44 +34,31 @@ export function useMobileTasksLinearItemActions(model: GithubReplyMergeActionsMo
       if (!body) {
         return
       }
+      const attempt = detailCommentAttempts.begin(client, hostId, item.key, item.provider)
+      if (!attempt) {
+        return
+      }
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'linear.addIssueComment',
-          {
-            issueId: item.source.id,
-            workspaceId: item.source.workspaceId,
-            body
-          },
-          { timeoutMs: 30_000 }
+        const comment = await sendLinearTaskComment(client, item.source, body)
+        setLinearCommentDraft((current) =>
+          detailCommentAttempts.isCurrent(attempt) && current === linearCommentDraft ? '' : current
         )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; id?: string; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to add comment')
-        }
-        const comment: DetailComment = {
-          id: result.id ?? `local-${Date.now()}`,
-          body,
-          createdAt: new Date().toISOString(),
-          user: { displayName: 'You' }
-        }
-        setLinearCommentDraft('')
         setDetailPayload((current) =>
-          current?.provider === 'linear'
-            ? { ...current, comments: [...current.comments, comment] }
+          detailCommentAttempts.isCurrent(attempt)
+            ? appendMobileTaskDetailComment(current, item.provider, comment)
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to add Linear comment')
+        if (detailCommentAttempts.isCurrent(attempt)) {
+          setError(err instanceof Error ? err.message : 'Failed to add Linear comment')
+        }
       } finally {
         setMutatingStatus(false)
       }
     },
-    [client, linearCommentDraft, mutatingStatus]
+    [client, detailCommentAttempts, hostId, linearCommentDraft, mutatingStatus]
   )
 
   const openLinearSubIssue = useCallback(

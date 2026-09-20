@@ -2,7 +2,8 @@ import type { ProviderLoadActionsModel } from './use-mobile-tasks-provider-load-
 import {
   extractLinearIssueReadItems,
   isHostedTaskRepo,
-  useCallback
+  useCallback,
+  useLayoutEffect
 } from './mobile-tasks-dependencies'
 import {
   GITHUB_REPO_CONCURRENCY,
@@ -30,12 +31,13 @@ export function useMobileTasksTaskListLoading(model: ProviderLoadActionsModel) {
     countGitHubItems,
     fetchGitHubItemsPage,
     githubMode,
+    hostId,
     gitlabFilter,
     gitlabView,
     linearConnected,
     linearFilter,
     linearOrderBy,
-    loadGenerationRef,
+    taskListLoadOwnership,
     provider,
     repoListEnsureLoaded,
     resetGitHubItemsState,
@@ -55,16 +57,17 @@ export function useMobileTasksTaskListLoading(model: ProviderLoadActionsModel) {
     taskStateHydrated,
     tasksSupported
   } = model
-  const loadTasks = useCallback(
+  const loadTasks: (options?: { silent?: boolean }) => Promise<void> = useCallback(
     async (options: { silent?: boolean } = {}): Promise<void> => {
       if (!client || connState !== 'connected' || !tasksSupported || !taskStateHydrated) {
         return
       }
-      const generation = loadGenerationRef.current + 1
-      loadGenerationRef.current = generation
+      const ownsLoad = taskListLoadOwnership.begin(loadTasks)
+      if (!ownsLoad) {
+        return
+      }
       const requestClient = client
-      const isCurrent = () =>
-        loadGenerationRef.current === generation && clientRef.current === requestClient
+      const isCurrent = () => ownsLoad() && clientRef.current === requestClient
       setError('')
       if (options.silent) {
         setRefreshing(true)
@@ -257,6 +260,7 @@ export function useMobileTasksTaskListLoading(model: ProviderLoadActionsModel) {
       gitlabFilter,
       gitlabView,
       githubMode,
+      hostId,
       linearConnected,
       linearFilter,
       linearOrderBy,
@@ -267,10 +271,15 @@ export function useMobileTasksTaskListLoading(model: ProviderLoadActionsModel) {
       selectedLinearTeamIds,
       selectedLinearWorkspaceId,
       selectedRepoIds,
+      taskListLoadOwnership,
       taskStateHydrated,
       tasksSupported
     ]
   )
+  useLayoutEffect(() => {
+    taskListLoadOwnership.publish(loadTasks)
+    return () => taskListLoadOwnership.invalidate(loadTasks)
+  }, [loadTasks, taskListLoadOwnership])
   return Object.assign(model, { loadTasks })
 }
 

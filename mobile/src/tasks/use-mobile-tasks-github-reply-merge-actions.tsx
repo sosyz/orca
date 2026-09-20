@@ -14,6 +14,8 @@ import {
 export function useMobileTasksGithubReplyMergeActions(model: GithubCheckFileActionsModel) {
   const {
     client,
+    detailCommentAttempts,
+    hostId,
     itemReplyDrafts,
     loadTasks,
     mutatingStatus,
@@ -23,6 +25,7 @@ export function useMobileTasksGithubReplyMergeActions(model: GithubCheckFileActi
     setItemReplyDrafts,
     setItems,
     setMutatingStatus,
+    taskListLoadOwnership,
     taskUiReady
   } = model
   const replyToGitHubComment = useCallback(
@@ -178,6 +181,7 @@ export function useMobileTasksGithubReplyMergeActions(model: GithubCheckFileActi
       if (!client || !taskUiReady || mutatingStatus) {
         return
       }
+      const detailView = detailCommentAttempts.capture(client, hostId)
       setMutatingStatus(true)
       setError('')
       try {
@@ -202,6 +206,12 @@ export function useMobileTasksGithubReplyMergeActions(model: GithubCheckFileActi
           )
         )
         setActionItem((current) => {
+          if (
+            !taskListLoadOwnership.owns(loadTasks) ||
+            !detailCommentAttempts.isCurrentView(detailView)
+          ) {
+            return current
+          }
           if (!current || current.provider !== 'linear' || current.source.id !== item.source.id) {
             return current
           }
@@ -215,12 +225,25 @@ export function useMobileTasksGithubReplyMergeActions(model: GithubCheckFileActi
         })
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update Linear issue')
+        if (
+          taskListLoadOwnership.owns(loadTasks) &&
+          detailCommentAttempts.isCurrentView(detailView)
+        ) {
+          setError(err instanceof Error ? err.message : 'Failed to update Linear issue')
+        }
       } finally {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus, taskUiReady]
+    [
+      client,
+      detailCommentAttempts,
+      hostId,
+      loadTasks,
+      mutatingStatus,
+      taskListLoadOwnership,
+      taskUiReady
+    ]
   )
   return Object.assign(model, { replyToGitHubComment, mergeHostedReview, setLinearStatus })
 }

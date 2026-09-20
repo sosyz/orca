@@ -8,6 +8,8 @@ import {
   useHostClient,
   useHostRepoList,
   useLastConnectedAt,
+  useLayoutEffect,
+  useMemo,
   useRelayRecoveryStatus,
   useLocalSearchParams,
   useReconnectAttempt,
@@ -45,6 +47,9 @@ import {
 } from './mobile-tasks-legacy-foundation'
 import { useMobileTasksItemState } from './use-mobile-tasks-item-state'
 import { useMobileTaskExternalLink } from './use-mobile-task-external-link'
+import { createMobileTaskCreateAttempts } from './mobile-task-create-attempt'
+import { createMobileTaskDetailCommentAttempts } from './mobile-task-detail-comment-attempt'
+import { createMobileTaskListLoadOwnership } from './mobile-task-list-load-ownership'
 
 export function useMobileTasksRouteAndItemState() {
   const { hostId, taskSource } = useLocalSearchParams<{ hostId: string; taskSource?: string }>()
@@ -56,7 +61,9 @@ export function useMobileTasksRouteAndItemState() {
   const lastConnectedAt = useLastConnectedAt(hostId)
   const relayRecovery = useRelayRecoveryStatus(hostId)
   const clientRef = useRef<RpcClient | null>(null)
-  const loadGenerationRef = useRef(0)
+  const taskListLoadOwnership = useMemo(() => createMobileTaskListLoadOwnership(), [])
+  const taskCreateAttempts = useMemo(() => createMobileTaskCreateAttempts(), [])
+  const detailCommentAttempts = useMemo(() => createMobileTaskDetailCommentAttempts(), [])
   const taskResumeRef = useRef<TaskResumeState>({})
   const repoList = useHostRepoList<RepoSummary>(
     client,
@@ -160,6 +167,15 @@ export function useMobileTasksRouteAndItemState() {
   })
   const [error, setError] = useState('')
   const [actionItem, setActionItem] = useState<ActionableTaskItem | null>(null)
+  useLayoutEffect(() => {
+    taskCreateAttempts.publish({ client, hostId, provider, open: showCreateTask })
+    setCreatingTask(taskCreateAttempts.isBusy())
+    return () => taskCreateAttempts.invalidate()
+  }, [client, hostId, provider, showCreateTask, taskCreateAttempts])
+  useLayoutEffect(() => {
+    detailCommentAttempts.publish({ client, hostId, itemKey: actionItem?.key ?? null })
+    return () => detailCommentAttempts.invalidate()
+  }, [actionItem?.key, client, detailCommentAttempts, hostId])
   const [mergeMethodTaskItem, setMergeMethodTaskItem] = useState<
     Extract<TaskItem, { provider: 'github' }> | Extract<TaskItem, { provider: 'gitlab' }> | null
   >(null)
@@ -182,7 +198,9 @@ export function useMobileTasksRouteAndItemState() {
     lastConnectedAt,
     relayRecovery,
     clientRef,
-    loadGenerationRef,
+    taskListLoadOwnership,
+    taskCreateAttempts,
+    detailCommentAttempts,
     taskResumeRef,
     repoList,
     repos,

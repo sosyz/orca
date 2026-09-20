@@ -1,5 +1,7 @@
 import type { ProjectReviewCheckActionsModel } from './use-mobile-tasks-project-review-check-actions'
 import { useCallback } from './mobile-tasks-dependencies'
+import { requestGitHubTaskStatus } from './mobile-task-hosted-status-request'
+import { closeTaskItemOnOwnedStatusResult } from './mobile-task-status-result'
 import {
   type DetailComment,
   type GitHubDetailFile,
@@ -15,8 +17,10 @@ export function useMobileTasksProjectFileMergeActions(model: ProjectReviewCheckA
   const {
     activeGitHubProjectHost,
     client,
+    detailCommentAttempts,
     expandedPrFilePath,
     findProjectRowRepo,
+    hostId,
     loadTasks,
     mutatingStatus,
     prFileCommentDrafts,
@@ -34,7 +38,8 @@ export function useMobileTasksProjectFileMergeActions(model: ProjectReviewCheckA
     setProjectMutating,
     setProjectRowDetail,
     setProjectRowDetailError,
-    setProjectRowItem
+    setProjectRowItem,
+    taskListLoadOwnership
   } = model
   const toggleProjectGitHubFileExpansion = useCallback(
     async (row: GitHubProjectRow, file: GitHubDetailFile): Promise<void> => {
@@ -253,24 +258,11 @@ export function useMobileTasksProjectFileMergeActions(model: ProjectReviewCheckA
       if (!client || mutatingStatus || item.source.state === 'merged') {
         return
       }
+      const detailView = detailCommentAttempts.capture(client, hostId)
       setMutatingStatus(true)
       setError('')
-      const nextState = item.source.state === 'closed' ? 'open' : 'closed'
       try {
-        const method = item.source.type === 'issue' ? 'github.updateIssue' : 'github.updatePRState'
-        const params =
-          item.source.type === 'issue'
-            ? {
-                repo: `id:${item.source.repoId}`,
-                number: item.source.number,
-                updates: { state: nextState }
-              }
-            : {
-                repo: `id:${item.source.repoId}`,
-                prNumber: item.source.number,
-                updates: { state: nextState }
-              }
-        const response = await client.sendRequest(method, params)
+        const response = await requestGitHubTaskStatus(client, item.source)
         if (!isSuccess(response)) {
           throw new Error(response.error.message)
         }
@@ -278,15 +270,26 @@ export function useMobileTasksProjectFileMergeActions(model: ProjectReviewCheckA
         if (result.ok === false) {
           throw new Error(result.error ?? 'Failed to update GitHub status')
         }
-        setActionItem(null)
+        setActionItem((current) =>
+          closeTaskItemOnOwnedStatusResult(
+            current,
+            item.key,
+            taskListLoadOwnership.owns(loadTasks) && detailCommentAttempts.isCurrentView(detailView)
+          )
+        )
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update status')
+        if (
+          taskListLoadOwnership.owns(loadTasks) &&
+          detailCommentAttempts.isCurrentView(detailView)
+        ) {
+          setError(err instanceof Error ? err.message : 'Failed to update status')
+        }
       } finally {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus]
+    [client, detailCommentAttempts, hostId, loadTasks, mutatingStatus, taskListLoadOwnership]
   )
   return Object.assign(model, {
     toggleProjectGitHubFileExpansion,

@@ -1,11 +1,15 @@
 import type { ProjectFileMergeActionsModel } from './use-mobile-tasks-project-file-merge-actions'
 import { useCallback } from './mobile-tasks-dependencies'
+import { requestGitLabTaskStatus } from './mobile-task-hosted-status-request'
+import { closeTaskItemOnOwnedStatusResult } from './mobile-task-status-result'
 import { type TaskItem, isSuccess } from './mobile-tasks-legacy-foundation'
 
 export function useMobileTasksGitlabGithubStatusActions(model: ProjectFileMergeActionsModel) {
   const {
     client,
+    detailCommentAttempts,
     detailPayload,
+    hostId,
     loadTasks,
     mutatingStatus,
     setActionItem,
@@ -16,31 +20,19 @@ export function useMobileTasksGitlabGithubStatusActions(model: ProjectFileMergeA
     setItemRemoveAssigneesDraft,
     setItemRemoveLabelsDraft,
     setItems,
-    setMutatingStatus
+    setMutatingStatus,
+    taskListLoadOwnership
   } = model
   const toggleGitLabStatus = useCallback(
     async (item: Extract<TaskItem, { provider: 'gitlab' }>): Promise<void> => {
       if (!client || mutatingStatus || item.source.state === 'merged') {
         return
       }
+      const detailView = detailCommentAttempts.capture(client, hostId)
       setMutatingStatus(true)
       setError('')
-      const nextState = item.source.state === 'closed' ? 'opened' : 'closed'
       try {
-        const response =
-          item.source.type === 'issue'
-            ? await client.sendRequest('gitlab.updateIssue', {
-                repo: `id:${item.source.repoId}`,
-                number: item.source.number,
-                updates: { state: nextState },
-                projectRef: item.source.projectRef
-              })
-            : await client.sendRequest('gitlab.updateMRState', {
-                repo: `id:${item.source.repoId}`,
-                iid: item.source.number,
-                state: nextState,
-                projectRef: item.source.projectRef
-              })
+        const response = await requestGitLabTaskStatus(client, item.source)
         if (!isSuccess(response)) {
           throw new Error(response.error.message)
         }
@@ -48,15 +40,26 @@ export function useMobileTasksGitlabGithubStatusActions(model: ProjectFileMergeA
         if (result.ok === false) {
           throw new Error(result.error ?? 'Failed to update GitLab item')
         }
-        setActionItem(null)
+        setActionItem((current) =>
+          closeTaskItemOnOwnedStatusResult(
+            current,
+            item.key,
+            taskListLoadOwnership.owns(loadTasks) && detailCommentAttempts.isCurrentView(detailView)
+          )
+        )
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update GitLab item')
+        if (
+          taskListLoadOwnership.owns(loadTasks) &&
+          detailCommentAttempts.isCurrentView(detailView)
+        ) {
+          setError(err instanceof Error ? err.message : 'Failed to update GitLab item')
+        }
       } finally {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus]
+    [client, detailCommentAttempts, hostId, loadTasks, mutatingStatus, taskListLoadOwnership]
   )
 
   const updateGitHubIssueMetadata = useCallback(

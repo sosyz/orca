@@ -1,4 +1,6 @@
 import type { HostedMetadataActionsModel } from './use-mobile-tasks-hosted-metadata-actions'
+import { sendHostedTaskComment } from './mobile-task-comment-rpc'
+import { appendMobileTaskDetailComment } from './mobile-task-detail-comment-result'
 import {
   Clipboard,
   buildGitHubCheckSummary,
@@ -6,7 +8,6 @@ import {
   useCallback
 } from './mobile-tasks-dependencies'
 import {
-  type DetailComment,
   type GitHubAssignableUser,
   type GitHubDetailCheck,
   type TaskItem,
@@ -18,7 +19,9 @@ export function useMobileTasksHostedCommentReviewActions(model: HostedMetadataAc
   const {
     client,
     copiedLinkResetTimerRef,
+    detailCommentAttempts,
     detailPayload,
+    hostId,
     itemCommentDraft,
     itemReviewersDraft,
     mutatingStatus,
@@ -42,70 +45,31 @@ export function useMobileTasksHostedCommentReviewActions(model: HostedMetadataAc
       if (!body) {
         return
       }
+      const attempt = detailCommentAttempts.begin(client, hostId, item.key, item.provider)
+      if (!attempt) {
+        return
+      }
       setMutatingStatus(true)
       setError('')
       try {
-        const response =
-          item.provider === 'github'
-            ? await client.sendRequest(
-                'github.addIssueComment',
-                {
-                  repo: `id:${item.source.repoId}`,
-                  number: item.source.number,
-                  body,
-                  type: item.source.type
-                },
-                { timeoutMs: 30_000 }
-              )
-            : await client.sendRequest(
-                item.source.type === 'mr' ? 'gitlab.addMRComment' : 'gitlab.addIssueComment',
-                item.source.type === 'mr'
-                  ? {
-                      repo: `id:${item.source.repoId}`,
-                      iid: item.source.number,
-                      body,
-                      projectRef: item.source.projectRef
-                    }
-                  : {
-                      repo: `id:${item.source.repoId}`,
-                      number: item.source.number,
-                      body,
-                      projectRef: item.source.projectRef
-                    },
-                { timeoutMs: 30_000 }
-              )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          error?: string
-          comment?: DetailComment
-        }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to add comment')
-        }
-        const comment: DetailComment = result.comment ?? {
-          id: `local-${Date.now()}`,
-          body,
-          createdAt: new Date().toISOString(),
-          author: 'You'
-        }
-        setItemCommentDraft('')
+        const comment = await sendHostedTaskComment(client, item, body)
+        setItemCommentDraft((current) =>
+          detailCommentAttempts.isCurrent(attempt) && current === itemCommentDraft ? '' : current
+        )
         setDetailPayload((current) =>
-          current &&
-          ((item.provider === 'github' && current.provider === 'github') ||
-            (item.provider === 'gitlab' && current.provider === 'gitlab'))
-            ? { ...current, comments: [...current.comments, comment] }
+          detailCommentAttempts.isCurrent(attempt)
+            ? appendMobileTaskDetailComment(current, item.provider, comment)
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to add comment')
+        if (detailCommentAttempts.isCurrent(attempt)) {
+          setError(err instanceof Error ? err.message : 'Failed to add comment')
+        }
       } finally {
         setMutatingStatus(false)
       }
     },
-    [client, itemCommentDraft, mutatingStatus]
+    [client, detailCommentAttempts, hostId, itemCommentDraft, mutatingStatus]
   )
 
   const copyTaskLink = useCallback(async (key: string, url: string): Promise<void> => {

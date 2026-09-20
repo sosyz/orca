@@ -1,4 +1,5 @@
 import type { ConnectionPresentationModel } from './use-mobile-tasks-connection-presentation'
+import { closeTaskItemOnOwnedStatusResult } from './mobile-task-status-result'
 import {
   BottomDrawer,
   View,
@@ -263,9 +264,11 @@ export function renderMobileTasksLinearStatusPicker(model: ConnectionPresentatio
     linearStates,
     linearStatesLoading,
     linearStatusPickerItem,
+    loadTasks,
     mutatingStatus,
     setLinearStatus,
     setLinearStatusPickerItem,
+    taskListLoadOwnership,
     taskUiReady
   } = model
   return (
@@ -303,9 +306,18 @@ export function renderMobileTasksLinearStatusPicker(model: ConnectionPresentatio
                     if (!linearStatusPickerItem) {
                       return
                     }
-                    void setLinearStatus(linearStatusPickerItem, state, {
+                    const target = linearStatusPickerItem
+                    void setLinearStatus(target, state, {
                       closeDetail: false
-                    }).then(() => setLinearStatusPickerItem(null))
+                    }).then(() =>
+                      setLinearStatusPickerItem((current) =>
+                        closeTaskItemOnOwnedStatusResult(
+                          current,
+                          target.key,
+                          taskListLoadOwnership.owns(loadTasks)
+                        )
+                      )
+                    )
                   }}
                 >
                   <View

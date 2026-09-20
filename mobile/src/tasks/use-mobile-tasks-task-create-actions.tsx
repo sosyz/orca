@@ -17,6 +17,7 @@ export function useMobileTasksTaskCreateActions(model: LinearItemActionsModel) {
     createTeamId,
     createTitle,
     creatingTask,
+    hostId,
     hostedRepos,
     linearTeams,
     loadTasks,
@@ -28,6 +29,7 @@ export function useMobileTasksTaskCreateActions(model: LinearItemActionsModel) {
     setCreatingTask,
     setError,
     setShowCreateTask,
+    taskCreateAttempts,
     taskStateHydrated,
     taskUiReady,
     tasksSupported
@@ -38,6 +40,10 @@ export function useMobileTasksTaskCreateActions(model: LinearItemActionsModel) {
     }
     const title = createTitle.trim()
     if (!title) {
+      return
+    }
+    const attempt = taskCreateAttempts.begin(client, hostId, provider)
+    if (!attempt) {
       return
     }
     setCreatingTask(true)
@@ -72,7 +78,7 @@ export function useMobileTasksTaskCreateActions(model: LinearItemActionsModel) {
             result.error ?? `Failed to create ${provider === 'github' ? 'GitHub' : 'GitLab'} issue`
           )
         }
-        if (typeof result.number === 'number') {
+        if (typeof result.number === 'number' && taskCreateAttempts.ownsDraft(attempt)) {
           const createdAt = new Date().toISOString()
           if (provider === 'github') {
             setActionItem(
@@ -129,31 +135,41 @@ export function useMobileTasksTaskCreateActions(model: LinearItemActionsModel) {
         if (result.ok === false || !result.id || !result.identifier) {
           throw new Error(result.error ?? 'Failed to create Linear issue')
         }
-        setActionItem(
-          createLinearTask({
-            id: result.id,
-            workspaceId: team.workspaceId,
-            workspaceName: team.workspaceName,
-            identifier: result.identifier,
-            title: result.title ?? title,
-            description: createBody.trim(),
-            url: result.url ?? '',
-            state: { name: 'Open', type: 'unstarted', color: colors.accentBlue },
-            team,
-            labels: [],
-            priority: 0,
-            updatedAt: new Date().toISOString()
-          }) as Extract<TaskItem, { provider: 'linear' }>
-        )
+        if (taskCreateAttempts.ownsDraft(attempt)) {
+          setActionItem(
+            createLinearTask({
+              id: result.id,
+              workspaceId: team.workspaceId,
+              workspaceName: team.workspaceName,
+              identifier: result.identifier,
+              title: result.title ?? title,
+              description: createBody.trim(),
+              url: result.url ?? '',
+              state: { name: 'Open', type: 'unstarted', color: colors.accentBlue },
+              team,
+              labels: [],
+              priority: 0,
+              updatedAt: new Date().toISOString()
+            }) as Extract<TaskItem, { provider: 'linear' }>
+          )
+        }
       }
-      setShowCreateTask(false)
-      setCreateTitle('')
-      setCreateBody('')
-      await loadTasks({ silent: true })
+      if (taskCreateAttempts.ownsDraft(attempt)) {
+        setShowCreateTask(false)
+        setCreateTitle('')
+        setCreateBody('')
+      }
+      if (taskCreateAttempts.ownsSource(attempt)) {
+        await loadTasks({ silent: true })
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create task')
+      if (taskCreateAttempts.ownsDraft(attempt)) {
+        setError(err instanceof Error ? err.message : 'Failed to create task')
+      }
     } finally {
-      setCreatingTask(false)
+      if (taskCreateAttempts.finish(attempt)) {
+        setCreatingTask(false)
+      }
     }
   }, [
     client,
@@ -162,10 +178,12 @@ export function useMobileTasksTaskCreateActions(model: LinearItemActionsModel) {
     createTeamId,
     createTitle,
     creatingTask,
+    hostId,
     hostedRepos,
     linearTeams,
     loadTasks,
     provider,
+    taskCreateAttempts,
     taskStateHydrated,
     tasksSupported
   ])

@@ -41,7 +41,7 @@ function block(input: string, startMarker: string, endMarker: string): string {
 function loadTasksBody(): string {
   return block(
     taskListSource,
-    'const loadTasks = useCallback(',
+    'const loadTasks: (options?: { silent?: boolean }) => Promise<void> = useCallback(',
     '  return Object.assign(model, { loadTasks })'
   )
 }

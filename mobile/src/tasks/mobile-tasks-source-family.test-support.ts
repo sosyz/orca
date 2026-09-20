@@ -4,7 +4,8 @@ import ts from 'typescript'
 
 const TASKS_DIRECTORY = __dirname
 const TASKS_ROUTE = '../../app/h/[hostId]/tasks.tsx'
-const SOURCE_PATTERN = /^(?:MobileTasks.*\.tsx|mobile-tasks-.*\.tsx?|use-mobile-tasks-.*\.tsx?)$/
+const SOURCE_PATTERN =
+  /^(?:MobileTasks.*\.tsx|mobile-task-.*\.tsx?|mobile-tasks-.*\.tsx?|use-mobile-tasks-.*\.tsx?)$/
 
 export const MOBILE_TASKS_SOURCE_FILES = [
   TASKS_ROUTE,
