@@ -95,6 +95,12 @@ type ResolvedBrowserCommandTarget = {
   webContentsId: number
 }
 
+type CdpMousePoint = {
+  webContentsId: number
+  x: number
+  y: number
+}
+
 type AgentBrowserCleanupOptions = {
   closeTimeoutMs?: number
 }
@@ -603,6 +609,8 @@ export class AgentBrowserBridge {
   private readonly pendingSessionCreation = new Map<string, Promise<void>>()
   // Why: `agent-browser close` is async, keyed by session name — recreating before it finishes lets the old teardown close the new session.
   private readonly pendingSessionDestruction = new Map<string, Promise<void>>()
+  private readonly cdpMousePointByBrowserPageId = new Map<string, CdpMousePoint>()
+  private readonly mouseDownBrowserPageIds = new Set<string>()
   private readonly cancelledProcesses = new WeakSet<ChildProcess>()
   private shutdownStarted = false
 
@@ -714,6 +722,8 @@ export class AgentBrowserBridge {
    */
   async onPageClosed(browserPageId: string): Promise<void> {
     const sessionName = `${ORCA_TAB_SESSION_PREFIX}${browserPageId}`
+    this.cdpMousePointByBrowserPageId.delete(browserPageId)
+    this.mouseDownBrowserPageIds.delete(browserPageId)
     await this.destroySession(sessionName)
     this.pendingInterceptRestore.delete(sessionName)
   }
@@ -725,6 +735,8 @@ export class AgentBrowserBridge {
   ): Promise<void> {
     // Why: an Electron process swap keeps browserPageId but gives a new webContentsId — destroy the session so the next command recreates it.
     const sessionName = `${ORCA_TAB_SESSION_PREFIX}${browserPageId}`
+    this.cdpMousePointByBrowserPageId.delete(browserPageId)
+    this.mouseDownBrowserPageIds.delete(browserPageId)
     const session = this.sessions.get(sessionName)
     const oldWebContentsId = previousWebContentsId ?? session?.webContentsId
     const owningWorktreeId = this.browserManager.getWorktreeIdForTab(browserPageId)
@@ -1127,18 +1139,36 @@ export class AgentBrowserBridge {
     worktreeId?: string,
     browserPageId?: string
   ): Promise<unknown> {
-    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
-      return await this.execAgentBrowser(sessionName, ['mouse', 'move', String(x), String(y)])
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName, target) => {
+      try {
+        const result = await this.execAgentBrowser(sessionName, [
+          'mouse',
+          'move',
+          String(x),
+          String(y)
+        ])
+        this.cdpMousePointByBrowserPageId.set(target.browserPageId, {
+          webContentsId: target.webContentsId,
+          x,
+          y
+        })
+        return result
+      } catch (error) {
+        this.cdpMousePointByBrowserPageId.delete(target.browserPageId)
+        throw error
+      }
     })
   }
 
   async mouseDown(button?: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
-    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName, target) => {
       const args = ['mouse', 'down']
       if (button) {
         args.push(button)
       }
-      return await this.execAgentBrowser(sessionName, args)
+      const result = await this.execAgentBrowser(sessionName, args)
+      this.mouseDownBrowserPageIds.add(target.browserPageId)
+      return result
     })
   }
 
@@ -1213,12 +1243,14 @@ export class AgentBrowserBridge {
   }
 
   async mouseUp(button?: string, worktreeId?: string, browserPageId?: string): Promise<unknown> {
-    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
+    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName, target) => {
       const args = ['mouse', 'up']
       if (button) {
         args.push(button)
       }
-      return await this.execAgentBrowser(sessionName, args)
+      const result = await this.execAgentBrowser(sessionName, args)
+      this.mouseDownBrowserPageIds.delete(target.browserPageId)
+      return result
     })
   }
 
@@ -1228,13 +1260,53 @@ export class AgentBrowserBridge {
     worktreeId?: string,
     browserPageId?: string
   ): Promise<unknown> {
-    return this.enqueueTargetedCommand(worktreeId, browserPageId, async (sessionName) => {
-      const args = ['mouse', 'wheel', String(dy)]
-      if (dx != null) {
-        args.push(String(dx))
-      }
-      return await this.execAgentBrowser(sessionName, args)
-    })
+    return this.enqueueTargetedCommand(
+      worktreeId,
+      browserPageId,
+      async (sessionName, target) => {
+        const point = this.cdpMousePointByBrowserPageId.get(target.browserPageId)
+        if (
+          point?.webContentsId === target.webContentsId &&
+          !this.mouseDownBrowserPageIds.has(target.browserPageId)
+        ) {
+          try {
+            const wc = this.requireTargetWebContents(target)
+            const lease = acquireElectronDebugger(wc)
+            try {
+              wc.focus()
+              await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
+                button: 'none',
+                buttons: 0,
+                deltaX: dx ?? 0,
+                deltaY: dy,
+                type: 'mouseWheel',
+                x: point.x,
+                y: point.y
+              })
+              return {
+                scrolled: {
+                  dx: dx ?? 0,
+                  dy,
+                  x: point.x,
+                  y: point.y
+                }
+              }
+            } finally {
+              lease.release()
+            }
+          } catch {
+            this.cdpMousePointByBrowserPageId.delete(target.browserPageId)
+          }
+        }
+        await this.ensureSession(sessionName, target.browserPageId, target.webContentsId)
+        const args = ['mouse', 'wheel', String(dy)]
+        if (dx != null) {
+          args.push(String(dx))
+        }
+        return await this.execAgentBrowser(sessionName, args)
+      },
+      { ensureSession: false }
+    )
   }
 
   // ── Find (semantic locators) ──

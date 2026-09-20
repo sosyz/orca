@@ -133,6 +133,99 @@ describe('AgentBrowserBridge', () => {
     }
   })
 
+  it('dispatches mouse wheel through CDP at the last helper move point', async () => {
+    const wc = mockWebContents(100)
+    webContentsFromIdMock.mockReturnValue(wc)
+    succeedWith({ moved: true })
+
+    await bridge.mouseMove(10, 20)
+    execFileMock.mockClear()
+    await bridge.mouseWheel(120, 4)
+
+    expect(wc.focus).toHaveBeenCalledTimes(1)
+    expect(wc.debugger.sendCommand).toHaveBeenLastCalledWith('Input.dispatchMouseEvent', {
+      button: 'none',
+      buttons: 0,
+      deltaX: 4,
+      deltaY: 120,
+      type: 'mouseWheel',
+      x: 10,
+      y: 20
+    })
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+
+  it('drops the old CDP wheel point before falling back after dispatch failure', async () => {
+    const wc = mockWebContents(100)
+    wc.debugger.sendCommand.mockRejectedValueOnce(new Error('wheel unavailable'))
+    webContentsFromIdMock.mockReturnValue(wc)
+    succeedWith({ moved: true })
+
+    await bridge.mouseMove(10, 20)
+    execFileMock.mockClear()
+    await bridge.mouseWheel(120, 4)
+    await bridge.mouseWheel(60)
+
+    const wheelCalls = execFileMock.mock.calls.filter((candidate: unknown[]) => {
+      const args = candidate[1] as string[]
+      return args.includes('mouse') && args.includes('wheel')
+    })
+    expect(wheelCalls).toHaveLength(2)
+    expect(wc.debugger.sendCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops the old CDP wheel point when the helper move fails', async () => {
+    const wc = mockWebContents(100)
+    webContentsFromIdMock.mockReturnValue(wc)
+    succeedWith({ moved: true })
+
+    await bridge.mouseMove(10, 20)
+    failWith('move failed')
+    await expect(bridge.mouseMove(40, 50)).rejects.toThrow('move failed')
+
+    succeedWith({ scrolled: true })
+    execFileMock.mockClear()
+    await bridge.mouseWheel(60)
+
+    const wheelCall = execFileMock.mock.calls.find((candidate: unknown[]) => {
+      const args = candidate[1] as string[]
+      return args.includes('mouse') && args.includes('wheel')
+    })
+    expect(wheelCall).toBeDefined()
+    expect(wc.debugger.sendCommand).not.toHaveBeenCalled()
+  })
+
+  it('keeps helper wheel semantics while a mouse button is down', async () => {
+    const wc = mockWebContents(100)
+    webContentsFromIdMock.mockReturnValue(wc)
+    succeedWith({ moved: true })
+
+    await bridge.mouseMove(10, 20)
+    await bridge.mouseDown()
+    execFileMock.mockClear()
+    await bridge.mouseWheel(60)
+
+    const wheelCall = execFileMock.mock.calls.find((candidate: unknown[]) => {
+      const args = candidate[1] as string[]
+      return args.includes('mouse') && args.includes('wheel')
+    })
+    expect(wheelCall).toBeDefined()
+    expect(wc.debugger.sendCommand).not.toHaveBeenCalled()
+  })
+
+  it('keeps the helper fallback when wheel has no prior CDP pointer', async () => {
+    succeedWith({ scrolled: true })
+
+    await bridge.mouseWheel(120, 4)
+
+    const wheelCall = execFileMock.mock.calls.find((candidate: unknown[]) => {
+      const args = candidate[1] as string[]
+      return args.includes('mouse') && args.includes('wheel')
+    })
+    expect(wheelCall).toBeDefined()
+    expect(wheelCall![1]).toContain('--cdp')
+  })
+
   // ── --json always appended ──
 
   it('always appends --json to commands', async () => {
