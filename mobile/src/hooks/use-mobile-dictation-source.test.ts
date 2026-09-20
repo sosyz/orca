@@ -53,10 +53,11 @@ describe('useMobileDictation source invariants', () => {
 
     const mirrorEffect = sliceBetween('useLayoutEffect(() => {', 'const reportError =')
     expect(mirrorEffect).toContain('clientRef.current = client')
+    expect(mirrorEffect).toContain('scopeKeyRef.current = scopeKey')
     expect(mirrorEffect).toContain('enabledRef.current = enabled')
     expect(mirrorEffect).toContain('onTranscriptRef.current = onTranscript')
     expect(mirrorEffect).toContain('onErrorRef.current = onError')
-    expect(mirrorEffect).toContain('}, [client, enabled, onTranscript, onError])')
+    expect(mirrorEffect).toContain('}, [client, enabled, scopeKey, onTranscript, onError])')
   })
 
   it('reserves pending audio bytes before encoding microphone chunks', () => {
@@ -73,7 +74,7 @@ describe('useMobileDictation source invariants', () => {
     expect(reserveIndex).toBeLessThan(encodeIndex)
     expect(microphoneEffect).toContain('MOBILE_DICTATION_CONNECTION_SLOW_ERROR_MESSAGE')
     expect(microphoneEffect).toContain('queue.pendingAudioBudget.release(byteLength)')
-    expect(source).toContain('enqueueMobileDictationAudioChunk(client, dictationId, event')
+    expect(source).toContain('enqueueMobileDictationAudioChunk(origin.client, dictationId, event')
   })
 
   it('reuses audio chunk queue wiring across microphone events', () => {
@@ -83,7 +84,7 @@ describe('useMobileDictation source invariants', () => {
     expect(queueIndex).toBeGreaterThanOrEqual(0)
     expect(queueIndex).toBeLessThan(listenerIndex)
     expect(source).toContain(
-      'enqueueMobileDictationAudioChunk(client, dictationId, event, audioChunkQueue)'
+      'enqueueMobileDictationAudioChunk(origin.client, dictationId, event, audioChunkQueue)'
     )
   })
 

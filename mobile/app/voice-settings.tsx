@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   Pressable,
@@ -18,25 +18,12 @@ import { useFocusedSettingsHostClients } from '../src/transport/settings-host-cl
 import type { RpcClient } from '../src/transport/rpc-client'
 import { BottomDrawer } from '../src/components/BottomDrawer'
 import { VoiceModelList } from '../src/components/VoiceModelList'
-import { useDictationSetupPoller } from '../src/dictation/use-dictation-setup-poller'
-import {
-  deleteDictationModel,
-  downloadDictationModel,
-  fetchDictationSetup,
-  isModelInFlight,
-  setDictationConfig,
-  type MobileSpeechModel,
-  type MobileSpeechSetup
-} from '../src/dictation/mobile-dictation-setup'
-
-const POLL_INTERVAL_MS = 1500
+import { useMobileVoiceSettingsState } from '../src/dictation/use-mobile-voice-settings-state'
 
 const DICTATION_MODES = [
   { value: 'toggle', label: 'Toggle' },
   { value: 'hold', label: 'Hold' }
 ] as const
-
-type ModelBusyAction = { modelId: string; type: 'download' | 'select' | 'delete' }
 
 export default function VoiceSettingsScreen(): React.JSX.Element {
   const router = useRouter()
@@ -54,136 +41,19 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
     [hostClients]
   )
 
-  const [setup, setSetup] = useState<MobileSpeechSetup | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [busyAction, setBusyAction] = useState<ModelBusyAction | null>(null)
-  const [modelDrawerOpen, setModelDrawerOpen] = useState(false)
-  const refresh = useCallback(async (): Promise<boolean | undefined> => {
-    if (!client) {
-      return false
-    }
-    try {
-      const next = await fetchDictationSetup(client)
-      setSetup(next)
-      setError(null)
-      return next.models.some(isModelInFlight)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load voice settings')
-      return undefined
-    } finally {
-      setLoading(false)
-    }
-  }, [client])
-
-  const polling = setup?.models.some(isModelInFlight) ?? false
-  const refreshSetup = useDictationSetupPoller({
-    visible: routeFocused && client !== null,
-    polling,
-    refresh,
-    intervalMs: POLL_INTERVAL_MS
-  })
-
-  useEffect(() => {
-    if (routeFocused && client && setup === null) {
-      setLoading(true)
-    }
-  }, [routeFocused, client, setup])
-
-  const handleToggleEnabled = useCallback(
-    async (enabled: boolean) => {
-      if (!client) {
-        return
-      }
-      setError(null)
-      // Optimistic flip so the switch responds instantly; reconcile below.
-      setSetup((prev) => (prev ? { ...prev, enabled } : prev))
-      try {
-        setSetup(await setDictationConfig(client, { enabled }))
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not update')
-        void refreshSetup()
-      }
-    },
-    [client, refreshSetup]
-  )
-
-  const handleSelectMode = useCallback(
-    async (dictationMode: 'toggle' | 'hold') => {
-      if (!client) {
-        return
-      }
-      setError(null)
-      setSetup((prev) => (prev ? { ...prev, dictationMode } : prev))
-      try {
-        setSetup(await setDictationConfig(client, { dictationMode }))
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not update')
-        void refreshSetup()
-      }
-    },
-    [client, refreshSetup]
-  )
-
-  const handleUseModel = useCallback(
-    async (model: MobileSpeechModel) => {
-      if (!client) {
-        return
-      }
-      setBusyAction({ modelId: model.id, type: 'select' })
-      setError(null)
-      try {
-        setSetup(await setDictationConfig(client, { enabled: true, modelId: model.id }))
-        setModelDrawerOpen(false)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not select model')
-      } finally {
-        setBusyAction(null)
-      }
-    },
-    [client]
-  )
-
-  const handleDownload = useCallback(
-    async (model: MobileSpeechModel) => {
-      if (!client) {
-        return
-      }
-      setBusyAction({ modelId: model.id, type: 'download' })
-      setError(null)
-      try {
-        await downloadDictationModel(client, model.id)
-        await refreshSetup()
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Download failed')
-      } finally {
-        setBusyAction(null)
-      }
-    },
-    [client, refreshSetup]
-  )
-
-  const handleDelete = useCallback(
-    async (model: MobileSpeechModel) => {
-      if (!client) {
-        return
-      }
-      const deletedSelectedModel = setup?.selectedModelId === model.id
-      setBusyAction({ modelId: model.id, type: 'delete' })
-      setError(null)
-      try {
-        setSetup(await deleteDictationModel(client, model.id))
-        if (deletedSelectedModel) {
-          setModelDrawerOpen(false)
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Delete failed')
-      } finally {
-        setBusyAction(null)
-      }
-    },
-    [client, setup?.selectedModelId]
-  )
+  const {
+    setup,
+    loading,
+    error,
+    busyAction,
+    modelDrawerOpen,
+    setModelDrawerOpen,
+    handleToggleEnabled,
+    handleSelectMode,
+    handleUseModel,
+    handleDownload,
+    handleDelete
+  } = useMobileVoiceSettingsState(client, routeFocused)
 
   const enabled = setup?.enabled ?? false
   const selectedModel = setup?.models.find((m) => m.id === setup.selectedModelId)

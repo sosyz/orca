@@ -9,8 +9,22 @@ export type DictationStatus = 'idle' | 'starting' | 'recording' | 'processing' |
 export type UseMobileDictationOptions = {
   client: RpcClient | null
   enabled: boolean
+  scopeKey?: string
   onTranscript: (text: string) => void
   onError?: (error: Error) => void
+}
+
+export type MobileDictationOrigin = {
+  readonly client: RpcClient
+  readonly scopeKey: string | undefined
+}
+
+export function isCurrentMobileDictationOrigin(
+  origin: MobileDictationOrigin | null,
+  client: RpcClient | null,
+  scopeKey: string | undefined
+): origin is MobileDictationOrigin {
+  return origin !== null && origin.client === client && origin.scopeKey === scopeKey
 }
 
 export type UseMobileDictationResult = {

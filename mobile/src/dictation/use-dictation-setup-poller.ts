@@ -7,19 +7,21 @@ type PollerOptions = {
   polling: boolean
   refresh: () => Promise<boolean | undefined>
   intervalMs: number
+  source?: unknown
 }
 
 export function useDictationSetupPoller({
   visible,
   polling,
   refresh,
-  intervalMs
+  intervalMs,
+  source
 }: PollerOptions): () => Promise<void> {
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
   const poller = useMemo(
     () => new DictationSetupPollController(() => refreshRef.current(), intervalMs),
-    [intervalMs]
+    [intervalMs, source]
   )
 
   useEffect(() => () => poller.dispose(), [poller])

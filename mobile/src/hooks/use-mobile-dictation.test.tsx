@@ -63,8 +63,16 @@ describe('useMobileDictation', () => {
   const onTranscript = vi.fn()
   const onError = vi.fn()
 
-  function Harness({ enabled = true }: { enabled?: boolean }): null {
-    latest = useMobileDictation({ client, enabled, onTranscript, onError })
+  function Harness({
+    enabled = true,
+    activeClient = client,
+    scopeKey = 'tab-a'
+  }: {
+    enabled?: boolean
+    activeClient?: RpcClient
+    scopeKey?: string
+  }): null {
+    latest = useMobileDictation({ client: activeClient, enabled, scopeKey, onTranscript, onError })
     return null
   }
 
@@ -145,6 +153,190 @@ describe('useMobileDictation', () => {
     expect(api().status).toBe('recording')
     expect(audio.requestMicrophonePermissionsAsync).toHaveBeenCalledTimes(2)
     expect(sendRequest).toHaveBeenCalledWith('speech.dictation.start', {
+      dictationId: expect.stringMatching(/^mobile-dictation-/)
+    })
+  })
+
+  it('cancels locally before remote cleanup and preserves a newer recording', async () => {
+    const remoteCancel = deferred<Awaited<ReturnType<RpcClient['sendRequest']>>>()
+    sendRequest.mockImplementation(async (method) => {
+      if (method === 'speech.dictation.cancel') {
+        return remoteCancel.promise
+      }
+      return { id: 'response', ok: true, result: {}, _meta: { runtimeId: 'r1' } }
+    })
+    await render()
+    await act(async () => api().start())
+
+    let cancellation!: Promise<void>
+    await act(async () => {
+      cancellation = api().cancel()
+    })
+    expect(audio.toggleRecording).toHaveBeenLastCalledWith(false)
+    expect(api().status).toBe('idle')
+
+    await act(async () => api().start())
+    expect(api().status).toBe('recording')
+    await act(async () => {
+      remoteCancel.resolve({
+        id: 'cancelled',
+        ok: true,
+        result: {},
+        _meta: { runtimeId: 'r1' }
+      })
+      await cancellation
+    })
+    expect(api().status).toBe('recording')
+    expect(audio.toggleRecording).toHaveBeenLastCalledWith(true)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('cancels recording on a tab scope change before its transcript can reach the new tab', async () => {
+    sendRequest.mockImplementation(async (method) => ({
+      id: 'response',
+      ok: true,
+      result: method === 'speech.dictation.finish' ? { text: 'old tab words' } : {},
+      _meta: { runtimeId: 'r1' }
+    }))
+    await render()
+    await act(async () => api().start())
+    const oldId = (
+      sendRequest.mock.calls.find(([method]) => method === 'speech.dictation.start')![1] as {
+        dictationId: string
+      }
+    ).dictationId
+
+    await act(async () => {
+      renderer!.update(createElement(Harness, { scopeKey: 'tab-b' }))
+    })
+
+    expect(api().status).toBe('idle')
+    expect(audio.toggleRecording).toHaveBeenLastCalledWith(false)
+    expect(sendRequest).toHaveBeenCalledWith('speech.dictation.cancel', { dictationId: oldId })
+    await act(async () => api().stop())
+    expect(sendRequest).not.toHaveBeenCalledWith('speech.dictation.finish', { dictationId: oldId })
+    expect(onTranscript).not.toHaveBeenCalled()
+  })
+
+  it('drops a late finish when the composer scope changes during processing', async () => {
+    const finish = deferred<Awaited<ReturnType<RpcClient['sendRequest']>>>()
+    sendRequest.mockImplementation(async (method) => {
+      if (method === 'speech.dictation.finish') {
+        return finish.promise
+      }
+      return { id: 'response', ok: true, result: {}, _meta: { runtimeId: 'r1' } }
+    })
+    await render()
+    await act(async () => api().start())
+
+    let pendingStop!: Promise<void>
+    await act(async () => {
+      pendingStop = api().stop()
+    })
+    expect(api().status).toBe('processing')
+    await act(async () => {
+      renderer!.update(createElement(Harness, { scopeKey: 'tab-b' }))
+    })
+    expect(api().status).toBe('idle')
+
+    await act(async () => {
+      finish.resolve({
+        id: 'finished',
+        ok: true,
+        result: { text: 'old tab words' },
+        _meta: { runtimeId: 'r1' }
+      })
+      await pendingStop
+    })
+    expect(onTranscript).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+    expect(api().status).toBe('idle')
+  })
+
+  it('cancels a replaced client session on its original client and keeps the new client clean', async () => {
+    const originalClient = client
+    const replacementSend = vi.fn<RpcClient['sendRequest']>(async () => ({
+      id: 'replacement',
+      ok: true,
+      result: {},
+      _meta: { runtimeId: 'r2' }
+    }))
+    const replacementClient = { ...client, sendRequest: replacementSend }
+    await render()
+    await act(async () => api().start())
+    const oldId = (
+      sendRequest.mock.calls.find(([method]) => method === 'speech.dictation.start')![1] as {
+        dictationId: string
+      }
+    ).dictationId
+
+    await act(async () => {
+      renderer!.update(createElement(Harness, { activeClient: replacementClient }))
+    })
+    expect(api().status).toBe('idle')
+    expect(audio.toggleRecording).toHaveBeenLastCalledWith(false)
+    expect(originalClient.sendRequest).toHaveBeenCalledWith('speech.dictation.cancel', {
+      dictationId: oldId
+    })
+    expect(replacementSend).not.toHaveBeenCalled()
+
+    await act(async () => api().start())
+    expect(replacementSend).toHaveBeenCalledWith('speech.dictation.start', {
+      dictationId: expect.not.stringMatching(oldId)
+    })
+    expect(api().status).toBe('recording')
+  })
+
+  it('invalidates pending microphone permission when the tab scope changes', async () => {
+    const permission = deferred<PermissionResult>()
+    audio.requestMicrophonePermissionsAsync.mockReturnValueOnce(permission.promise)
+    await render()
+    let pendingStart!: Promise<void>
+    await act(async () => {
+      pendingStart = api().start()
+    })
+    expect(api().status).toBe('starting')
+
+    await act(async () => {
+      renderer!.update(createElement(Harness, { scopeKey: 'tab-b' }))
+    })
+    expect(api().status).toBe('idle')
+    await act(async () => {
+      permission.resolve({ granted: true })
+      await pendingStart
+    })
+    expect(sendRequest).not.toHaveBeenCalled()
+    expect(audio.toggleRecording).not.toHaveBeenCalledWith(true)
+  })
+
+  it('cancels a desktop start that resolves after its tab scope changes', async () => {
+    const remoteStart = deferred<Awaited<ReturnType<RpcClient['sendRequest']>>>()
+    sendRequest.mockImplementation(async (method) =>
+      method === 'speech.dictation.start'
+        ? remoteStart.promise
+        : { id: 'response', ok: true, result: {}, _meta: { runtimeId: 'r1' } }
+    )
+    await render()
+    let pendingStart!: Promise<void>
+    await act(async () => {
+      pendingStart = api().start()
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledWith('speech.dictation.start', {
+      dictationId: expect.stringMatching(/^mobile-dictation-/)
+    })
+
+    await act(async () => {
+      renderer!.update(createElement(Harness, { scopeKey: 'tab-b' }))
+    })
+    expect(api().status).toBe('idle')
+    await act(async () => {
+      remoteStart.resolve({ id: 'started', ok: true, result: {}, _meta: { runtimeId: 'r1' } })
+      await pendingStart
+    })
+    expect(audio.toggleRecording).not.toHaveBeenCalledWith(true)
+    expect(api().status).toBe('idle')
+    expect(sendRequest).toHaveBeenCalledWith('speech.dictation.cancel', {
       dictationId: expect.stringMatching(/^mobile-dictation-/)
     })
   })
