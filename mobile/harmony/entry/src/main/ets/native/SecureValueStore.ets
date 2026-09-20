@@ -137,12 +137,12 @@ async function runHuks<T>(operation: string, action: () => Promise<T>): Promise<
 }
 
 export class SecureValueStore {
+  private static operationTail: Promise<void> = Promise.resolve();
+  private static durabilityError: Error | null = null;
   private readonly base64 = new util.Base64Helper();
   private readonly preferencesPromise: Promise<preferences.Preferences>;
   private keyReady: Promise<void> | null = null;
   private keyPresenceDiagnosticLogged = false;
-  private operationTail: Promise<void> = Promise.resolve();
-  private durabilityError: Error | null = null;
 
   constructor(context: common.UIAbilityContext) {
     this.preferencesPromise = preferences.getPreferences(context, PREFERENCES_NAME);
@@ -217,22 +217,22 @@ export class SecureValueStore {
   }
 
   private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
-    const pending = this.operationTail.then(operation, operation);
-    this.operationTail = pending.then(() => {}, () => {});
+    const pending = SecureValueStore.operationTail.then(operation, operation);
+    SecureValueStore.operationTail = pending.then(() => {}, () => {});
     return pending;
   }
 
   private markDurabilityUncertain(error: Error): void {
-    this.durabilityError = error;
+    SecureValueStore.durabilityError = error;
   }
 
   private markDurabilityConfirmed(): void {
-    this.durabilityError = null;
+    SecureValueStore.durabilityError = null;
   }
 
   private throwIfDurabilityUncertain(): void {
-    if (this.durabilityError) {
-      throw this.durabilityError;
+    if (SecureValueStore.durabilityError) {
+      throw SecureValueStore.durabilityError;
     }
   }
 

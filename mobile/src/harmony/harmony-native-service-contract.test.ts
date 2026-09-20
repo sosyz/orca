@@ -158,7 +158,7 @@ describe('Harmony native service safety contract', () => {
     expect(source).toContain('await this.requireKey()')
     expect(source).not.toContain('await this.set(key, value)')
     expect(source).toContain('await this.migrateLegacyValue(store, key, encoded, value)')
-    expect(source).toContain('private operationTail: Promise<void> = Promise.resolve()')
+    expect(source).toContain('private static operationTail: Promise<void> = Promise.resolve()')
     expect(source).toContain('private enqueueOperation<T>(')
     expect(source).toContain('private async hasStoredV3Envelope(')
     expect(source).toContain('value.startsWith(`${ENVELOPE_VERSION}.`)')

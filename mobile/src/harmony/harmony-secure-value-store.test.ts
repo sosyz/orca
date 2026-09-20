@@ -182,6 +182,7 @@ function setupSecureStore(options?: {
     '@kit.UniversalKeystoreKit': { huks }
   })
   return {
+    createService: () => new SecureValueStore({}),
     hilog,
     huks,
     service: new SecureValueStore({}),
@@ -505,6 +506,41 @@ describe('Harmony SecureValueStore', () => {
 
     await service.set('pairing:token', 'durable-token')
     await expect(service.get('pairing:token')).resolves.toBe('durable-token')
+  })
+
+  it('keeps a failed flush uncertain across native module recreation', async () => {
+    const { createService, durableValues, service, store } = setupSecureStore({
+      flushFailures: [new Error('set flush failed')]
+    })
+
+    await expect(service.set('pairing:token', 'new-token')).rejects.toThrow('set flush failed')
+    const replacement = createService()
+    const readsBefore = store.get.mock.calls.length
+    await expect(replacement.get('pairing:token')).rejects.toThrow('set flush failed')
+    expect(store.get).toHaveBeenCalledTimes(readsBefore)
+    expect(durableValues.get('pairing:token')).toBe(encodedEnvelope())
+
+    await replacement.set('other:key', 'durable-token')
+    await expect(replacement.get('pairing:token')).resolves.toBe('new-token')
+    expect(durableValues.get('pairing:token')).toMatch(/^v3\./u)
+  })
+
+  it('waits for the previous native module flush before reading from its replacement', async () => {
+    const flushGate = deferred<void>()
+    const { createService, service, store } = setupSecureStore({
+      flushGates: [flushGate.promise]
+    })
+
+    const write = service.set('pairing:token', 'new-token')
+    await vi.waitFor(() => expect(store.put).toHaveBeenCalledOnce())
+    const readsBefore = store.get.mock.calls.length
+    const read = createService().get('pairing:token')
+    await Promise.resolve()
+    expect(store.get).toHaveBeenCalledTimes(readsBefore)
+
+    flushGate.resolve()
+    await expect(write).resolves.toBeUndefined()
+    await expect(read).resolves.toBe('new-token')
   })
 
   it('does not return a deleted value until a later preferences flush succeeds', async () => {
