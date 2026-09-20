@@ -185,12 +185,6 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, harmonyos]
     timeout-minutes: 45
     environment: harmony-production
-    env:
-      HARMONY_RELEASE_TOOLCHAIN_EVIDENCE_PATH: ${{ runner.temp }}/orca-harmony-toolchain.json
-      HARMONY_RELEASE_BUILD_EVIDENCE_PATH: ${{ runner.temp }}/orca-harmony-build-evidence.txt
-      HARMONY_RELEASE_REFERENCE_HAP_PATH: ${{ runner.temp }}/orca-harmony-reference-release.hap
-      HARMONY_RELEASE_REBUILD_ROOT: ${{ runner.temp }}/orca-harmony-release-rebuild
-      TMPDIR: ${{ runner.temp }}
     permissions:
       attestations: write
       contents: read
@@ -207,6 +201,7 @@ jobs:
 
     steps:
       - name: Verify exact signing runner identity before checkout
+        working-directory: ${{ github.workspace }}
         env:
           EXPECTED_RUNNER_NAME: ${{ vars.HARMONY_RELEASE_SIGNING_RUNNER_NAME }}
           SENTINEL_PATH: ${{ vars.HARMONY_RELEASE_SIGNING_RUNNER_SENTINEL_PATH }}
@@ -230,6 +225,20 @@ jobs:
           test "$(stat -f '%Lp' "$SENTINEL_PATH")" = 644
           actual_sentinel_sha256="$(shasum -a 256 "$SENTINEL_PATH" | awk '{print $1}')"
           test "$actual_sentinel_sha256" = "$EXPECTED_SENTINEL_SHA256"
+
+      - name: Initialize runner-local release paths before checkout
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          test -d "$RUNNER_TEMP"
+          runner_temp="$(cd -- "$RUNNER_TEMP" && pwd -P)"
+          {
+            printf 'HARMONY_RELEASE_TOOLCHAIN_EVIDENCE_PATH=%s/orca-harmony-toolchain.json\n' "$runner_temp"
+            printf 'HARMONY_RELEASE_BUILD_EVIDENCE_PATH=%s/orca-harmony-build-evidence.txt\n' "$runner_temp"
+            printf 'HARMONY_RELEASE_REFERENCE_HAP_PATH=%s/orca-harmony-reference-release.hap\n' "$runner_temp"
+            printf 'HARMONY_RELEASE_REBUILD_ROOT=%s/orca-harmony-release-rebuild\n' "$runner_temp"
+            printf 'TMPDIR=%s\n' "$runner_temp"
+          } >> "$GITHUB_ENV"
 
       - name: Checkout trusted source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

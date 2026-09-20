@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 
 const workflowPath = resolve(
@@ -11,7 +12,12 @@ const workflowPath = resolve(
 const workflow = readFileSync(workflowPath, 'utf8')
 
 test('signing temporary files stay inside the runner cleanup boundary', () => {
-  assert.match(workflow, /^      TMPDIR: \$\{\{ runner\.temp \}\}$/mu)
+  const signingJob = workflowJob('build-and-sign')
+  assert.doesNotMatch(signingJob.slice(0, signingJob.indexOf('    steps:')), /\$\{\{\s*runner\./u)
+  assert.match(
+    workflowRunScript('Initialize runner-local release paths before checkout'),
+    /printf 'TMPDIR=%s\\n' "\$runner_temp"/u
+  )
   assert.match(workflow, /safe_remove_temp_path\(\)/u)
   assert.match(workflow, /test "\$runner_temp" != \/ -a "\$runner_temp" != "\$workspace"/u)
   assert.doesNotMatch(workflow, /RUNNER_TEMP:-\/tmp/u)
@@ -58,6 +64,20 @@ test('self-hosted signing and simulator jobs verify exact runner identity before
     '      - name: Verify exact simulator runner identity before checkout'
   )
   assert.ok(simulatorIdentityIndex < simulatorDownloadIndex)
+  const signingIdentityIndex = signingJob.indexOf(
+    '      - name: Verify exact signing runner identity before checkout'
+  )
+  const pathSetupIndex = signingJob.indexOf(
+    '      - name: Initialize runner-local release paths before checkout'
+  )
+  const signingCheckoutIndex = signingJob.indexOf('      - name: Checkout trusted source')
+  assert.ok(signingIdentityIndex < pathSetupIndex && pathSetupIndex < signingCheckoutIndex)
+  for (const preCheckoutStep of [
+    signingJob.slice(signingIdentityIndex, pathSetupIndex),
+    signingJob.slice(pathSetupIndex, signingCheckoutIndex)
+  ]) {
+    assert.match(preCheckoutStep, /working-directory: \$\{\{ github\.workspace \}\}/u)
+  }
 })
 
 function workflowRunScript(stepName) {
@@ -117,6 +137,52 @@ function runWorkflowScript(script, environment, prelude = '') {
     env: { ...process.env, ...environment }
   })
 }
+
+test('runner path setup persists physical paths with spaces and fails without RUNNER_TEMP', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'orca harmony runner paths '))
+  const runnerTemp = join(directory, 'runner temp')
+  const environmentFile = join(directory, 'github env')
+  const script = workflowRunScript('Initialize runner-local release paths before checkout')
+  try {
+    mkdirSync(runnerTemp)
+    const result = runWorkflowScript(script, {
+      GITHUB_ENV: environmentFile,
+      RUNNER_TEMP: runnerTemp
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const actual = Object.fromEntries(
+      readFileSync(environmentFile, 'utf8')
+        .trimEnd()
+        .split('\n')
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])
+    )
+    const physicalTemp = realpathSync(runnerTemp)
+    assert.deepEqual(actual, {
+      HARMONY_RELEASE_TOOLCHAIN_EVIDENCE_PATH: join(physicalTemp, 'orca-harmony-toolchain.json'),
+      HARMONY_RELEASE_BUILD_EVIDENCE_PATH: join(physicalTemp, 'orca-harmony-build-evidence.txt'),
+      HARMONY_RELEASE_REFERENCE_HAP_PATH: join(physicalTemp, 'orca-harmony-reference-release.hap'),
+      HARMONY_RELEASE_REBUILD_ROOT: join(physicalTemp, 'orca-harmony-release-rebuild'),
+      TMPDIR: physicalTemp
+    })
+    assert.equal(
+      runWorkflowScript('test "$TMPDIR" = "$RUNNER_TEMP"', {
+        ...actual,
+        RUNNER_TEMP: physicalTemp
+      }).status,
+      0
+    )
+
+    const missingEnvironmentFile = join(directory, 'missing github env')
+    const missing = runWorkflowScript(script, {
+      GITHUB_ENV: missingEnvironmentFile,
+      RUNNER_TEMP: join(directory, 'missing runner temp')
+    })
+    assert.notEqual(missing.status, 0)
+    assert.equal(existsSync(missingEnvironmentFile), false)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 test('authorize-release actor policy accepts only exact allowlisted initiators', () => {
   const script = workflowRunScript('Verify trusted release initiator before checkout')
