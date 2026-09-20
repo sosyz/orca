@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, Pressable, Linking, Platform } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { ChevronLeft, Globe } from 'lucide-react-native'
+import { useTranslation } from 'react-i18next'
 import Svg, { Path } from 'react-native-svg'
 import Constants from 'expo-constants'
 import { OrcaLogo } from '../src/components/OrcaLogo'
@@ -41,6 +42,7 @@ function XIcon({ size = 16, color = colors.textSecondary }) {
 export default function AboutScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
+  const { t } = useTranslation()
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
@@ -49,17 +51,19 @@ export default function AboutScreen() {
           style={styles.backButton}
           onPress={() => router.back()}
           accessibilityRole="button"
-          accessibilityLabel="Back"
+          accessibilityLabel={t('common.back', 'Back')}
         >
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>About</Text>
+        <Text style={styles.heading}>{t('mobile.about.title', 'About')}</Text>
       </View>
 
       <View style={styles.brand}>
         <OrcaLogo size={28} />
         <Text style={styles.brandName}>Orca</Text>
-        <Text style={styles.brandSub}>Open-source agent IDE for 100x builders</Text>
+        <Text style={styles.brandSub}>
+          {t('mobile.about.tagline', 'Open-source agent IDE for 100x builders')}
+        </Text>
       </View>
 
       <View style={styles.section}>
