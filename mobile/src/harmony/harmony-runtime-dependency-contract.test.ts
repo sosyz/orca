@@ -150,11 +150,19 @@ describe('Harmony runtime dependency contract', () => {
 
   it('reports generated WebView engine packages as production dependencies', () => {
     const mobileRoot = resolve(import.meta.dirname, '../..')
+    const mobilePackage = JSON.parse(readFileSync(join(mobileRoot, 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>
+    }
     const harmonyPackage = JSON.parse(
       readFileSync(join(mobileRoot, 'harmony/package.json'), 'utf8')
     ) as {
       dependencies: Record<string, string>
       devDependencies: Record<string, string>
+    }
+    const harmonyLock = JSON.parse(
+      readFileSync(join(mobileRoot, 'harmony/package-lock.json'), 'utf8')
+    ) as {
+      packages: Record<string, { dependencies?: Record<string, string>; version?: string }>
     }
 
     for (const name of [
@@ -168,6 +176,13 @@ describe('Harmony runtime dependency contract', () => {
         `${name} must be included in the release SBOM`
       ).toHaveProperty(name)
       expect(harmonyPackage.devDependencies).not.toHaveProperty(name)
+      expect(harmonyPackage.dependencies[name], `${name} must match the generated engine`).toBe(
+        mobilePackage.dependencies[name]
+      )
+      expect(harmonyLock.packages[''].dependencies?.[name]).toBe(mobilePackage.dependencies[name])
+      expect(harmonyLock.packages[`node_modules/${name}`].version).toBe(
+        mobilePackage.dependencies[name]
+      )
     }
   })
 })
