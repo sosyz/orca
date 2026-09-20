@@ -75,4 +75,27 @@ describe('persisted connection log store', () => {
       'client-session-started'
     ])
   })
+
+  it('retains exactly one new boundary when an older removal completes after re-pairing', async () => {
+    let finishRemoval!: () => void
+    vi.mocked(AsyncStorage.removeItem).mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishRemoval = resolve
+      })
+    )
+    const { connectionLogStore, recordConnectionClientSessionStart, removeConnectionLogForHost } =
+      await import('./persisted-connection-log-store')
+    recordConnectionClientSessionStart('host-a')
+    await connectionLogStore.hydrate('host-a')
+    const removing = removeConnectionLogForHost('host-a')
+    vi.setSystemTime(2_000)
+    recordConnectionClientSessionStart('host-a')
+    finishRemoval()
+    await removing
+    recordConnectionClientSessionStart('host-a')
+
+    expect(connectionLogStore.get('host-a')).toMatchObject([
+      { ts: 2_000, code: 'client-session-started' }
+    ])
+  })
 })

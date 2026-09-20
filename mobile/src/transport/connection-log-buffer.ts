@@ -36,6 +36,7 @@ export function createConnectionLogStore(
   const hydrationByHost = new Map<string, Promise<void>>()
   const saveByHost = new Map<string, Promise<void>>()
   const removalByHost = new Map<string, Promise<void>>()
+  const generationByHost = new Map<string, number>()
   // A closed host can still deliver one queued log callback. Keep its log
   // tombstoned until a new client session explicitly activates the host.
   const removedHosts = new Set<string>()
@@ -44,6 +45,13 @@ export function createConnectionLogStore(
   // loops re-rendering. Cache per host; invalidate on append.
   const snapshotByHost = new Map<string, readonly ConnectionLogEntry[]>()
   const EMPTY: readonly ConnectionLogEntry[] = []
+  const generation = (hostId: string): number => generationByHost.get(hostId) ?? 0
+  const advanceGeneration = (hostId: string): number => {
+    const next = generation(hostId) + 1
+    generationByHost.set(hostId, next)
+    hydrationByHost.delete(hostId)
+    return next
+  }
 
   const trim = (entries: ConnectionLogEntry[]): void => {
     if (entries.length > maxEntriesPerHost) {
@@ -62,7 +70,7 @@ export function createConnectionLogStore(
   }
 
   const persist = (hostId: string): void => {
-    if (!persistence || !hydratedHosts.has(hostId)) {
+    if (!persistence || !hydratedHosts.has(hostId) || removedHosts.has(hostId)) {
       return
     }
     const snapshot = [...(entriesByHost.get(hostId) ?? [])]
@@ -81,7 +89,7 @@ export function createConnectionLogStore(
   }
 
   const hydrateHost = async (hostId: string, retryAfterFailure: boolean): Promise<void> => {
-    if (!persistence || hydratedHosts.has(hostId)) {
+    if (!persistence || hydratedHosts.has(hostId) || removedHosts.has(hostId)) {
       return
     }
     const existing = hydrationByHost.get(hostId)
@@ -91,9 +99,13 @@ export function createConnectionLogStore(
     if (!retryAfterFailure && hydrationFailedHosts.has(hostId)) {
       return
     }
+    const owner = generation(hostId)
     const pending = persistence
       .load(hostId)
       .then((stored) => {
+        if (generation(hostId) !== owner) {
+          return
+        }
         const live = entriesByHost.get(hostId) ?? []
         const seen = new Set<string>()
         const merged: ConnectionLogEntry[] = []
@@ -114,17 +126,31 @@ export function createConnectionLogStore(
         persist(hostId)
       })
       .catch((error: unknown) => {
+        if (generation(hostId) !== owner) {
+          return
+        }
         hydrationFailedHosts.add(hostId)
         throw error
       })
-      .finally(() => hydrationByHost.delete(hostId))
+      .finally(() => {
+        if (hydrationByHost.get(hostId) === pending) {
+          hydrationByHost.delete(hostId)
+        }
+      })
     hydrationByHost.set(hostId, pending)
     return pending
   }
 
   return {
     activate(hostId) {
-      removedHosts.delete(hostId)
+      if (removedHosts.delete(hostId)) {
+        advanceGeneration(hostId)
+        entriesByHost.delete(hostId)
+        hydrationFailedHosts.delete(hostId)
+        // The queued deletion owns previous history; fresh saves follow it.
+        hydratedHosts.add(hostId)
+        notify(hostId)
+      }
     },
 
     append(hostId, entry) {
@@ -162,18 +188,16 @@ export function createConnectionLogStore(
 
     remove(hostId) {
       const existing = removalByHost.get(hostId)
-      if (existing) {
+      if (existing && removedHosts.has(hostId)) {
         return existing
       }
 
       removedHosts.add(hostId)
+      const owner = advanceGeneration(hostId)
+      const previousSave = saveByHost.get(hostId) ?? Promise.resolve()
       const removal = (async () => {
         try {
-          const hydration = hydrationByHost.get(hostId)
-          if (hydration) {
-            await hydration
-          }
-          await (saveByHost.get(hostId) ?? Promise.resolve())
+          await previousSave.catch(() => {})
           if (persistence) {
             if (persistence.remove) {
               await persistence.remove(hostId)
@@ -183,17 +207,29 @@ export function createConnectionLogStore(
             }
           }
         } catch (error) {
-          removedHosts.delete(hostId)
+          if (generation(hostId) === owner) {
+            removedHosts.delete(hostId)
+          }
           throw error
         }
 
+        if (generation(hostId) !== owner) {
+          return
+        }
         entriesByHost.delete(hostId)
         snapshotByHost.delete(hostId)
         hydratedHosts.delete(hostId)
         hydrationFailedHosts.delete(hostId)
-        saveByHost.delete(hostId)
         notify(hostId)
-      })().finally(() => removalByHost.delete(hostId))
+      })().finally(() => {
+        if (removalByHost.get(hostId) === removal) {
+          removalByHost.delete(hostId)
+        }
+        if (saveByHost.get(hostId) === removal) {
+          saveByHost.delete(hostId)
+        }
+      })
+      saveByHost.set(hostId, removal)
       removalByHost.set(hostId, removal)
       return removal
     },

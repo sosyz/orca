@@ -58,9 +58,9 @@ export function recordConnectionClientSessionStart(hostId: string): void {
   })
 }
 
-export async function removeConnectionLogForHost(hostId: string): Promise<void> {
-  await connectionLogStore.remove(hostId)
+export function removeConnectionLogForHost(hostId: string): Promise<void> {
   sessionStartedHosts.delete(hostId)
+  return connectionLogStore.remove(hostId)
 }
 
 function storageKey(hostId: string): string {
