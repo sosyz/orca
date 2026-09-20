@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useHostClient, useForceReconnect } from '../transport/client-context'
+import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import type {
   AiVaultListResult,
@@ -25,6 +26,9 @@ export type AgentHistoryScreenState =
   | { kind: 'ready'; sessions: AiVaultSession[]; issues: AiVaultScanIssue[] }
 
 type StatusWithCapabilities = { capabilities?: string[] }
+type HistorySource = { client: RpcClient | null; hostId: string; worktreeId: string }
+type Sourced<T> = { source: HistorySource; value: T }
+const LOADING_SCREEN_STATE: AgentHistoryScreenState = { kind: 'loading' }
 
 export type MobileAgentHistoryStateParams = {
   hostId: string
@@ -39,19 +43,33 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
   const { hostId, worktreeId, worktrees, worktreesLoaded } = params
   const { client, state: connState } = useHostClient(hostId)
   const forceReconnect = useForceReconnect()
+  const source = useMemo(() => ({ client, hostId, worktreeId }), [client, hostId, worktreeId])
+  const owner = useMemo(() => ({ source, connection: connState }), [source, connState])
+  const committedOwner = useRef<typeof owner | null>(null)
   const [scope, setScope] = useState<AiVaultScope>('workspace')
-  const [screenState, setScreenState] = useState<AgentHistoryScreenState>({ kind: 'loading' })
-  const [hostStatusResult, setHostStatusResult] = useState<unknown>(null)
-  const [refreshing, setRefreshing] = useState(false)
+  const [screenSnapshot, setScreenSnapshot] = useState<Sourced<AgentHistoryScreenState> | null>(
+    null
+  )
+  const [statusSnapshot, setStatusSnapshot] = useState<Sourced<unknown> | null>(null)
+  const [refreshSnapshot, setRefreshSnapshot] = useState<{
+    owner: typeof owner
+    value: boolean
+  } | null>(null)
   const generationRef = useRef(0)
-  const mountedRef = useRef(true)
+  const refreshGenerationRef = useRef(0)
+  const screenState =
+    screenSnapshot?.source === source ? screenSnapshot.value : LOADING_SCREEN_STATE
+  const hostStatusResult = statusSnapshot?.source === source ? statusSnapshot.value : null
+  const refreshing = refreshSnapshot?.owner === owner ? refreshSnapshot.value : false
 
-  useEffect(() => {
-    mountedRef.current = true
+  useLayoutEffect(() => {
+    committedOwner.current = owner
     return () => {
-      mountedRef.current = false
+      if (committedOwner.current === owner) {
+        committedOwner.current = null
+      }
     }
-  }, [])
+  }, [owner])
 
   const activeWorktree = useMemo(
     () => worktrees.find((worktree) => worktree.worktreeId === worktreeId) ?? null,
@@ -68,23 +86,34 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
 
   const loadSessions = useCallback(
     async (options: { scope: AiVaultScope; force: boolean }): Promise<void> => {
+      const owner = committedOwner.current
+      if (!owner || owner.source !== source) {
+        return
+      }
       const generation = generationRef.current + 1
       generationRef.current = generation
-      const isCurrent = () => mountedRef.current && generationRef.current === generation
+      const isCurrent = () =>
+        committedOwner.current === owner && generationRef.current === generation
 
       if (!client || connState !== 'connected') {
         if (isCurrent()) {
           // Why: keep the stale list visible through transient reconnects
           // (connState flips re-run the load effect) instead of tearing it
           // down to a full-screen error, matching the host list screen.
-          setScreenState((prev) =>
-            prev.kind === 'ready' ? prev : { kind: 'error', message: 'Waiting for host…' }
+          setScreenSnapshot((prev) =>
+            prev?.source === source && prev.value.kind === 'ready'
+              ? prev
+              : { source, value: { kind: 'error', message: 'Waiting for host…' } }
           )
         }
         return
       }
 
-      setScreenState((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }))
+      setScreenSnapshot((prev) =>
+        prev?.source === source && prev.value.kind === 'ready'
+          ? prev
+          : { source, value: LOADING_SCREEN_STATE }
+      )
       try {
         // Gate on the capability so older hosts lacking the method are detected
         // and we never call a missing RPC.
@@ -96,9 +125,9 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
           throw new Error(statusResponse.error?.message || 'Unable to reach host')
         }
         const status = (statusResponse as RpcSuccess).result as StatusWithCapabilities
-        setHostStatusResult(status)
+        setStatusSnapshot({ source, value: status })
         if (!status.capabilities?.includes(MOBILE_AI_VAULT_CAPABILITY)) {
-          setScreenState({ kind: 'unsupported' })
+          setScreenSnapshot({ source, value: { kind: 'unsupported' } })
           return
         }
 
@@ -108,7 +137,11 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
         // proceed even if the worktree isn't found, to avoid a stuck spinner.
         if (options.scope !== 'all' && !activeWorktree && !worktreesLoaded) {
           if (isCurrent()) {
-            setScreenState((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }))
+            setScreenSnapshot((prev) =>
+              prev?.source === source && prev.value.kind === 'ready'
+                ? prev
+                : { source, value: LOADING_SCREEN_STATE }
+            )
           }
           return
         }
@@ -126,17 +159,20 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
           throw new Error(response.error?.message || 'Unable to load agent sessions')
         }
         const result = (response as RpcSuccess).result as AiVaultListResult
-        setScreenState({ kind: 'ready', sessions: result.sessions, issues: result.issues })
+        setScreenSnapshot({
+          source,
+          value: { kind: 'ready', sessions: result.sessions, issues: result.issues }
+        })
       } catch (err) {
         if (!isCurrent()) {
           return
         }
         const message = err instanceof Error ? err.message : 'Unable to load agent sessions'
-        setHostStatusResult(null)
-        setScreenState({ kind: 'error', message })
+        setStatusSnapshot({ source, value: null })
+        setScreenSnapshot({ source, value: { kind: 'error', message } })
       }
     },
-    [activeWorktree, client, connState, worktrees, worktreesLoaded]
+    [activeWorktree, client, connState, source, worktrees, worktreesLoaded]
   )
 
   // Initial + reconnect load. Why: scope switches reuse the host's 15s cache
@@ -155,17 +191,21 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
   )
 
   const onRefresh = useCallback(async () => {
-    setRefreshing(true)
+    if (committedOwner.current !== owner) {
+      return
+    }
+    const refreshGeneration = ++refreshGenerationRef.current
+    setRefreshSnapshot({ owner, value: true })
     try {
       // Why: pull-to-refresh bypasses the host TTL (force:true) and joins any
       // active inflight scan; otherwise a refresh within 15s shows no change.
       await loadSessions({ scope, force: true })
     } finally {
-      if (mountedRef.current) {
-        setRefreshing(false)
+      if (committedOwner.current === owner && refreshGenerationRef.current === refreshGeneration) {
+        setRefreshSnapshot({ owner, value: false })
       }
     }
-  }, [loadSessions, scope])
+  }, [loadSessions, owner, scope])
 
   const retry = useCallback(() => {
     if (connState !== 'connected' && hostId) {
