@@ -21,6 +21,8 @@ export function loadHarmonyNativeService<T>(fileName: string, imports: Record<st
       module,
       exports: module.exports,
       ArrayBuffer,
+      clearTimeout,
+      setTimeout,
       Uint8Array,
       require(name: string) {
         if (!Object.hasOwn(imports, name)) {

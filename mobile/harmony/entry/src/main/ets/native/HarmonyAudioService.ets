@@ -207,7 +207,7 @@ export class HarmonyAudioService {
     ) {
       void startResult
         .then(() => this.releaseAfterAbandonedStart(capturer))
-        .catch(() => this.emitInterruption('blocked'));
+        .catch(() => undefined);
     }
     return outcome;
   }
