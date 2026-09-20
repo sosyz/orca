@@ -179,6 +179,33 @@ describe('useMobileNativeChatSessionOptions', () => {
     expect(api!.snapshot[0]!.kind).toMatchObject({ currentValue: 'opus' })
   })
 
+  it.each(['claude-haiku-4-5', 'claude-opus-5'])(
+    'preserves a live %s report received while a model command is in flight',
+    async (reportedModel) => {
+      let resolve!: (outcome: MobileNativeChatSendOutcome) => void
+      dispatchCommand.mockImplementationOnce(
+        () =>
+          new Promise<MobileNativeChatSendOutcome>((done) => {
+            resolve = done
+          })
+      )
+      mount({ reportedModel: 'claude-sonnet-5' })
+      let applying!: Promise<boolean>
+      await act(async () => {
+        applying = api!.setOption('model', 'opus')
+        await Promise.resolve()
+      })
+      update({ reportedModel })
+      const confirmed = api!.snapshot[0]
+      await act(async () => {
+        resolve('accepted')
+        await applying
+      })
+      expect(api!.snapshot[0]).toEqual(confirmed)
+      expect(api!.snapshot[0]).toMatchObject({ valueSource: 'reported' })
+    }
+  )
+
   it('still lets a genuinely new report supersede a local pick', async () => {
     mount({ reportedModel: 'claude-sonnet-5' })
     await act(async () => {

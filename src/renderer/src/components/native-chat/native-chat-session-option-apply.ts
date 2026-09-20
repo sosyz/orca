@@ -161,18 +161,23 @@ async function dispatchLiveCommand(
 
 function applyDispatchOutcome(
   ctx: SessionOptionApplyContext,
-  dispatchResult: NativeChatSessionOptionDispatchResult | void
+  dispatchResult: NativeChatSessionOptionDispatchResult | void,
+  preserveModel: boolean
 ): SessionOptionSetResult | null {
   if (dispatchResult?.outcome === 'rejected') {
     throw new Error('Claude kept the current model.')
   }
   if (dispatchResult?.outcome === 'unknown') {
-    ctx.clearModelTruth()
+    if (!preserveModel) {
+      ctx.clearModelTruth()
+    }
     ctx.publish()
     throw new Error('Could not verify the model change; open the terminal to check.')
   }
   if (dispatchResult?.outcome === 'interaction-required') {
-    ctx.clearModelTruth()
+    if (!preserveModel) {
+      ctx.clearModelTruth()
+    }
     const snapshot = ctx.publish()
     ctx.onAgentPicker?.()
     return { snapshot }
@@ -212,6 +217,7 @@ async function applySetOption(
   // Why: baseline for detecting a model switch, typed command, or agent report
   // that lands mid-dispatch, so the commit below never overwrites newer state.
   const trackedModelBeforeDispatch = trackedModelId(ctx.getRecord())
+  const modelBeforeDispatch = ctx.getRecord().model
   const trackedBeforeDispatch =
     ctx.mode === 'live' && id !== 'model'
       ? getTrackedOption(ctx.getRecord(), previousModelId, id)
@@ -229,12 +235,17 @@ async function applySetOption(
     throw new Error('This option is only available after the session starts.')
   }
 
-  const early = applyDispatchOutcome(ctx, dispatchResult)
+  const record = ctx.getRecord()
+  const modelChangedDuringDispatch =
+    ctx.mode === 'live' && id === 'model' && record.model !== modelBeforeDispatch
+  const early = applyDispatchOutcome(ctx, dispatchResult, modelChangedDuringDispatch)
   if (early) {
     return early
   }
 
-  const record = ctx.getRecord()
+  if (modelChangedDuringDispatch) {
+    return finish(ctx, { modelId: previousModelId, optionId: id, value, skipPersist: true })
+  }
   if (id === 'model' && previousModelId !== value) {
     record.model = undefined
     if (ctx.mode === 'live' && typeof value === 'string') {

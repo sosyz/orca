@@ -253,9 +253,13 @@ export function useMobileNativeChatSessionOptions(args: {
         // report effect is not on this queue.
         const trackedBeforeDispatch =
           id === 'model' ? undefined : getTrackedSessionOption(record, previousModelId, id)
+        const modelBeforeDispatch = record.model
         const outcome = await dispatchCommand(command)
         if (outcome === 'rejected') {
           return false
+        }
+        if (id === 'model' && record.model !== modelBeforeDispatch) {
+          return true
         }
         if (id !== 'model') {
           // Why (desktop parity): `setTrackedSessionOption` resolves the owning

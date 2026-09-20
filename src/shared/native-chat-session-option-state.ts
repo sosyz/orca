@@ -130,7 +130,9 @@ export function applyNativeChatReportedSessionOptions(
   }
   const modelChanged = record.model?.value !== modelId
   let changed = modelChanged || record.model?.source !== 'reported'
-  record.model = { value: modelId, source: 'reported' }
+  if (changed) {
+    record.model = { value: modelId, source: 'reported' }
+  }
   const modelValues = modelChanged ? {} : { ...record.valuesByModel[modelId] }
   for (const [id, value] of Object.entries(values)) {
     if (id === 'model') {

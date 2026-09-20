@@ -43,7 +43,9 @@ describe('applyNativeChatReportedSessionOptions', () => {
   it('is a no-op when the report matches tracked state', () => {
     const record = claudeRecord()
     record.model = { value: 'sonnet', source: 'reported' }
+    const previousModel = record.model
     expect(applyNativeChatReportedSessionOptions(record, { model: 'sonnet' })).toBe(false)
+    expect(record.model).toBe(previousModel)
   })
 })
 
