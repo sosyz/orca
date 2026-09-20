@@ -13,14 +13,21 @@ import {
 export async function createTerminalAndSendPrompt(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
-  prompt: string
-): Promise<void> {
+  prompt: string,
+  isCurrent: () => boolean = () => true
+): Promise<boolean> {
+  if (!isCurrent()) {
+    return false
+  }
   const created = await client.sendRequest('session.tabs.createTerminal', {
     worktree: `id:${worktreeId}`,
     activate: false,
     select: true,
     navigation: 'caller'
   })
+  if (!isCurrent()) {
+    return false
+  }
   if (!created.ok) {
     throw new Error(created.error?.message || 'Failed to create terminal')
   }
@@ -39,4 +46,5 @@ export async function createTerminalAndSendPrompt(
   if (!readMobileReviewTerminalSendAccepted(sent.result)) {
     throw new Error('Terminal input is locked')
   }
+  return true
 }

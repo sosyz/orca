@@ -153,8 +153,12 @@ function normalizeMobileAiVaultResumeCommandOverrides(
 export async function resumeAiVaultSessionInTerminal(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
-  launch: MobileAiVaultResumeLaunch & { clientMutationId?: string }
-): Promise<MobileReviewTerminalTab> {
+  launch: MobileAiVaultResumeLaunch & { clientMutationId?: string },
+  isCurrent: () => boolean = () => true
+): Promise<MobileReviewTerminalTab | null> {
+  if (!isCurrent()) {
+    return null
+  }
   const created = await client.sendRequest(
     'session.tabs.createTerminal',
     {
@@ -176,6 +180,9 @@ export async function resumeAiVaultSessionInTerminal(
   const terminalTab = readMobileReviewCreatedTerminal(created.result)
   if (!terminalTab) {
     throw new Error('Created terminal response was invalid')
+  }
+  if (!isCurrent()) {
+    return null
   }
   const sent = await client.sendRequest(
     'terminal.send',
