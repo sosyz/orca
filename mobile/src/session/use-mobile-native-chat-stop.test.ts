@@ -5,6 +5,10 @@ import type { RpcClient } from '../transport/rpc-client'
 import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS } from './mobile-native-chat-send'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
+import {
+  acquireMobileNativeChatTerminalWrite,
+  resetMobileNativeChatTerminalWritesForTests
+} from './mobile-native-chat-terminal-write-lock'
 
 describe('useMobileNativeChatStop', () => {
   let renderer: ReactTestRenderer | null = null
@@ -14,6 +18,7 @@ describe('useMobileNativeChatStop', () => {
 
   beforeEach(() => {
     vi.useFakeTimers()
+    resetMobileNativeChatTerminalWritesForTests()
     sendRequest.mockReset().mockResolvedValue({
       ok: true,
       result: { send: { accepted: true } }
@@ -66,11 +71,13 @@ describe('useMobileNativeChatStop', () => {
 
     act(() => stop?.())
     expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(acquireMobileNativeChatTerminalWrite('terminal-1')).toBe(false)
 
     await render(enabled as boolean, streamIdentity as string)
     await act(async () => vi.runAllTimersAsync())
 
     expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(acquireMobileNativeChatTerminalWrite('terminal-1')).toBe(true)
   })
 
   it('handles a rejected Escape without leaking an unhandled rejection', async () => {
@@ -177,11 +184,35 @@ describe('useMobileNativeChatStop', () => {
     act(() => stop?.())
     act(() => stop?.())
     await act(async () => vi.runAllTimersAsync())
+    expect(acquireMobileNativeChatTerminalWrite('terminal-1')).toBe(false)
     await act(async () => {
       rejectFirst(new Error('late failure'))
       await Promise.resolve()
     })
 
+    expect(onSendError).not.toHaveBeenCalled()
+    expect(acquireMobileNativeChatTerminalWrite('terminal-1')).toBe(true)
+  })
+
+  it("drops an unmounted Stop's delayed Escape but retains ownership until its first write settles", async () => {
+    let finishFirst!: (response: unknown) => void
+    sendRequest.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishFirst = resolve
+      })
+    )
+    await render(true, 'stream-1')
+    act(() => stop?.())
+    act(() => renderer?.unmount())
+    renderer = null
+    await act(async () => vi.advanceTimersByTimeAsync(80))
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(acquireMobileNativeChatTerminalWrite('terminal-1')).toBe(false)
+
+    await act(async () => {
+      finishFirst({ ok: true, result: { send: { accepted: true } } })
+    })
+    expect(acquireMobileNativeChatTerminalWrite('terminal-1')).toBe(true)
     expect(onSendError).not.toHaveBeenCalled()
   })
 })

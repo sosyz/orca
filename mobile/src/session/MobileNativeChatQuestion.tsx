@@ -16,6 +16,7 @@ type Props = {
 export function MobileNativeChatQuestion({ question, onAnswer }: Props): React.JSX.Element {
   const [selected, setSelected] = useState<string[]>([])
   const [freeText, setFreeText] = useState('')
+  const freeTextRevisionRef = useRef(0)
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(false)
 
@@ -57,9 +58,10 @@ export function MobileNativeChatQuestion({ question, onAnswer }: Props): React.J
     if (trimmedFreeText.length === 0) {
       return
     }
+    const draftRevision = freeTextRevisionRef.current
     // Free text is an unknown entry; formatQuestionAnswer passes it through.
     if (await sendAnswer(formatQuestionAnswer(question, [trimmedFreeText]))) {
-      setFreeText('')
+      setFreeText((current) => (freeTextRevisionRef.current === draftRevision ? '' : current))
     }
   }
 
@@ -128,7 +130,10 @@ export function MobileNativeChatQuestion({ question, onAnswer }: Props): React.J
         <TextInput
           style={styles.freeInput}
           value={freeText}
-          onChangeText={setFreeText}
+          onChangeText={(next) => {
+            freeTextRevisionRef.current += 1
+            setFreeText(next)
+          }}
           placeholder={hasOptions ? 'Or type a reply…' : 'Type your reply…'}
           placeholderTextColor={colors.textMuted}
           selectionColor={colors.accentBlue}

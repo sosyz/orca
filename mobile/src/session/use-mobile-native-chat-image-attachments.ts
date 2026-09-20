@@ -12,6 +12,7 @@ import {
   uploadMobileNativeChatImages,
   type PendingNativeChatImage
 } from './mobile-native-chat-image-attachment'
+import { createNativeChatImageUploadOwner } from './mobile-native-chat-image-upload-owner'
 import {
   MOBILE_NATIVE_CHAT_IMAGE_SETTLE_MS,
   pasteMobileNativeChatImagePaths
@@ -28,6 +29,7 @@ import {
 } from './mobile-native-chat-stale-input'
 import {
   acquireMobileNativeChatTerminalWrite,
+  captureMobileNativeChatTerminalWrite,
   releaseMobileNativeChatTerminalWrite
 } from './mobile-native-chat-terminal-write-lock'
 import {
@@ -130,6 +132,10 @@ export function useMobileNativeChatImageAttachments({
       if (!client || !token || !activeHandleRef.current || connState !== 'connected') {
         return
       }
+      const owner = createNativeChatImageUploadOwner(token, client, getActiveWorktreeConnectionId)
+      if (!owner.isCurrent()) {
+        return
+      }
       // Only this call's own increment may be undone in `finally`; a cancelled
       // pick or pre-upload error never ran `onUploadStart`, so decrementing the
       // shared counter would clear a concurrent upload's in-flight flag early.
@@ -138,11 +144,12 @@ export function useMobileNativeChatImageAttachments({
       let uploadError: unknown = null
       try {
         await uploadMobileNativeChatImages(source, {
-          client,
-          getConnectionId: getActiveWorktreeConnectionId,
+          client: owner.client,
+          getConnectionId: owner.getConnectionId,
           pickImages: pickMobileImages,
           onImageUploaded: (image) => uploadedImages.push(image),
           onUploadStart: () => {
+            owner.assertCurrent()
             started = true
             beginMobileNativeChatImageAttach(token)
           }
@@ -153,6 +160,9 @@ export function useMobileNativeChatImageAttachments({
         if (started) {
           endMobileNativeChatImageAttach(token)
         }
+      }
+      if (!owner.isCurrent()) {
+        return
       }
       if (uploadedImages.length > 0) {
         appendMobileNativeChatAttachments(token, uploadedImages)
@@ -206,6 +216,9 @@ export function useMobileNativeChatImageAttachments({
         onSendError('Message not sent')
         return false
       }
+      const owner = operationTerminal
+        ? captureMobileNativeChatTerminalWrite(operationTerminal)
+        : null
       // One budget for the whole user action. The paste loop, the settle, and the
       // text body that follows are a single send from the composer's point of view;
       // opening a budget per leg let `sending` run to twice the stated ceiling.
@@ -236,6 +249,9 @@ export function useMobileNativeChatImageAttachments({
               deviceToken: deviceTokenRef.current,
               deadline
             })
+            if (owner?.cancelled) {
+              return false
+            }
             // A tab switch during the clear would send this text to a terminal the
             // clear never touched, so abort rather than reroute it.
             if (!healed || activeHandleRef.current !== staleTerminal) {
@@ -261,11 +277,16 @@ export function useMobileNativeChatImageAttachments({
             terminal: handle,
             deviceToken: deviceTokenRef.current,
             imagePaths: pendingImages.map((attachment) => attachment.path),
+            followedByText: text.trim().length > 0,
             deadline,
             ...(seededLaunchDraft
               ? { clearInput: buildAgentTuiClearInputForText(seededLaunchDraft) }
               : {})
           })
+          if (owner?.cancelled) {
+            markMobileNativeChatInputStale(handle)
+            return false
+          }
           if (!pasted) {
             // Keep the chips so the user can retry; the failed paste never submitted.
             markMobileNativeChatInputStale(handle)
@@ -279,6 +300,10 @@ export function useMobileNativeChatImageAttachments({
           // preview URIs ride along to baseSend so the sent bubble shows the photo
           // immediately (empty text still submits a bare Enter through baseSend).
           await sleep(MOBILE_NATIVE_CHAT_IMAGE_SETTLE_MS)
+          if (owner?.cancelled) {
+            markMobileNativeChatInputStale(handle)
+            return false
+          }
           // The settle is deliberate pacing, not transport latency — credit it back
           // so a shared budget doesn't charge the text body for the TUI's beat.
           const textDeadline = deadline + MOBILE_NATIVE_CHAT_IMAGE_SETTLE_MS
@@ -315,6 +340,9 @@ export function useMobileNativeChatImageAttachments({
           // Promise<boolean> contract instead of rejecting. Retry-safe: the next
           // attempt's leading Ctrl+U clears whatever fraction of the paste landed.
           markMobileNativeChatInputStale(handle)
+          if (owner?.cancelled) {
+            return false
+          }
           onError?.()
           onSendError('Message not sent')
           return false

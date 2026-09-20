@@ -4,6 +4,7 @@ import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
 import { openMobileNativeChatSendBudget } from './mobile-native-chat-send'
+import { retainMobileNativeChatTerminalStop } from './mobile-native-chat-terminal-write-lock'
 
 export function useMobileNativeChatStop(args: {
   client: RpcClient | null
@@ -46,6 +47,7 @@ export function useMobileNativeChatStop(args: {
       onSendError('Stop not sent (terminal not ready)')
       return
     }
+    const releaseStop = retainMobileNativeChatTerminalStop(handle)
     cancelPending()
     generationRef.current += 1
     const generation = generationRef.current
@@ -62,12 +64,11 @@ export function useMobileNativeChatStop(args: {
     let sawUnknown = false
     let sawRejected = false
     const reportIfSettled = (): void => {
-      if (
-        generationRef.current !== generation ||
-        pending > 0 ||
-        sawAccepted ||
-        (!sawUnknown && !sawRejected)
-      ) {
+      if (pending > 0) {
+        return
+      }
+      releaseStop()
+      if (generationRef.current !== generation || sawAccepted || (!sawUnknown && !sawRejected)) {
         return
       }
       // Why: an ack lost after the frame was written (or a logical cutover) may

@@ -314,6 +314,23 @@ describe('MobileNativeChatComposer', () => {
     expect(onRemoveAttachment).toHaveBeenCalledWith('img-2')
   })
 
+  it('keeps an uploaded image sendable when its preview is unavailable', async () => {
+    await act(async () => {
+      renderer = create(
+        createElement(MobileNativeChatComposer, {
+          value: '',
+          onChangeText: vi.fn(),
+          onSend: vi.fn().mockResolvedValue(true),
+          attachments: [{ id: 'img-1', path: '/tmp/a.png', previewUri: '/tmp/a.png' }]
+        })
+      )
+    })
+
+    expect(renderer!.root.findAllByType('Image')).toHaveLength(0)
+    expect(renderer!.root.findAllByType('ImagePlus')).toHaveLength(1)
+    expect(sendButton().props).toMatchObject({ disabled: false })
+  })
+
   it('enables send with an attached image even when the text is empty', async () => {
     const onSend = vi.fn().mockResolvedValue(true)
     await act(async () => {

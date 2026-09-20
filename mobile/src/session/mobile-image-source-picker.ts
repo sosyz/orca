@@ -6,6 +6,7 @@ import {
   assertClipboardImageBase64LengthWithinLimit,
   assertClipboardImageByteLengthWithinLimit
 } from '../../../src/shared/clipboard-image'
+import { normalizeSupportedRasterImageMimeType } from '../../../src/shared/raster-image-format'
 import { MobileImageBase64Accumulator } from './mobile-image-base64-accumulator'
 
 export type MobileImageSource = 'library' | 'files'
@@ -13,9 +14,12 @@ export type MobileImageSource = 'library' | 'files'
 export type PickedMobileImage = {
   // Raw base64 (no data: prefix); fed straight into the existing upload pipeline.
   readonly base64: string
+  readonly mimeType?: string
   // Local file URI of the picked asset — used only to render a composer preview
   // thumbnail (the host upload uses `base64`); absent when the source can't supply one.
   readonly uri?: string
+  /** Bounded inline preview for a temporary source, or null when rendering failed. */
+  readonly previewUri?: string | null
 }
 
 export class ImageLibraryPermissionError extends Error {
@@ -49,8 +53,9 @@ async function readUriAsBase64(
   uri: string,
   declaredSize: number | undefined,
   createFile: MobileImageFileFactory,
-  deleteAfterRead = false
-): Promise<string> {
+  deleteAfterRead = false,
+  createPreview?: () => Promise<string | null>
+): Promise<{ base64: string; previewUri?: string | null }> {
   if (!deleteAfterRead && typeof declaredSize === 'number' && Number.isFinite(declaredSize)) {
     assertClipboardImageByteLengthWithinLimit(declaredSize)
   }
@@ -66,6 +71,7 @@ async function readUriAsBase64(
       if (handle.size !== null) {
         assertClipboardImageByteLengthWithinLimit(handle.size)
       }
+      const previewUri = await createPreview?.()
       const accumulator = new MobileImageBase64Accumulator()
       let bytesRead = 0
       while (bytesRead <= CLIPBOARD_IMAGE_MAX_SOURCE_BYTES) {
@@ -83,19 +89,35 @@ async function readUriAsBase64(
       }
       const base64 = accumulator.finish()
       assertClipboardImageBase64LengthWithinLimit(base64.length)
-      return base64
+      return { base64, previewUri }
     } finally {
       handle.close()
     }
   } finally {
     if (deleteAfterRead) {
-      file.delete()
+      try {
+        file.delete()
+      } catch {
+        // Cache cleanup must not discard image data or hide the original read error.
+      }
     }
   }
 }
 
 function isTemporaryAsset(asset: unknown): boolean {
   return (asset as { readonly isTemporary?: boolean }).isTemporary === true
+}
+
+async function temporaryPreviewUri(asset: unknown): Promise<string | null> {
+  const create = (asset as { readonly getPreviewUri?: () => Promise<string> }).getPreviewUri
+  if (!create) {
+    return null
+  }
+  try {
+    return (await create()) || null
+  } catch {
+    return null
+  }
 }
 
 function deleteUnconsumedTemporaryAssets(
@@ -146,9 +168,20 @@ async function* pickFromLibrary(
         continue
       }
       const temporary = isTemporaryAsset(asset)
-      const base64 = await readUriAsBase64(asset.uri, asset.fileSize, createFile, temporary)
+      const { base64, previewUri } = await readUriAsBase64(
+        asset.uri,
+        asset.fileSize,
+        createFile,
+        temporary,
+        temporary ? () => temporaryPreviewUri(asset) : undefined
+      )
       if (base64) {
-        yield temporary ? { base64 } : { base64, uri: asset.uri }
+        const mimeType = normalizeSupportedRasterImageMimeType(asset.mimeType)
+        yield {
+          base64,
+          ...(temporary ? { previewUri } : { uri: asset.uri }),
+          ...(mimeType ? { mimeType } : {})
+        }
       }
     }
   } finally {
@@ -178,9 +211,20 @@ async function* pickFromFiles(
         continue
       }
       const temporary = isTemporaryAsset(asset)
-      const base64 = await readUriAsBase64(asset.uri, asset.size, createFile, temporary)
+      const { base64, previewUri } = await readUriAsBase64(
+        asset.uri,
+        asset.size,
+        createFile,
+        temporary,
+        temporary ? () => temporaryPreviewUri(asset) : undefined
+      )
       if (base64) {
-        yield temporary ? { base64 } : { base64, uri: asset.uri }
+        const mimeType = normalizeSupportedRasterImageMimeType(asset.mimeType)
+        yield {
+          base64,
+          ...(temporary ? { previewUri } : { uri: asset.uri }),
+          ...(mimeType ? { mimeType } : {})
+        }
       }
     }
   } finally {

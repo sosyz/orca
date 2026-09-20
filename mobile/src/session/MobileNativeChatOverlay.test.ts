@@ -24,6 +24,7 @@ type Tick = {
   streamingText?: string
   streamLive?: boolean
   identity?: string
+  requestKey?: string
 }
 
 function overlayElement(tick: Tick): ReturnType<typeof createElement> {
@@ -35,6 +36,7 @@ function overlayElement(tick: Tick): ReturnType<typeof createElement> {
     nativeChatStreamingText: tick.streamingText,
     nativeChatStreamLive: tick.streamLive ?? false,
     nativeChatStreamScopeKey: tick.identity ?? 'tab-a',
+    nativeChatInteractionRequestKey: tick.requestKey,
     chatPending: [],
     chatImagePreviewsByMessageId: {},
     chatComposerText: '',
@@ -82,6 +84,21 @@ describe('MobileNativeChatOverlay streaming gate', () => {
     const views = renderer!.root.findAll((node) => node.type === 'ChatView')
     return views.length === 0 ? 'hidden' : (views[0].props.streaming as string | null)
   }
+
+  it('passes the active session identity to interactive cards across terminal switches', async () => {
+    await render({ identity: 'tab-a:terminal-a' })
+    expect(renderer!.root.findByType('ChatView').props.interactionScopeKey).toBe('tab-a:terminal-a')
+    await update({ identity: 'tab-b:terminal-b' })
+    expect(renderer!.root.findByType('ChatView').props.interactionScopeKey).toBe('tab-b:terminal-b')
+  })
+
+  it('passes the host permission request identity without changing the terminal scope', async () => {
+    await render({ requestKey: 'request-a' })
+    expect(renderer!.root.findByType('ChatView').props.interactionRequestKey).toBe('request-a')
+    await update({ requestKey: 'request-b' })
+    expect(renderer!.root.findByType('ChatView').props.interactionRequestKey).toBe('request-b')
+    expect(renderer!.root.findByType('ChatView').props.interactionScopeKey).toBe('tab-a')
+  })
 
   it('keeps streaming a reply that repeats the previous turn as a prefix', async () => {
     const prior = [assistantTurn('a1', 'The tests pass.')]

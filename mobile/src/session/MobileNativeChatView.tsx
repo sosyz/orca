@@ -29,6 +29,7 @@ import { MobileNativeChatMessage } from './MobileNativeChatMessage'
 import { MobileNativeChatAsk } from './MobileNativeChatAsk'
 import { MobileNativeChatPermission } from './MobileNativeChatPermission'
 import type { MobileChatPermission } from './mobile-native-chat-permission'
+import { usePermissionCardKey } from './use-mobile-native-chat-permission-key'
 import { MobileNativeChatQuestion } from './MobileNativeChatQuestion'
 import { mobileChatQuestionKey, type MobileChatQuestion } from './mobile-native-chat-question'
 import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
@@ -95,6 +96,12 @@ type Props = {
   onNeedFiles?: (query: string) => void
   /** Model/session-option pickers for the composer action row (desktop parity). */
   sessionOptions?: MobileNativeChatSessionOptionPickersProps | null
+  /** Owns only interactive card state across terminal and session switches. */
+  interactionScopeKey?: string
+  /** Optional host identity distinguishes repeated permission requests. */
+  interactionRequestKey?: string
+  /** Precomputed identity from the controller; standalone views derive it here. */
+  permissionKey?: string | null
   /** A pending agent question/permission detected from live status, shown as a
    *  native card above the composer; answering sends text to the agent. */
   /** Structured AskUserQuestion prompt parsed from the transcript (preferred over
@@ -155,6 +162,9 @@ export function MobileNativeChatView({
   filePaths,
   onNeedFiles,
   sessionOptions,
+  interactionScopeKey,
+  interactionRequestKey,
+  permissionKey: ownedPermissionKey,
   ask,
   askKey,
   onDismissAsk,
@@ -167,6 +177,7 @@ export function MobileNativeChatView({
   onOpenFile,
   keyboardInset = 0
 }: Props): React.JSX.Element {
+  const permissionKey = usePermissionCardKey(interactionScopeKey, permission, interactionRequestKey)
   const insets = useSafeAreaInsets()
   const listRef = useRef<FlatList<NativeChatMessage>>(null)
   const [toolsExpanded, setToolsExpanded] = useState(false)
@@ -271,8 +282,7 @@ export function MobileNativeChatView({
   const showLoading = status === 'loading' && messages.length === 0
 
   // A dead PTY emits subscribed→end; settle both edges so its false lease cannot flash the composer enabled.
-  const rawLockReason = inputLockReason ?? null
-  const rawLockHeld = rawLockReason !== null
+  const rawLockHeld = inputLockReason != null
   const [lockHeld, setLockHeld] = useState(false)
   useEffect(() => {
     if (rawLockHeld === lockHeld) {
@@ -281,7 +291,7 @@ export function MobileNativeChatView({
     const timer = setTimeout(() => setLockHeld(rawLockHeld), INPUT_LOCK_SETTLE_MS)
     return () => clearTimeout(timer)
   }, [lockHeld, rawLockHeld])
-  const lockReason = lockHeld ? (rawLockReason ?? 'waiting') : null
+  const lockReason = lockHeld ? (inputLockReason ?? 'waiting') : null
 
   return (
     <View style={[styles.root, { paddingBottom: bottomPad }]}>
@@ -367,7 +377,7 @@ export function MobileNativeChatView({
           `ask` arrives already nulled while dismissed. */}
       {ask ? (
         <MobileNativeChatAsk
-          key={askKey ?? 'ask'}
+          key={JSON.stringify([interactionScopeKey, askKey ?? 'ask'])}
           prompt={ask}
           onAnswer={async (selections) => {
             const accepted = (await onAnswerAsk?.(ask, selections)) ?? false
@@ -386,13 +396,13 @@ export function MobileNativeChatView({
         />
       ) : permission ? (
         <MobileNativeChatPermission
-          key={JSON.stringify(permission)}
+          key={ownedPermissionKey === undefined ? permissionKey : ownedPermissionKey}
           permission={permission}
           onRespond={async (send) => (await onRespondPermission?.(send)) ?? false}
         />
       ) : question ? (
         <MobileNativeChatQuestion
-          key={mobileChatQuestionKey(question)}
+          key={JSON.stringify([interactionScopeKey, mobileChatQuestionKey(question)])}
           question={question}
           onAnswer={async (text) => (await onAnswerQuestion?.(text)) ?? false}
         />

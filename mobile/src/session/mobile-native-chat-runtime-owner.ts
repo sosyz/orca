@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { findMobileNativeChatEvictionCandidate } from './mobile-native-chat-runtime-eviction-priority'
 import type { UnconfirmedSend } from './mobile-native-chat-draft-reconcile'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
+import {
+  applyLandedImagePreviewDataUriBudget,
+  MOBILE_NATIVE_CHAT_LANDED_PREVIEW_CHAR_BUDGET
+} from './mobile-native-chat-landed-preview-budget'
 import type {
   MobileNativeChatPendingMessage,
   MobileNativeChatSendOrigin
@@ -129,14 +134,12 @@ function subscribeToScope(scopeKey: string | null, onChange: ScopeListener): () 
 }
 
 function evictOneInactiveScope(protectedScopeKey?: string): boolean {
-  for (const [scopeKey, scope] of scopes) {
-    if (scopeKey === protectedScopeKey || scope.activeCount > 0) {
-      continue
-    }
-    purgeMobileNativeChatRuntimeScope(scopeKey)
-    return true
+  const scopeKey = findMobileNativeChatEvictionCandidate(scopes, protectedScopeKey)
+  if (scopeKey === null) {
+    return false
   }
-  return false
+  purgeMobileNativeChatRuntimeScope(scopeKey)
+  return true
 }
 
 function enforceScopeCap(protectedScopeKey?: string): void {
@@ -226,10 +229,22 @@ export function writeMobileNativeChatRuntimeScope(
   signal?: 'unconfirmed'
 ): void {
   const scope = getMobileNativeChatRuntimeScopeForToken(token)
+  const previousPreviews = scope?.imagePreviewsBySession
   if (!token || !scope || !write(scope)) {
     return
   }
   touchMobileNativeChatRuntimeScope(token.scopeKey)
+  if (scope.imagePreviewsBySession !== previousPreviews) {
+    const changedScopes = applyLandedImagePreviewDataUriBudget(
+      scopes,
+      MOBILE_NATIVE_CHAT_LANDED_PREVIEW_CHAR_BUDGET
+    )
+    for (const scopeKey of changedScopes) {
+      if (scopeKey !== token.scopeKey) {
+        publishMobileNativeChatRuntimeScope(scopeKey)
+      }
+    }
+  }
   publishMobileNativeChatRuntimeScope(token.scopeKey, signal)
   enforceScopeCap(token.scopeKey)
 }

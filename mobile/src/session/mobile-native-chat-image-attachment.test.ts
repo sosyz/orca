@@ -152,6 +152,34 @@ describe('uploadMobileNativeChatImages', () => {
     expect(result).toEqual([{ path: '/tmp/x.png', previewUri: 'data:image/png;base64,BBBB' }])
   })
 
+  it('uses the picked MIME for a temporary HEIF preview', async () => {
+    const client = clientWithResponses([methodNotFound('start'), ok('save', '/tmp/x.heif')])
+
+    const result = await uploadMobileNativeChatImages('files', {
+      client,
+      getConnectionId: async () => null,
+      pickImages: vi.fn().mockResolvedValue([{ base64: 'BBBB', mimeType: 'image/heif' }])
+    })
+
+    expect(result).toEqual([{ path: '/tmp/x.heif', previewUri: 'data:image/heif;base64,BBBB' }])
+  })
+
+  it('keeps an uploaded image with a non-loadable placeholder when preview generation failed', async () => {
+    const client = clientWithResponses([methodNotFound('start'), ok('save', '/tmp/original.heif')])
+    const result = await uploadMobileNativeChatImages('files', {
+      client,
+      getConnectionId: async () => null,
+      pickImages: vi
+        .fn()
+        .mockResolvedValue([{ base64: 'AQIDBA==', mimeType: 'image/heif', previewUri: null }])
+    })
+
+    expect(result).toEqual([{ path: '/tmp/original.heif', previewUri: '/tmp/original.heif' }])
+    expect(
+      client.calls.find((call) => call.method === 'clipboard.saveImageAsTempFile')?.params
+    ).toMatchObject({ contentBase64: 'AQIDBA==' })
+  })
+
   it('signals upload start only after a real image is picked', async () => {
     const onUploadStart = vi.fn()
     const cancelledClient = clientWithResponses([])

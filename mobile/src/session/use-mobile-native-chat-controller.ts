@@ -5,6 +5,8 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { type MobileNativeChatTab, resolveMobileNativeChat } from './mobile-native-chat-eligibility'
 import { useMobileNativeChatPermissionSend } from './mobile-native-chat-permission-send'
+import { usePermissionCardKey } from './use-mobile-native-chat-permission-key'
+import { mobileChatQuestionKey } from './mobile-native-chat-question'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
 import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
 import { useMobileNativeChatCancelAsk } from './use-mobile-native-chat-cancel-ask'
@@ -85,7 +87,8 @@ export function useMobileNativeChatController(args: {
     sourceIdentity: encodeNativeChatTranscriptIdentity([hostId, worktreeId]),
     agent: activeChatResolution?.agent ?? null,
     sessionId: activeChatSessionId,
-    transcriptPath: activeChatResolution?.transcriptPath ?? null
+    transcriptPath: activeChatResolution?.transcriptPath ?? null,
+    onLoadEarlierError: onSendError
   })
   const {
     composerText: chatComposerText,
@@ -141,6 +144,11 @@ export function useMobileNativeChatController(args: {
     messages: nativeChatSession.messages,
     transcriptLoading: nativeChatSession.transcriptLoading
   })
+  const nativeChatPermissionKey = usePermissionCardKey(
+    streamScopeKey,
+    nativeChatPermission,
+    nativeChatStatus?.interactiveRequestKey
+  )
   // A never-read transcript cannot prove that a dismissed prompt cleared.
   const nativeChatTranscriptSettled =
     nativeChatSession.status === 'ready' ||
@@ -172,6 +180,7 @@ export function useMobileNativeChatController(args: {
       agentRef: activeChatAgentRef,
       sessionId: activeChatSessionId,
       streamIdentity,
+      requestIdentity: nativeChatAskKey,
       onSendError
     })
 
@@ -180,6 +189,8 @@ export function useMobileNativeChatController(args: {
     enabled: inputSendable,
     handleRef: activeHandleRef,
     deviceTokenRef,
+    streamIdentity,
+    requestIdentity: nativeChatAskKey,
     cancelPending: cancelNativeChatAnswer,
     onSendError
   })
@@ -189,6 +200,8 @@ export function useMobileNativeChatController(args: {
     enabled: inputSendable,
     handleRef: activeHandleRef,
     deviceTokenRef,
+    streamIdentity,
+    requestIdentity: nativeChatPermissionKey,
     onSendError
   })
 
@@ -220,6 +233,8 @@ export function useMobileNativeChatController(args: {
   } = useMobileNativeChatMessageSend({
     client,
     enabled: inputSendable,
+    streamIdentity: streamScopeKey,
+    questionRequestIdentity: nativeChatQuestion ? mobileChatQuestionKey(nativeChatQuestion) : null,
     handleRef: activeHandleRef,
     deviceTokenRef,
     agentRef: activeChatAgentRef,
@@ -271,6 +286,8 @@ export function useMobileNativeChatController(args: {
     nativeChatStreamingText,
     nativeChatStreamLive,
     nativeChatStreamScopeKey: streamScopeKey,
+    nativeChatInteractionRequestKey: nativeChatStatus?.interactiveRequestKey,
+    nativeChatPermissionKey,
     nativeChatPermission,
     nativeChatQuestion,
     nativeChatAsk: showNativeChatAsk ? nativeChatAskPrompt : null,

@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { nativeChatAskDismissKey, type AskPrompt } from '../../../src/shared/native-chat-ask'
+import {
+  advanceNativeChatPromptIdentity,
+  nativeChatPromptIdentityKey,
+  type NativeChatPromptIdentity
+} from '../../../src/shared/native-chat-prompt-identity'
 
 type AskDismissal = { sessionKey: string | null; askKey: string }
-type DetectedAsk = { sessionKey: string | null; askKey: string | null }
+type DetectedAsk = { sessionKey: string | null; identity: NativeChatPromptIdentity }
 
 /** Track the answered-ask key so the lingering live status doesn't re-show the
  *  same card. The agent emits a post-tool event with the same prompt right after
@@ -31,17 +36,26 @@ export function useMobileNativeChatAskDismiss(args: {
   dismissAsk: () => void
 } {
   const { ask, detectedAsk, scopeKey, sessionKey, observing } = args
-  const askKey = useMemo(() => nativeChatAskDismissKey(ask), [ask])
-  const detectedAskKey = useMemo(() => nativeChatAskDismissKey(detectedAsk), [detectedAsk])
   const detectedByScopeRef = useRef(new Map<string | null, DetectedAsk>())
+  const previous = detectedByScopeRef.current.get(scopeKey)
+  const contentKey = nativeChatAskDismissKey(detectedAsk)
+  const identity = observing
+    ? advanceNativeChatPromptIdentity(
+        previous?.identity ?? null,
+        contentKey === null ? null : JSON.stringify([sessionKey, contentKey]),
+        detectedAsk?.requestKey
+      )
+    : previous?.identity
+  const detectedAskKey = identity ? nativeChatPromptIdentityKey(identity) : null
+  const askKey = ask === null ? null : detectedAskKey
   const [dismissedByScope, setDismissedByScope] = useState<Map<string | null, AskDismissal>>(
     () => new Map()
   )
-  useEffect(() => {
-    if (observing) {
-      detectedByScopeRef.current.set(scopeKey, { sessionKey, askKey: detectedAskKey })
+  useLayoutEffect(() => {
+    if (observing && identity) {
+      detectedByScopeRef.current.set(scopeKey, { sessionKey, identity })
     }
-  }, [observing, detectedAskKey, scopeKey, sessionKey])
+  }, [observing, identity, scopeKey, sessionKey])
   // A cleared or genuinely different detected prompt retires the old dismissal.
   useEffect(() => {
     if (observing) {
@@ -64,7 +78,11 @@ export function useMobileNativeChatAskDismiss(args: {
     askKey !== null && !(dismissed?.sessionKey === sessionKey && dismissed.askKey === askKey)
   const dismissAsk = (): void => {
     const detected = detectedByScopeRef.current.get(scopeKey)
-    if (askKey !== null && detected?.sessionKey === sessionKey && detected.askKey === askKey) {
+    if (
+      askKey !== null &&
+      detected?.sessionKey === sessionKey &&
+      nativeChatPromptIdentityKey(detected.identity) === askKey
+    ) {
       setDismissedByScope((previous) => {
         const current = previous.get(scopeKey)
         if (current?.sessionKey === sessionKey && current.askKey === askKey) {

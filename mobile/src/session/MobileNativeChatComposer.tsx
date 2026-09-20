@@ -28,6 +28,7 @@ import {
   type MobileNativeChatSessionOptionPickersProps
 } from './MobileNativeChatSessionOptionPickers'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
+import { isRenderableImageUri } from './mobile-native-chat-image-preview'
 
 const NO_FILE_PATHS: string[] = []
 const NO_ATTACHMENTS: PendingNativeChatImage[] = []
@@ -217,11 +218,15 @@ export function MobileNativeChatComposer({
         >
           {attachments.map((attachment) => (
             <View key={attachment.id} style={styles.attachmentThumb}>
-              <Image
-                source={{ uri: attachment.previewUri }}
-                style={styles.attachmentImage}
-                resizeMode="cover"
-              />
+              {isRenderableImageUri(attachment.previewUri) ? (
+                <Image
+                  source={{ uri: attachment.previewUri }}
+                  style={styles.attachmentImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <ImagePlus size={24} color={colors.textMuted} />
+              )}
               {onRemoveAttachment ? (
                 <Pressable
                   accessibilityLabel="Remove image"
@@ -339,6 +344,8 @@ const styles = StyleSheet.create({
   attachmentThumb: {
     width: 60,
     height: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: radii.button,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderSubtle,

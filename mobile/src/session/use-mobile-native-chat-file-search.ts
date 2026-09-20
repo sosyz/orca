@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import { rankSuggestions } from './mobile-native-chat-autocomplete'
 
@@ -29,7 +29,7 @@ export function useMobileNativeChatFileSearch(args: {
   const legacyLoadRef = useRef<Promise<string[] | null> | null>(null)
   const searchSupportedRef = useRef<boolean | null>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     sequenceRef.current++
     generationRef.current++
     queryCacheRef.current.clear()
@@ -38,6 +38,8 @@ export function useMobileNativeChatFileSearch(args: {
     searchSupportedRef.current = null
     setNativeChatFilePaths([])
     return () => {
+      sequenceRef.current++
+      generationRef.current++
       if (timerRef.current) {
         clearTimeout(timerRef.current)
         timerRef.current = null
@@ -78,7 +80,7 @@ export function useMobileNativeChatFileSearch(args: {
           queryCacheRef.current.set(normalizedQuery, paths)
           while (queryCacheRef.current.size > FILE_SEARCH_QUERY_CACHE_LIMIT) {
             const oldest = queryCacheRef.current.keys().next().value as string | undefined
-            if (!oldest) {
+            if (oldest === undefined) {
               break
             }
             queryCacheRef.current.delete(oldest)
@@ -127,6 +129,9 @@ export function useMobileNativeChatFileSearch(args: {
             query: normalizedQuery,
             limit: FILE_SEARCH_RESULT_LIMIT
           })
+          if (generationRef.current !== generation) {
+            return
+          }
           if (response.ok) {
             searchSupportedRef.current = true
             applyPaths(extractPaths(response.result))

@@ -185,7 +185,7 @@ describe('useMobileNativeChatImageAttachments', () => {
     expect(sendCalls).toHaveLength(2)
     expect(sendCalls[0]?.params).toMatchObject({ text: '\x15', enter: false })
     expect(sendCalls[1]?.params).toMatchObject({
-      text: '\x1b[200~/tmp/a.png\x1b[201~',
+      text: '\x1b[200~/tmp/a.png\x1b[201~ ',
       enter: false
     })
     // Clear, then paste, then settle, then the text send — in that order.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, type MutableRefObject } from 'react'
 import {
   buildAskAnswerKeys,
   buildCodexAskAnswerKeys,
@@ -61,6 +61,8 @@ export function useMobileNativeChatAnswerSend(args: {
   /** Changes on chat session swap; cancels pending writes when it does. */
   sessionId: string | null
   streamIdentity: string
+  /** Stable presented-ask identity; null means the observed request cleared. */
+  requestIdentity?: string | null
   onSendError: (message: string) => void
 }): MobileNativeChatAnswerSend {
   const {
@@ -71,11 +73,12 @@ export function useMobileNativeChatAnswerSend(args: {
     agentRef,
     sessionId,
     streamIdentity,
+    requestIdentity,
     onSendError
   } = args
   const generationRef = useRef(0)
-  const activeRouteRef = useRef({ client, enabled, sessionId, streamIdentity })
-  activeRouteRef.current = { client, enabled, sessionId, streamIdentity }
+  const activeRouteRef = useRef({ client, enabled, sessionId, streamIdentity, requestIdentity })
+  activeRouteRef.current = { client, enabled, sessionId, streamIdentity, requestIdentity }
   // Per-terminal count of this hook's chains sharing one write-lock hold: a
   // superseding answer inherits the cancelled chain's hold (it re-enters before
   // the old chain unwinds), and only the last chain out releases the lock.
@@ -95,16 +98,29 @@ export function useMobileNativeChatAnswerSend(args: {
     delaysRef.current.clear()
   }, [])
 
-  // Cancel pending writes on unmount and whenever the chat session swaps.
-  useEffect(() => {
+  // A new question can replace the selector without changing the terminal or session.
+  useLayoutEffect(() => {
     if (!enabled) {
       cancelPending()
     }
     return cancelPending
-  }, [client, enabled, sessionId, streamIdentity, cancelPending])
+  }, [client, enabled, sessionId, streamIdentity, requestIdentity, cancelPending])
 
   const answerAsk = useCallback(
     async (prompt: AskPrompt, selections: AskAnswerSelection[]): Promise<boolean> => {
+      const isCurrentRequest = (): boolean => {
+        const current = activeRouteRef.current
+        return (
+          current.client === client &&
+          current.sessionId === sessionId &&
+          current.streamIdentity === streamIdentity &&
+          current.requestIdentity === requestIdentity
+        )
+      }
+      // A detached card must not cancel the current card's write turn.
+      if (requestIdentity === null || !isCurrentRequest()) {
+        return false
+      }
       const handle = handleRef.current
       if (!client || !handle || !enabled) {
         onSendError('Answer not sent (disconnected)')
@@ -145,7 +161,7 @@ export function useMobileNativeChatAnswerSend(args: {
           // Gate on the turn slot, not the generation: a dropped input lease bumps
           // the generation without writing the Escape that Stop and ask-cancel do,
           // so the card is still up and silence there strands an advanced selector.
-          if (writeTurnsRef.current.get(handle) === turn) {
+          if (isCurrentRequest() && writeTurnsRef.current.get(handle) === turn) {
             onSendError('Answer not sent — check chat before retrying')
           }
           return false
@@ -161,13 +177,7 @@ export function useMobileNativeChatAnswerSend(args: {
         let deadline = openMobileNativeChatSendBudget()
         const sendTerminal = async (body: string, enter: boolean): Promise<boolean> => {
           const activeRoute = activeRouteRef.current
-          if (
-            !activeRoute.enabled ||
-            activeRoute.client !== client ||
-            activeRoute.sessionId !== sessionId ||
-            activeRoute.streamIdentity !== streamIdentity ||
-            handleRef.current !== handle
-          ) {
+          if (!activeRoute.enabled || !isCurrentRequest() || handleRef.current !== handle) {
             return false
           }
           const outcome = await sendMobileNativeChatMessageWithOutcome({
@@ -206,7 +216,7 @@ export function useMobileNativeChatAnswerSend(args: {
           })
         }
         const fail = (): false => {
-          if (generationRef.current === generation) {
+          if (generationRef.current === generation && isCurrentRequest()) {
             // Why: keystrokes that may have landed (ack lost / path cutover) must
             // not read as a definite failure — a blind resend could double-step
             // the selector. An earlier group that WAS accepted is the same hazard
@@ -256,7 +266,7 @@ export function useMobileNativeChatAnswerSend(args: {
           // Stop, ask-cancel and a dropped lease all bump the generation with no
           // successor, and there a landed answer IS a success.
           const sent = (await sendTerminal(formatAskAnswer(prompt, selections), true)) || fail()
-          return sent && writeTurnsRef.current.get(handle) === turn
+          return sent && isCurrentRequest() && writeTurnsRef.current.get(handle) === turn
         }
         const groups =
           resolveNativeChatTranscriptAgent(agentRef.current) === 'codex'
@@ -279,8 +289,8 @@ export function useMobileNativeChatAnswerSend(args: {
             deadline += MOBILE_NATIVE_CHAT_QUESTION_STEP_MS
           }
         }
-        // Taken over on the last key: same as above, the successor owns the surface.
-        return groups.length > 0 && writeTurnsRef.current.get(handle) === turn
+        // A landed key for an old question cannot retire the new question's error surface.
+        return groups.length > 0 && isCurrentRequest() && writeTurnsRef.current.get(handle) === turn
       } finally {
         // Any accepted key changed the live selector, so a queued replacement
         // cannot safely apply its from-scratch key plan to that new position.
@@ -308,7 +318,8 @@ export function useMobileNativeChatAnswerSend(args: {
       handleRef,
       onSendError,
       sessionId,
-      streamIdentity
+      streamIdentity,
+      requestIdentity
     ]
   )
 

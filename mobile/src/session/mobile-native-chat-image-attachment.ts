@@ -1,5 +1,6 @@
 import type { RpcClient } from '../transport/rpc-client'
 import { saveMobileClipboardImageAsTempFile } from './mobile-clipboard-image'
+import { normalizeSupportedRasterImageMimeType } from '../../../src/shared/raster-image-format'
 // Type-only import so this module (and its unit test) stays free of the expo/
 // react-native picker chain; the concrete `pickImage` is injected by the hook.
 import type { MobileImageSource, PickedMobileImage } from './mobile-image-source-picker'
@@ -68,9 +69,13 @@ export async function uploadMobileNativeChatImages(
       connectionId = await getConnectionId()
     }
     const path = await saveMobileClipboardImageAsTempFile(client, image.base64, { connectionId })
-    // Prefer the picker's local URI for the thumbnail; fall back to an inline data
-    // URI when the source omitted one (RN <Image> renders both).
-    const previewUri = image.uri ?? `data:image/png;base64,${image.base64}`
+    // A failed temporary preview uses the host path as a non-loadable placeholder.
+    // Legacy sources without a preview field retain the inline fallback.
+    const previewMimeType = normalizeSupportedRasterImageMimeType(image.mimeType) ?? 'image/png'
+    const previewUri =
+      image.previewUri === null
+        ? path
+        : (image.previewUri ?? image.uri ?? `data:${previewMimeType};base64,${image.base64}`)
     const result = { path, previewUri }
     uploaded.push(result)
     onImageUploaded?.(result)

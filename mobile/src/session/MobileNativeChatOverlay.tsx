@@ -52,7 +52,10 @@ export function MobileNativeChatOverlay({
   keyboardInset
 }: Props): React.JSX.Element | null {
   const session = controller.nativeChatSession
-  const folded = useMemo(() => foldMobileNativeChatMessages(session.messages), [session.messages])
+  const folded = useMemo(
+    () => foldMobileNativeChatMessages(session.messages, controller.nativeChatAgent),
+    [controller.nativeChatAgent, session.messages]
+  )
   const streaming = useMobileNativeChatStreamingBubble(
     folded,
     controller.nativeChatStreamingText,
@@ -73,6 +76,9 @@ export function MobileNativeChatOverlay({
         agentWorking={controller.nativeChatAgentWorking}
         streaming={streaming}
         onStop={controller.handleNativeChatStop}
+        interactionScopeKey={controller.nativeChatStreamScopeKey}
+        interactionRequestKey={controller.nativeChatInteractionRequestKey}
+        permissionKey={controller.nativeChatPermissionKey}
         ask={controller.nativeChatAsk}
         askKey={controller.nativeChatAskKey}
         onDismissAsk={controller.dismissNativeChatAsk}

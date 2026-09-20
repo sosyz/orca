@@ -86,6 +86,7 @@ describe('useMobileNativeChatPermissionSend', () => {
       respond = useMobileNativeChatPermissionSend({
         client: { sendRequest } as unknown as RpcClient,
         enabled: true,
+        streamIdentity: 'terminal',
         handleRef: { current: 'terminal' },
         deviceTokenRef: { current: null },
         onSendError: vi.fn()
@@ -118,6 +119,7 @@ describe('useMobileNativeChatPermissionSend', () => {
       respond = useMobileNativeChatPermissionSend({
         client: { sendRequest } as unknown as RpcClient,
         enabled: true,
+        streamIdentity: 'terminal',
         handleRef: { current: 'terminal' },
         deviceTokenRef: { current: null },
         onSendError

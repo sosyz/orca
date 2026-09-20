@@ -131,6 +131,7 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    promptsState.question = null
     clientStub.sendRequest.mockResolvedValue({
       id: 'send',
       ok: true,
@@ -325,6 +326,13 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
   })
 
   it('does not restore a rejected question answer into the composer', async () => {
+    promptsState.question = {
+      question: 'Continue?',
+      options: ['Yes', 'No'],
+      optionTokens: ['1', '2'],
+      multiSelect: false
+    }
+    act(() => renderer?.update(createElement(Harness)))
     sendWithOutcome.mockResolvedValue('rejected')
     let accepted = true
     await act(async () => {

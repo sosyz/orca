@@ -8,6 +8,7 @@ import {
   acquireMobileNativeChatTerminalWrite,
   releaseMobileNativeChatTerminalWrite
 } from './mobile-native-chat-terminal-write-lock'
+import { useMobileNativeChatCardRequestOwner } from './use-mobile-native-chat-card-request-owner'
 
 export function sendMobileNativeChatPermissionResponse(args: {
   client: RpcClient
@@ -31,11 +32,17 @@ export function useMobileNativeChatPermissionSend(args: {
   enabled: boolean
   handleRef: MutableRefObject<string | null>
   deviceTokenRef: MutableRefObject<string | null>
+  streamIdentity: string
+  requestIdentity?: string | null
   onSendError: (message: string) => void
 }): (text: string) => Promise<boolean> {
+  const { isCurrent, canSend } = useMobileNativeChatCardRequestOwner(args)
   return useCallback(
     async (text: string): Promise<boolean> => {
       const terminal = args.handleRef.current
+      if (!isCurrent(terminal) || !canSend(terminal, true)) {
+        return false
+      }
       if (!args.client || !terminal || !args.enabled) {
         args.onSendError('Response not sent (disconnected)')
         return false
@@ -60,6 +67,9 @@ export function useMobileNativeChatPermissionSend(args: {
       } finally {
         releaseMobileNativeChatTerminalWrite(terminal)
       }
+      if (!isCurrent(terminal)) {
+        return false
+      }
       if (outcome === 'unknown') {
         // Why: the response may have been delivered (ack lost / path cutover) —
         // a definite "not sent" would invite a double answer.
@@ -69,6 +79,15 @@ export function useMobileNativeChatPermissionSend(args: {
       }
       return outcome === 'accepted'
     },
-    [args.client, args.deviceTokenRef, args.enabled, args.handleRef, args.onSendError]
+    [
+      args.client,
+      args.deviceTokenRef,
+      args.enabled,
+      args.handleRef,
+      args.onSendError,
+      args.requestIdentity,
+      canSend,
+      isCurrent
+    ]
   )
 }

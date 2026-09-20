@@ -21,6 +21,22 @@ function clientWithResponse(response: unknown): RpcClient {
 }
 
 describe('sendMobileNativeChatMessage', () => {
+  it.each(['\x1b[A', '\x1b', '\r', '\x15'])(
+    'keeps raw terminal control %j unchanged',
+    async (text) => {
+      const client = clientWithResponse({ ok: true, result: { send: { accepted: true } } })
+      await sendMobileNativeChatMessageWithOutcome({ client, terminal: 'term', text, enter: false })
+      expect(client.sendRequest).toHaveBeenCalledWith(
+        'terminal.send',
+        {
+          terminal: 'term',
+          text,
+          enter: false
+        },
+        expect.anything()
+      )
+    }
+  )
   it('returns true only when the terminal accepts the send', async () => {
     const client = clientWithResponse({
       id: 'request',

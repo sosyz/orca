@@ -197,12 +197,48 @@ describe('useMobileNativeChatMessageSend', () => {
     clearMobileNativeChatRuntimeStoreForTests()
   })
 
+  it.each([
+    ['single line', 'hello world', 'hello world'],
+    ['LF', 'first\nsecond', '\x1b[200~first\rsecond\x1b[201~'],
+    ['CRLF', 'first\r\nsecond', '\x1b[200~first\rsecond\x1b[201~'],
+    ['CR', 'first\rsecond', '\x1b[200~first\rsecond\x1b[201~'],
+    ['single-line ESC', 'hello\x1b[A', 'hello␛[A'],
+    ['multiline ESC', 'first\n\x1b[201~second', '\x1b[200~first\r␛[201~second\x1b[201~']
+  ])(
+    'encodes %s as composer text without changing its optimistic echo',
+    async (_label, draft, bytes) => {
+      mount(() => null)
+      await act(async () => {
+        await api!.send(draft)
+      })
+      expect(sentArgs().text).toBe(bytes)
+      expect(acceptSend).toHaveBeenCalledWith(
+        expect.anything(),
+        draft.replaceAll('\x1b', '␛'),
+        undefined
+      )
+      expect(clearArgs().clearInput).toBe('\x15')
+    }
+  )
+
   it('sizes the pre-clear to every line of a parked launch draft', async () => {
     mount(() => ({ text: DRAFT, createdAt: 1 }))
     await act(async () => {
       await api!.send('hello')
     })
     expect(clearArgs().clearInput).toBe(buildAgentTuiClearInputForText(DRAFT))
+  })
+
+  it('retires an ESC-bearing pending message against its sanitized transcript echo', async () => {
+    await mountCombined()
+    await act(async () => {
+      await combinedApi!.send('before\n\x1b[201~after')
+    })
+    expect(readMobileNativeChatPending(COMBINED_SCOPE, COMBINED_PENDING)).toHaveLength(1)
+
+    await updateCombined([userTextMessage('echo', 'before\n␛[201~after')])
+
+    expect(readMobileNativeChatPending(COMBINED_SCOPE, COMBINED_PENDING)).toEqual([])
   })
 
   it('issues the burst as its OWN write, before the body', async () => {
@@ -622,13 +658,13 @@ describe('useMobileNativeChatMessageSend', () => {
     await act(async () => {
       await api!.answerQuestion('\n 1 ')
     })
-    expect(sentArgs().text).toBe('\n 1')
+    expect(sentArgs().text).toBe('\x1b[200~\r 1\x1b[201~')
   })
 
   // #14819: the trim is a wire concern only. A rejected send hands the composer
   // back to the user, and it has to be the draft they typed, blank lines included.
   it('restores the untrimmed draft when the send is rejected', async () => {
-    const draft = 'first line\n\nsecond line\n\n'
+    const draft = 'first line\n\nsecond\x1b line\n\n'
     sendWithOutcome.mockResolvedValue('rejected')
     mount(() => null)
 
@@ -636,7 +672,7 @@ describe('useMobileNativeChatMessageSend', () => {
       await api!.send(draft)
     })
 
-    expect(sentArgs().text).toBe('first line\n\nsecond line')
+    expect(sentArgs().text).toBe('\x1b[200~first line\r\rsecond␛ line\x1b[201~')
     expect(restoreRejectedDraft.mock.calls[0]![1]).toBe(draft)
     expect(clearDraftForSend.mock.calls[0]![1]).toBe(draft)
   })

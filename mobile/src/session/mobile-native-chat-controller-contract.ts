@@ -31,6 +31,9 @@ export type MobileNativeChatController = {
   nativeChatStreamLive: boolean
   /** Host/workspace/tab/session scope for stateful streaming suppression. */
   nativeChatStreamScopeKey: string
+  nativeChatInteractionRequestKey?: string
+  /** Stable identity shared by the permission card and its send receipt. */
+  nativeChatPermissionKey: string | null
   nativeChatPermission: ReturnType<typeof detectAgentPermission>
   nativeChatQuestion: ReturnType<typeof parseAgentQuestion>
   /** The pending ask, already null while dismissed (dismissal lives here so it
