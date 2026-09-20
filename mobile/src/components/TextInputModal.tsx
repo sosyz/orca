@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Platform,
   type KeyboardTypeOptions
 } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { colors, spacing, radii, typography } from '../theme/mobile-theme'
 import { BottomDrawer } from './BottomDrawer'
 
@@ -31,29 +32,58 @@ export function TextInputModal({
   message,
   defaultValue = '',
   placeholder,
-  submitLabel = 'Save',
+  submitLabel,
   selectTextOnFocus = false,
   allowEmpty = false,
   keyboardType,
   onSubmit,
   onCancel
 }: Props) {
+  const { t } = useTranslation()
   const [value, setValue] = useState(defaultValue)
+  const [openToken, setOpenToken] = useState<object>(() => ({}))
+  const [resetOnNextOpen, setResetOnNextOpen] = useState(false)
+  const committedOpenTokenRef = useRef<object | null>(null)
   const [previousVisible, setPreviousVisible] = useState(visible)
   const [previousDefaultValue, setPreviousDefaultValue] = useState(defaultValue)
 
   // Why: reset before the opening commit so the drawer never paints the
   // previous modal value while preserving the existing close animation state.
-  const shouldResetValue = visible && (!previousVisible || defaultValue !== previousDefaultValue)
+  const shouldResetValue =
+    visible && (resetOnNextOpen || !previousVisible || defaultValue !== previousDefaultValue)
   if (visible !== previousVisible || shouldResetValue) {
     setPreviousVisible(visible)
     if (shouldResetValue) {
       setPreviousDefaultValue(defaultValue)
       setValue(defaultValue)
+      setOpenToken({})
+      setResetOnNextOpen(false)
     }
   }
 
+  useLayoutEffect(() => {
+    const committedToken = visible ? openToken : null
+    committedOpenTokenRef.current = committedToken
+    return () => {
+      if (committedOpenTokenRef.current === committedToken) {
+        committedOpenTokenRef.current = null
+      }
+    }
+  }, [openToken, visible])
+
+  function handleCancel() {
+    if (!visible || committedOpenTokenRef.current !== openToken) {
+      return
+    }
+    committedOpenTokenRef.current = null
+    setResetOnNextOpen(true)
+    onCancel()
+  }
+
   function handleSubmit() {
+    if (!visible || committedOpenTokenRef.current !== openToken) {
+      return
+    }
     const trimmed = value.trim()
     if (trimmed || allowEmpty) {
       onSubmit(trimmed)
@@ -61,9 +91,10 @@ export function TextInputModal({
   }
 
   const canSubmit = allowEmpty || value.trim().length > 0
+  const resolvedSubmitLabel = submitLabel ?? t('common.save', 'Save')
 
   return (
-    <BottomDrawer visible={visible} onClose={onCancel}>
+    <BottomDrawer visible={visible} onClose={handleCancel}>
       <View style={styles.header}>
         <Text style={styles.title}>{title}</Text>
         {message ? <Text style={styles.message}>{message}</Text> : null}
@@ -88,9 +119,9 @@ export function TextInputModal({
       <View style={styles.actions}>
         <Pressable
           style={({ pressed }) => [styles.cancelButton, pressed && styles.buttonPressed]}
-          onPress={onCancel}
+          onPress={handleCancel}
         >
-          <Text style={styles.cancelText}>Cancel</Text>
+          <Text style={styles.cancelText}>{t('common.cancel', 'Cancel')}</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [
@@ -101,7 +132,7 @@ export function TextInputModal({
           disabled={!canSubmit}
           onPress={handleSubmit}
         >
-          <Text style={styles.submitText}>{submitLabel}</Text>
+          <Text style={styles.submitText}>{resolvedSubmitLabel}</Text>
         </Pressable>
       </View>
     </BottomDrawer>

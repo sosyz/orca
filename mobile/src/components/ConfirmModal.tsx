@@ -1,4 +1,6 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { colors, spacing, radii, typography } from '../theme/mobile-theme'
 import { BottomDrawer } from './BottomDrawer'
 
@@ -17,14 +19,64 @@ export function ConfirmModal({
   visible,
   title,
   message,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   destructive = false,
   onConfirm,
   onCancel
 }: Props) {
+  const { t } = useTranslation()
+  const [openToken, setOpenToken] = useState<object>(() => ({}))
+  const [resetOnNextOpen, setResetOnNextOpen] = useState(false)
+  const [previousVisible, setPreviousVisible] = useState(visible)
+  const committedOpenTokenRef = useRef<object | null>(null)
+  const shouldResetOpening = visible && (resetOnNextOpen || !previousVisible)
+  if (visible !== previousVisible || shouldResetOpening) {
+    setPreviousVisible(visible)
+    if (shouldResetOpening) {
+      setOpenToken({})
+      setResetOnNextOpen(false)
+    }
+  }
+
+  useLayoutEffect(() => {
+    const committedToken = visible ? openToken : null
+    committedOpenTokenRef.current = committedToken
+    return () => {
+      if (committedOpenTokenRef.current === committedToken) {
+        committedOpenTokenRef.current = null
+      }
+    }
+  }, [openToken, visible])
+
+  function consumeOpening() {
+    if (!visible || committedOpenTokenRef.current !== openToken) {
+      return false
+    }
+    // Closing drawers retain their buttons until the animation finishes.
+    committedOpenTokenRef.current = null
+    setResetOnNextOpen(true)
+    return true
+  }
+
+  function handleCancel() {
+    if (consumeOpening()) {
+      onCancel()
+    }
+  }
+
+  function handleConfirm() {
+    if (consumeOpening()) {
+      onConfirm()
+      onCancel()
+    }
+  }
+
+  const resolvedConfirmLabel = confirmLabel ?? t('common.confirm', 'Confirm')
+  const resolvedCancelLabel = cancelLabel ?? t('common.cancel', 'Cancel')
+
   return (
-    <BottomDrawer visible={visible} onClose={onCancel}>
+    <BottomDrawer visible={visible} onClose={handleCancel}>
       <View style={styles.content}>
         <Text style={styles.title}>{title}</Text>
         {message ? <Text style={styles.message}>{message}</Text> : null}
@@ -32,9 +84,9 @@ export function ConfirmModal({
       <View style={styles.buttons}>
         <Pressable
           style={({ pressed }) => [styles.button, styles.cancelButton, pressed && styles.pressed]}
-          onPress={onCancel}
+          onPress={handleCancel}
         >
-          <Text style={styles.cancelText}>{cancelLabel}</Text>
+          <Text style={styles.cancelText}>{resolvedCancelLabel}</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [
@@ -42,13 +94,10 @@ export function ConfirmModal({
             destructive ? styles.destructiveButton : styles.confirmButton,
             pressed && styles.pressed
           ]}
-          onPress={() => {
-            onConfirm()
-            onCancel()
-          }}
+          onPress={handleConfirm}
         >
           <Text style={destructive ? styles.destructiveText : styles.confirmText}>
-            {confirmLabel}
+            {resolvedConfirmLabel}
           </Text>
         </Pressable>
       </View>
