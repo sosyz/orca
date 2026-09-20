@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { colors, typography } from '../theme/mobile-theme'
 
 type DictationStatus = {
@@ -18,22 +19,24 @@ export function MobileTerminalLiveInputStatus({
   isAttaching,
   liveInputText
 }: MobileTerminalLiveInputStatusProps) {
+  const { t } = useTranslation()
   const title = dictation.isRecording
-    ? 'Listening'
+    ? t('mobile.session.terminalInput.status.recordingTitle', 'Listening')
     : dictation.isProcessing
-      ? 'Processing'
+      ? t('mobile.session.terminalInput.status.processingTitle', 'Processing')
       : dictation.isStarting
-        ? 'Starting mic'
-        : 'Live input'
+        ? t('mobile.session.terminalInput.status.startingTitle', 'Starting mic')
+        : t('mobile.session.terminalInput.status.liveTitle', 'Live input')
   const detail = dictation.isRecording
-    ? 'Tap mic to stop'
+    ? t('mobile.session.terminalInput.status.recordingDetail', 'Tap mic to stop')
     : dictation.isProcessing
-      ? 'Transcribing on desktop'
+      ? t('mobile.session.terminalInput.status.processingDetail', 'Transcribing on desktop')
       : dictation.isStarting
-        ? 'Preparing microphone'
+        ? t('mobile.session.terminalInput.status.startingDetail', 'Preparing microphone')
         : isAttaching
-          ? 'Uploading image to host'
-          : liveInputText || 'Tap to show keyboard'
+          ? t('mobile.session.terminalInput.status.uploadingImageDetail', 'Uploading image to host')
+          : liveInputText ||
+            t('mobile.session.terminalInput.status.liveDetail', 'Tap to show keyboard')
 
   return (
     <View style={styles.status}>

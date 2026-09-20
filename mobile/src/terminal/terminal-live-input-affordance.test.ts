@@ -45,11 +45,13 @@ describe('terminal live input affordance', () => {
     expect(liveInputBarSource).toContain('onPress={onFocusLiveInput}')
     expect(liveInputBarSource).toContain('accessibilityRole="button"')
     expect(liveInputBarSource).toContain(
-      'accessibilityLabel="Show keyboard for live terminal input"'
+      "accessibilityLabel={t(\n          'mobile.session.terminalInput.focus.label'"
     )
     expect(liveInputBarSource).toContain(
-      'accessibilityHint="Typed text is sent directly to the active terminal"'
+      "accessibilityHint={t(\n          'mobile.session.terminalInput.focus.hint'"
     )
+    expect(liveInputBarSource).toContain("'Show keyboard for live terminal input'")
+    expect(liveInputBarSource).toContain("'Typed text is sent directly to the active terminal'")
     expect(liveInputBarSource).toContain('pressed && styles.liveInputFocusTargetPressed')
     expect(liveInputBarSource).toContain('!canSend && styles.liveInputFocusTargetDisabled')
     expect(liveInputBarSource).toContain('showSoftInputOnFocus')
@@ -70,7 +72,8 @@ describe('terminal live input affordance', () => {
 
   it('makes the live keyboard target visible instead of status-only chrome', () => {
     expect(liveInputStatusSource).toContain("'Tap to show keyboard'")
-    expect(liveInputStatusSource).toContain("liveInputText || 'Tap to show keyboard'")
+    expect(liveInputStatusSource).toContain('liveInputText ||')
+    expect(liveInputStatusSource).toContain("'mobile.session.terminalInput.status.liveDetail'")
     expect(liveInputStatusSource).toContain('ellipsizeMode="head"')
     expect(commandInputStylesSource).toContain('backgroundColor: colors.bgRaised')
     expect(commandInputStylesSource).toContain('borderWidth: 1')

@@ -11,6 +11,10 @@ const liveInputBarSource = readFileSync(
   new URL('../session/MobileTerminalLiveInputBar.tsx', import.meta.url),
   'utf8'
 )
+const bufferedSendSource = readFileSync(
+  new URL('./mobile-terminal-buffered-send.ts', import.meta.url),
+  'utf8'
+)
 
 function routeSlice(anchorStart: string, anchorEnd: string): string {
   const start = sessionRouteSource.indexOf(anchorStart)
@@ -99,12 +103,15 @@ describe('session route offline-compose wiring', () => {
 
   it('keeps the send button connection-gated so held text cannot fire into a dead link', () => {
     const sendButton = routeSlice('styles.sendButton,', 'accessibilityLabel="Send command"')
-    expect(sendButton).toContain('disabled={!canSend}')
+    expect(sendButton).toContain('disabled={!canSendBufferedCommand}')
   })
 
   it('holds composed text when the return key submits offline', () => {
-    const handleSend = routeSlice('async function handleSend()', 'sendingRef.current = true')
-    expect(handleSend).toContain('!canSend')
+    const handleSend = routeSlice(
+      'async function handleSend()',
+      'await sendMobileTerminalBufferedCommand({'
+    )
+    expect(handleSend).toContain('!canSendBufferedCommand')
   })
 
   it('keeps the live/buffered mode toggle reachable offline', () => {
@@ -121,11 +128,11 @@ describe('session route offline-compose wiring', () => {
   })
 
   it('keeps every keystroke-grade terminal send now-or-never so nothing replays after reconnect', () => {
-    // Live mirror, buffered send, and gesture arrows must all opt out of the
-    // connect wait — a parked send replays stale bytes into the PTY. Accessory
-    // keys get the same option inside terminal-live-accessory-raw-send.ts.
+    // Buffered input sends through its own module; live mirror and gesture
+    // arrows remain on this route. Accessory keys have their own sender.
     const optOuts = sessionRouteSource.match(/TERMINAL_INPUT_SEND_OPTIONS/g)?.length ?? 0
-    expect(optOuts).toBe(4)
+    expect(optOuts).toBe(3)
+    expect(bufferedSendSource).toContain('TERMINAL_INPUT_SEND_OPTIONS')
     expect(TERMINAL_INPUT_SEND_OPTIONS).toEqual({ failWhenDisconnected: true })
   })
 

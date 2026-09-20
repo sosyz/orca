@@ -75,6 +75,8 @@ export function useLiveWorktreeName({
       let hasSuccessfulRefresh = false
       let fallbackInterval: ReturnType<typeof setInterval> | null = null
       let refreshGeneration = 0
+      let refreshInFlight = false
+      let refreshAfterInFlight = false
       const repoId = getRepoIdFromWorktreeId(worktreeId)
 
       const stopFallbackPoll = (): void => {
@@ -83,9 +85,19 @@ export function useLiveWorktreeName({
           fallbackInterval = null
         }
       }
-      const refreshWorktreeName = async (): Promise<void> => {
-        // Why: an event-driven refresh can overtake a slow fallback request;
-        // only the newest read may publish or stop the retry poll.
+      const refreshWorktreeName = async (queueWhenBusy = false): Promise<void> => {
+        if (stale) {
+          return
+        }
+        if (refreshInFlight) {
+          if (queueWhenBusy) {
+            refreshGeneration += 1
+            refreshAfterInFlight = true
+          }
+          return
+        }
+        refreshInFlight = true
+        // Why: an event invalidates a slow fallback read; only its queued reread may publish.
         const generation = ++refreshGeneration
         try {
           const response = await client.sendRequest('worktree.show', {
@@ -132,6 +144,12 @@ export function useLiveWorktreeName({
           }
         } catch {
           // Non-fatal: the route param remains a usable label until the next refresh.
+        } finally {
+          refreshInFlight = false
+          if (!stale && refreshAfterInFlight) {
+            refreshAfterInFlight = false
+            void refreshWorktreeName()
+          }
         }
       }
 
@@ -147,7 +165,7 @@ export function useLiveWorktreeName({
       const invalidateAndRefresh = (): void => {
         hasSuccessfulRefresh = false
         startFallbackPoll()
-        void refreshWorktreeName()
+        void refreshWorktreeName(true)
       }
 
       startFallbackPoll()

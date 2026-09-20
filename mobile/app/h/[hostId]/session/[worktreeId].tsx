@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
+import { useMobileTerminalCreationOwner } from '../../../../src/session/use-mobile-terminal-creation-owner'
 import {
   Animated,
   AppState,
@@ -19,6 +20,7 @@ import {
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
+import { useTranslation } from 'react-i18next'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import {
   AlertTriangle,
@@ -78,6 +80,7 @@ import {
   createBulkCloseSheetActions,
   createCloseWithBulkActions
 } from '../../../../src/session/mobile-bulk-close-sheet-actions'
+import { closeMobileSessionTabIfCurrent } from '../../../../src/session/mobile-session-tab-close'
 import { useMobilePrBranchContext } from '../../../../src/session/use-mobile-pr-branch-context'
 import { isFloatingWorkspaceWorktreeId } from '../../../../src/session/floating-workspace'
 import { useAgentSendKeyboardDismissal } from '../../../../src/session/use-agent-send-keyboard-dismissal'
@@ -129,7 +132,6 @@ import {
 import { useTerminalLiveInputFocus } from '../../../../src/terminal/use-terminal-live-input-focus'
 import { dismissTerminalKeyboard } from '../../../../src/terminal/terminal-keyboard-dismiss'
 import type { TerminalLiveInputSender } from '../../../../src/terminal/terminal-live-input-sender'
-import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-send-rpc-response'
 import { useBufferedTerminalDrafts } from '../../../../src/terminal/use-buffered-terminal-drafts'
 import {
   classifyTerminalLiveSendError,
@@ -146,6 +148,11 @@ import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../sr
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
 import { resolveMobileTerminalInputGate } from '../../../../src/terminal/terminal-input-connection-gate'
 import {
+  createMobileTerminalBufferedSendState,
+  sendMobileTerminalBufferedCommand,
+  type MobileTerminalBufferedSendScope
+} from '../../../../src/terminal/mobile-terminal-buffered-send'
+import {
   buildTerminalSendParams,
   TERMINAL_INPUT_SEND_OPTIONS
 } from '../../../../src/terminal/terminal-send-request'
@@ -160,27 +167,20 @@ import {
   recoverActiveTerminalAfterForeground,
   shouldRecoverTerminalOnAppStateChange
 } from '../../../../src/terminal/terminal-foreground-recovery'
-import { MobileBrowserPane } from '../../../../src/browser/MobileBrowserPane'
-import { normalizeBrowserUrl } from '../../../../src/browser/browser-url'
+import { useMobileBrowserTabCreation } from '../../../../src/browser/use-mobile-browser-tab-creation'
 import { StatusDot } from '../../../../src/components/StatusDot'
 import { ActionSheetModal } from '../../../../src/components/ActionSheetModal'
 import { MobileAgentIcon } from '../../../../src/components/MobileAgentIcon'
 import { TextInputModal } from '../../../../src/components/TextInputModal'
 import { ConfirmModal } from '../../../../src/components/ConfirmModal'
-import { MobileMarkdownReader } from '../../../../src/session/MobileMarkdownReader'
 import {
   CustomKeyModal,
   loadCustomKeys,
   saveCustomKeys,
   type CustomKey
 } from '../../../../src/components/CustomKeyModal'
-import {
-  addMobileDiffComment,
-  formatDiffComments,
-  normalizeMobileDiffComments,
-  removeDeliveredMobileDiffComments,
-  removeMobileDiffComments
-} from '../../../../src/session/mobile-diff-comments'
+import { formatDiffComments } from '../../../../src/session/mobile-diff-comments'
+import { useMobileSessionDiffComments } from '../../../../src/session/use-mobile-session-diff-comments'
 import {
   getTerminalRecordsFromSessionTabs,
   hasConnectedTerminalAbsentFromSessionTabs,
@@ -195,6 +195,7 @@ import {
 } from '../../../../src/session/mobile-terminal-tab-agent'
 import type { MobileNewTabAgentOption } from '../../../../src/session/mobile-new-tab-agent-options'
 import { loadMobileNewTabAgentOptions } from '../../../../src/session/mobile-new-tab-agent-loader'
+import { resolveMobileWorktreeExecutionConnectionId } from '../../../../src/session/mobile-worktree-execution-connection'
 import { useMobileSessionImageAttachments } from '../../../../src/session/use-mobile-session-image-attachments'
 import { useMobileAttachmentInputLeaseGate } from '../../../../src/session/use-mobile-attachment-input-lease-gate'
 import { useMobileTerminalPaste } from '../../../../src/session/use-mobile-terminal-paste'
@@ -206,8 +207,8 @@ import {
 } from '../../../../src/session/MobileTerminalLiveInputBar'
 import { MobileTerminalInputActions } from '../../../../src/session/MobileTerminalInputActions'
 import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-doc'
-import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
 import { useMobileFileTapHandlers } from '../../../../src/session/use-mobile-file-tap-handlers'
+import { useMobileMarkdownNoteCreation } from '../../../../src/session/use-mobile-markdown-note-creation'
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import { useMissingWorktreeBounce } from '../../../../src/session/use-missing-worktree-bounce'
 import { hostRouteWithNotice } from '../../../../src/host-route-notice'
@@ -224,16 +225,20 @@ import {
   useInitialSessionTerminalAutoCreate,
   useWorktreeSessionTabsLoaded
 } from '../../../../src/session/use-initial-session-terminal-autocreate'
+import { shouldReadMarkdownFromDiskAfterReadTabFailure } from '../../../../src/session/mobile-markdown-disk-fallback'
 import {
-  buildMarkdownDiskFallbackDoc,
-  shouldReadMarkdownFromDiskAfterReadTabFailure
-} from '../../../../src/session/mobile-markdown-disk-fallback'
+  acknowledgeMobileMarkdownSaveCommits,
+  saveMobileMarkdownDocument,
+  type MarkdownSaveRequest
+} from '../../../../src/session/mobile-markdown-save'
 import { MobileDictationSetupSheet } from '../../../../src/components/MobileDictationSetupSheet'
 import {
   fetchDictationSetup,
   isDictationSetupRequiredError
 } from '../../../../src/dictation/mobile-dictation-setup'
-import { TerminalPaneView } from '../../../../src/session/TerminalPaneView'
+import { RetainedTerminalPaneHost } from '../../../../src/session/RetainedTerminalPaneHost'
+import { RetainedSessionBrowserSurfaces } from '../../../../src/session/RetainedSessionBrowserSurfaces'
+import { RetainedSessionDocumentSurfaces } from '../../../../src/session/RetainedSessionDocumentSurfaces'
 import { MobileNativeChatOverlay } from '../../../../src/session/MobileNativeChatOverlay'
 import { MobileBrowserTabActionSheet } from '../../../../src/session/MobileBrowserTabActionSheet'
 import { useMobileNativeChatController } from '../../../../src/session/use-mobile-native-chat-controller'
@@ -263,6 +268,11 @@ import {
   runTerminalViewportFitPass
 } from '../../../../src/session/mobile-terminal-viewport-resubscribe'
 import { activateMobileSessionTab } from '../../../../src/session/mobile-session-tab-activation'
+import { useMobilePendingTerminalActivation } from '../../../../src/session/use-mobile-pending-terminal-activation'
+import {
+  collectDirtyMobileMarkdownDrafts,
+  copyMobileMarkdownDraftsBeforeLeave
+} from '../../../../src/session/mobile-markdown-leave'
 import { MobileTerminalDiagnostics } from '../../../../src/session/mobile-terminal-diagnostics'
 import { runAcceptedMobileSessionTabsEffects } from '../../../../src/session/mobile-session-tabs-accepted-effects'
 import type {
@@ -273,9 +283,25 @@ import { useMobileSessionTabsFetchReporting } from '../../../../src/session/use-
 import { useMobileSessionTabsReconciliation } from '../../../../src/session/use-mobile-session-tabs-reconciliation'
 import { PendingTerminalHandleRecoveryContextCache } from '../../../../src/session/pending-terminal-handle-recovery'
 import {
+  applyFileTabReadFailure,
+  applyFileTabReadSuccess,
+  applyMarkdownDiskFallbackReadSuccess,
+  applyMarkdownTabReadFailure,
+  applyMarkdownTabReadSuccess,
+  beginFileTabRead,
+  beginMarkdownTabRead,
+  clearMobileSessionDocumentRead,
+  deleteMobileSessionDocumentState,
+  isCurrentMobileSessionDocumentRead,
+  pruneMobileSessionDocumentReads,
+  pruneMobileSessionDocumentStates,
+  reserveMobileSessionDocumentRead,
+  recoverInterruptedMobileSessionDocumentStates,
+  type MobileSessionDocumentReadToken
+} from '../../../../src/session/mobile-session-document-refresh'
+import {
   getRepoIdFromMobileWorktreeId,
   getActiveTabIdForHandle,
-  isFileExistsErrorMessage,
   isGestureMouseTrackingMode,
   isTerminalPhoneDisplayMode,
   MOBILE_SESSION_STATUS_LABELS,
@@ -293,22 +319,22 @@ import {
   dismissMobileSessionCreateWarningState,
   reconcileMobileSessionCreateWarningState
 } from '../../../../src/session/mobile-session-create-warning-state'
+import { isActiveTerminalCoveredBySessionOverlay } from '../../../../src/session/mobile-session-terminal-cover'
 import { colors } from '../../../../src/theme/mobile-theme'
 import { QuickCommandsTabButton } from '../../../../src/session/QuickCommandsTabButton'
 import { styles } from '../../../../src/session/mobile-session-styles'
-import { MobileSessionFileReader } from '../../../../src/session/MobileSessionFileReader'
 import type { DiffComment } from '../../../../../src/shared/diff-comment-types'
 import type { TerminalQuickCommand } from '../../../../../src/shared/terminal-quick-command-types'
 import type {
   DiffNotesDelivery,
   DirtyMarkdownDraft,
+  DiffCommentActions,
   FileDocState,
   MarkdownDocState,
   MobileDisplayMode,
   MobileNewTabAgentLoadState,
   MobileSessionTab,
   MobileSessionTabType,
-  RuntimeRepoSummary,
   SessionTabsResult,
   Terminal,
   TerminalCreateResult,
@@ -329,6 +355,7 @@ function getClosedTabTombstoneExpiry(): number {
 }
 
 export default function SessionScreen() {
+  const { t } = useTranslation()
   const {
     hostId,
     worktreeId,
@@ -401,6 +428,9 @@ export default function SessionScreen() {
   const initialCreateWarning = typeof createdWarning === 'string' ? createdWarning.trim() : ''
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const terminalsRef = useRef<Terminal[]>([])
+  useLayoutEffect(() => {
+    terminalsRef.current = terminals
+  }, [terminals])
   const [sessionTabs, setSessionTabs] = useState<MobileSessionTab[]>([])
   const sessionTabsRef = useRef<MobileSessionTab[]>([])
   // Why: track the last applied (epoch, version) so a late older snapshot can't overwrite a newer one and resurrect closed tabs (session-tab-snapshot-gate).
@@ -437,17 +467,70 @@ export default function SessionScreen() {
   const [markdownDocs, setMarkdownDocs] = useState<Map<string, MarkdownDocState>>(new Map())
   const markdownDocsRef = useRef<Map<string, MarkdownDocState>>(new Map())
   const [fileDocs, setFileDocs] = useState<Map<string, FileDocState>>(new Map())
-  const [diffComments, setDiffComments] = useState<DiffComment[]>([])
+  const documentReadRequestsRef = useRef({
+    file: new Map<string, MobileSessionDocumentReadToken>(),
+    markdown: new Map<string, MobileSessionDocumentReadToken>()
+  })
+  const documentReadScopeSeqRef = useRef(0)
+  const previousDocumentConnectionStateRef = useRef(connState)
+  const [documentScope, setDocumentScope] = useState({ hostId, worktreeId })
+  const documentScopeRef = useRef(documentScope)
+  documentScopeRef.current = documentScope
+  const documentScopeActive =
+    documentScope.hostId === hostId && documentScope.worktreeId === worktreeId
   const diffCommentsRef = useRef<DiffComment[]>([])
-  const [diffCommentBusy, setDiffCommentBusy] = useState(false)
   const [pendingDiffNotesDelivery, setPendingDiffNotesDelivery] =
     useState<DiffNotesDelivery | null>(null)
-  const [creating, setCreating] = useState(false)
-  // Why: React state isn't a synchronous lock; this ref blocks a double-tap's second create in the same tick before `creating` re-renders.
-  const creatingTerminalRef = useRef(false)
-  const [creatingBrowser, setCreatingBrowser] = useState(false)
-  const [creatingMarkdown, setCreatingMarkdown] = useState(false)
-  const [createError, setCreateError] = useState('')
+  const terminalCreation = useMobileTerminalCreationOwner({ client, hostId, worktreeId, connState })
+  const creating = terminalCreation.creating
+  const createFeedbackSource = useMemo(
+    () => ({ client, hostId, worktreeId }),
+    [client, hostId, worktreeId]
+  )
+  const [leaveFocusToken, setLeaveFocusToken] = useState<object | null>(null)
+  const leaveFocusTokenRef = useRef<object | null>(null)
+  const leavePromptTokenRef = useRef<object | null>(null)
+  const leaveCopyIntentRef = useRef<object | null>(null)
+  useFocusEffect(
+    useCallback(() => {
+      const token = {}
+      leaveFocusTokenRef.current = token
+      setLeaveFocusToken(token)
+      return () => {
+        if (leaveFocusTokenRef.current === token) {
+          leaveFocusTokenRef.current = null
+          leavePromptTokenRef.current = null
+          leaveCopyIntentRef.current = null
+          setLeaveFocusToken(null)
+        }
+      }
+    }, [])
+  )
+  const committedLeaveSourceRef = useRef<typeof createFeedbackSource | null>(null)
+  useLayoutEffect(() => {
+    committedLeaveSourceRef.current = createFeedbackSource
+    return () => {
+      if (committedLeaveSourceRef.current === createFeedbackSource) {
+        committedLeaveSourceRef.current = null
+      }
+    }
+  }, [createFeedbackSource])
+  const isCurrentLeaveSource = useCallback(
+    () =>
+      committedLeaveSourceRef.current === createFeedbackSource &&
+      documentScopeActive &&
+      leaveFocusTokenRef.current !== null,
+    [createFeedbackSource, documentScopeActive]
+  )
+  const [createFeedback, setCreateFeedback] = useState({
+    source: createFeedbackSource,
+    message: ''
+  })
+  const createError = createFeedback.source === createFeedbackSource ? createFeedback.message : ''
+  const setCreateError = useCallback(
+    (message: string) => setCreateFeedback({ source: createFeedbackSource, message }),
+    [createFeedbackSource]
+  )
   const [createWarningState, setCreateWarningState] = useState(() =>
     createMobileSessionCreateWarningState(initialCreateWarning)
   )
@@ -471,12 +554,84 @@ export default function SessionScreen() {
     MobileSessionTab,
     { type: 'browser' }
   > | null>(null)
-  const [discardMarkdownTarget, setDiscardMarkdownTarget] = useState<Extract<
-    MobileSessionTab,
-    { type: 'markdown' }
-  > | null>(null)
-  const [leaveDrafts, setLeaveDrafts] = useState<DirtyMarkdownDraft[] | null>(null)
-  const [renameTarget, setRenameTarget] = useState<Terminal | null>(null)
+  const [discardMarkdownTarget, setDiscardMarkdownTarget] = useState<{
+    tab: Extract<MobileSessionTab, { type: 'markdown' }>
+    action: 'refresh' | 'close'
+    scopeSeq: number
+  } | null>(null)
+  const [leaveDraftsState, setLeaveDraftsState] = useState<{
+    source: typeof createFeedbackSource
+    focusToken: object
+    drafts: DirtyMarkdownDraft[]
+    token: object
+  } | null>(null)
+  const leaveDrafts =
+    leaveDraftsState?.source === createFeedbackSource &&
+    leaveDraftsState.focusToken === leaveFocusToken &&
+    documentScopeActive
+      ? leaveDraftsState.drafts
+      : null
+  const setLeaveDrafts = useCallback(
+    (drafts: DirtyMarkdownDraft[] | null, token?: object) => {
+      if (drafts) {
+        const focusToken = leaveFocusTokenRef.current
+        if (focusToken && isCurrentLeaveSource()) {
+          const nextToken = {}
+          leavePromptTokenRef.current = nextToken
+          leaveCopyIntentRef.current = null
+          setLeaveDraftsState({
+            source: createFeedbackSource,
+            focusToken,
+            drafts,
+            token: nextToken
+          })
+        }
+        return
+      }
+      if (!token || leavePromptTokenRef.current !== token) {
+        return
+      }
+      leavePromptTokenRef.current = null
+      setLeaveDraftsState((previous) =>
+        previous?.source === createFeedbackSource && previous.token === token ? null : previous
+      )
+    },
+    [createFeedbackSource, isCurrentLeaveSource]
+  )
+  const [renameTargetState, setRenameTargetState] = useState<{
+    target: Terminal
+    source: typeof createFeedbackSource
+    token: object
+  } | null>(null)
+  const renamePendingRef = useRef(new Set<object>())
+  const renameLatestRef = useRef(new Map<string, object>())
+  const renameTarget =
+    renameTargetState?.source === createFeedbackSource && documentScopeActive
+      ? renameTargetState.target
+      : null
+  function isCurrentLiveTerminalHandle(handle: string): boolean {
+    return (
+      terminalsRef.current.some((terminal) => terminal.handle === handle) ||
+      sessionTabsRef.current.some((tab) => tab.type === 'terminal' && tab.terminal === handle)
+    )
+  }
+  function setRenameTarget(target: Terminal | null): void {
+    if (!target) {
+      setRenameTargetState((previous) =>
+        previous?.source === createFeedbackSource ? null : previous
+      )
+      return
+    }
+    if (
+      !documentScopeActive ||
+      connState !== 'connected' ||
+      !terminalCreation.isCurrent() ||
+      !isCurrentLiveTerminalHandle(target.handle)
+    ) {
+      return
+    }
+    setRenameTargetState({ target, source: createFeedbackSource, token: {} })
+  }
   const [customKeys, setCustomKeys] = useState<CustomKey[]>([])
   const [visibleBuiltInIds, setVisibleBuiltInIds] = useState<string[]>(
     getDefaultTerminalAccessoryBuiltInIds
@@ -517,6 +672,7 @@ export default function SessionScreen() {
   const [hostEndpoint, setHostEndpoint] = useState<string | null>(null)
   const clientRef = useRef<RpcClient | null>(null)
   const connStateRef = useRef<ConnectionState>(connState)
+  const worktreeIdRef = useRef(worktreeId)
   // Why: measured once on mount, then passed with every subscribe so the server can auto-fit the PTY to phone dims.
   const viewportRef = useRef<{ cols: number; rows: number } | null>(null)
   const viewportMeasuredRef = useRef(false)
@@ -541,6 +697,7 @@ export default function SessionScreen() {
   // from a stream that does — an uncovered handle holding one is a blank terminal.
   const leaseOnlyHandlesRef = useRef<Set<string>>(new Set())
   const initializedHandlesRef = useRef<Set<string>>(new Set())
+  const terminalRenderedHandlesRef = useRef<Set<string>>(new Set())
   const terminalDiagnosticsRef = useRef(new MobileTerminalDiagnostics())
   // Why: bounds the scrollback→resubscribe fit loop per handle (STA-3337).
   const viewportResubscribeBudgetRef = useRef(new TerminalViewportResubscribeBudget())
@@ -557,7 +714,6 @@ export default function SessionScreen() {
   // Why: remember the page id to activate its session tab once it syncs (bridge auto-activate flags only webContents, not the app-level active tab).
   const pendingBrowserFocusPageIdRef = useRef<string | null>(null)
   const switchSessionTabRef = useRef<((tab: MobileSessionTab) => void) | null>(null)
-  const pendingTerminalActivationAttemptRef = useRef<string | null>(null)
   const [parkedPendingTerminalContext, setParkedPendingTerminalContext] = useState<string | null>(
     null
   )
@@ -565,19 +721,51 @@ export default function SessionScreen() {
   const handleCreateBrowserRef = useRef<((rawUrl?: string) => Promise<boolean>) | null>(null)
 
   const initialSessionAutoCreateRef = useRef(createInitialSessionAutoCreateState())
-  const markdownSaveSeqRef = useRef<Map<string, number>>(new Map())
-  const markdownSaveInFlightRef = useRef<Set<string>>(new Set())
+  const markdownSaveRequestsRef = useRef(new Map<string, MarkdownSaveRequest>())
+  useLayoutEffect(() => {
+    acknowledgeMobileMarkdownSaveCommits(markdownSaveRequestsRef.current, markdownDocs)
+  }, [markdownDocs])
   const subscribeSeqRef = useRef<Map<string, number>>(new Map())
   // Why: post-RPC refresh timers capture this screen and must not survive route reuse or unmount.
   const delayedActionTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
   // Why: highest applyLayout seq seen per handle; drop older scrollback/resized as stale, but a >20 gap resets (fresh subscription/server restart).
   const layoutSeqRef = useRef<Map<string, number>>(new Map())
-  const sendingRef = useRef(false)
+  const bufferedSendStateRef = useRef(createMobileTerminalBufferedSendState())
+  const bufferedSendScopeRef = useRef<MobileTerminalBufferedSendScope | null>(null)
   // Why: exact terminal-frame height for measureFitDimensions; window.innerHeight can overstate the visible area.
   const terminalFrameHeightRef = useRef<number>(0)
   // Why: sidebar resizes change the terminal frame width without a window-dim change; track it so the refit hook re-fits (see terminal-viewport-refit.ts).
   const [terminalFrameWidth, setTerminalFrameWidth] = useState(0)
   const activeSessionTab = sessionTabs.find((tab) => tab.id === activeSessionTabId) ?? null
+  const activeTerminalTabHandle =
+    activeSessionTab?.type === 'terminal' ? activeSessionTab.terminal : null
+  const bufferedSendScope = useMemo<MobileTerminalBufferedSendScope | null>(() => {
+    if (
+      !client ||
+      !activeHandle ||
+      connState !== 'connected' ||
+      !documentScopeActive ||
+      activeTerminalTabHandle !== activeHandle
+    ) {
+      return null
+    }
+    return { client, handle: activeHandle, hostId, worktreeId, tabId: activeSessionTabId }
+  }, [
+    client,
+    activeHandle,
+    connState,
+    documentScopeActive,
+    activeTerminalTabHandle,
+    hostId,
+    worktreeId,
+    activeSessionTabId
+  ])
+  useLayoutEffect(() => {
+    bufferedSendScopeRef.current = bufferedSendScope
+    return () => {
+      bufferedSendScopeRef.current = null
+    }
+  }, [bufferedSendScope])
   const setLiveInputCapture = useCallback((text: string) => {
     liveInputBarRef.current?.setCaptureText(text)
   }, [])
@@ -606,6 +794,7 @@ export default function SessionScreen() {
     activeHandle,
     activeSessionTabType: activeSessionTab?.type
   })
+  const canSendBufferedCommand = canSend && bufferedSendScope !== null
   const liveInputEnabled = activeHandle ? liveInputTerminalHandles.has(activeHandle) : false
   const { focusLiveInput, handleTerminalTap, resetLiveInputFocus } = useTerminalLiveInputFocus({
     activeHandleRef,
@@ -630,6 +819,7 @@ export default function SessionScreen() {
   // Why: terminal gesture/input callbacks are stable/imperative, so keep their refs current before commit, not in a later effect.
   clientRef.current = client
   connStateRef.current = connState
+  worktreeIdRef.current = worktreeId
   activeSessionTabTypeRef.current = activeSessionTab?.type ?? null
   sessionTabsRef.current = sessionTabs
   activeSessionTabIdRef.current = activeSessionTabId
@@ -697,6 +887,22 @@ export default function SessionScreen() {
     },
     [clearToastHideTimer]
   )
+  const {
+    comments: diffComments,
+    busy: diffCommentBusy,
+    loading: diffCommentsLoading,
+    loadError: diffCommentsLoadError,
+    reload: reloadDiffComments,
+    add: addDiffCommentForFile,
+    remove: deleteDiffCommentForFile,
+    clearDelivered: clearDeliveredDiffComments
+  } = useMobileSessionDiffComments({
+    client,
+    connState,
+    worktreeId,
+    enabled: !isFloatingWorkspaceRoute,
+    showToast
+  })
   const nativeChatScopeKey = mobileNativeChatScopeKey(hostId, worktreeId, activeSessionTabId)
   const nativeChatSendError = useMobileNativeChatSendError({
     scopeKey: nativeChatScopeKey,
@@ -738,6 +944,7 @@ export default function SessionScreen() {
   const dictation = useMobileDictation({
     client,
     enabled: canSend,
+    scopeKey: `${nativeChatScopeKey}\0${showNativeChat ? 'chat' : 'terminal'}`,
     onTranscript: (text) => {
       // Why: dictation belongs to the visible composer — native chat consumes it locally, terminal mode keeps live-input routing.
       if (showNativeChatRef.current) {
@@ -904,6 +1111,7 @@ export default function SessionScreen() {
     subscribingHandlesRef.current.clear()
     leaseOnlyHandlesRef.current.clear()
     initializedHandlesRef.current.clear()
+    terminalRenderedHandlesRef.current.clear()
     terminalDiagnosticsRef.current.clearTerminalCache()
     viewportResubscribeBudgetRef.current.clear()
     webReadyHandlesRef.current.clear()
@@ -939,7 +1147,7 @@ export default function SessionScreen() {
       const diagnostics = terminalDiagnosticsRef.current
       const logSkippedGate = (reason: string) =>
         diagnostics.streamSkipped(handle, reason, handle === activeHandleRef.current)
-      if (!client) {
+      if (!client || connState !== 'connected') {
         logSkippedGate('no-client')
         return
       }
@@ -1061,8 +1269,10 @@ export default function SessionScreen() {
               })
               return
             }
-            ref.init(cols, rows, initialData, false, oscLinks)
+            const wasRendered = terminalRenderedHandlesRef.current.has(handle)
+            ref.init(cols, rows, initialData, wasRendered, oscLinks)
             initializedHandlesRef.current.add(handle)
+            terminalRenderedHandlesRef.current.add(handle)
             if (data.displayMode) {
               const displayMode = data.displayMode as MobileDisplayMode
               // Why: same-mode frames must keep the Map identity, or every stream pass re-renders the whole route.
@@ -1071,7 +1281,13 @@ export default function SessionScreen() {
               )
             }
             // Why: cold-start refit — init()'s fit can run against a transient scrollWidth, so re-fire against a settled DOM.
-            scheduleDelayedAction(() => getTerminalRef(handle)?.resetZoom(), 200)
+            if (!wasRendered) {
+              scheduleDelayedAction(() => {
+                if (getTerminalRef(handle) === ref && initializedHandlesRef.current.has(handle)) {
+                  ref.resetZoom()
+                }
+              }, 200)
+            }
             // Why: first subscribe has no viewport (xterm not loaded yet), so measure after init
             // and resubscribe so the server can phone-fit — bounded per handle so a
             // non-converging host degrades visibly instead of hot-looping (STA-3337).
@@ -1277,6 +1493,7 @@ export default function SessionScreen() {
               unsubscribeTerminal(handle)
               terminalRefs.current.delete(handle)
               initializedHandlesRef.current.delete(handle)
+              terminalRenderedHandlesRef.current.delete(handle)
               viewportResubscribeBudgetRef.current.forget(handle)
               clearTerminalLiveInputDefault(handle)
             }
@@ -1368,6 +1585,15 @@ export default function SessionScreen() {
       reconcileBufferedDraftsRef.current(currentSessionTabs, nextTabs, {
         retainMissingSurfaces: result.tabs.length === 0
       })
+      const liveTabIds = new Set(nextTabs.map((tab) => tab.id))
+      pruneMobileSessionDocumentReads(documentReadRequestsRef.current, liveTabIds)
+      for (const tabId of markdownSaveRequestsRef.current.keys()) {
+        if (!liveTabIds.has(tabId)) {
+          markdownSaveRequestsRef.current.delete(tabId)
+        }
+      }
+      setMarkdownDocs((prev) => pruneMobileSessionDocumentStates(prev, liveTabIds))
+      setFileDocs((prev) => pruneMobileSessionDocumentStates(prev, liveTabIds))
       sessionTabsRef.current = nextTabs
       initialSessionAutoCreateRef.current.sawSessionTabs ||= nextTabs.length > 0
       // Why: subscribe snapshots often repeat identical payloads; skip re-set to avoid a subscription teardown/replay loop.
@@ -1499,16 +1725,44 @@ export default function SessionScreen() {
   )
 
   const readMarkdownTab = useCallback(
-    async (tab: Extract<MobileSessionTab, { type: 'markdown' }>) => {
-      if (!client) {
+    async (
+      tab: Extract<MobileSessionTab, { type: 'markdown' }>,
+      options?: { preserveDirty?: boolean }
+    ) => {
+      if (
+        !client ||
+        !documentScopeActive ||
+        connState !== 'connected' ||
+        markdownSaveRequestsRef.current.get(tab.id)?.pending
+      ) {
         return
       }
-      setMarkdownDocs((prev) => new Map(prev).set(tab.id, { status: 'loading' }))
+      const requestClient = client
+      const requestWorktreeId = worktreeId
+      const requestScopeSeq = documentReadScopeSeqRef.current
+      const request = reserveMobileSessionDocumentRead(
+        documentReadRequestsRef.current,
+        'markdown',
+        tab.id
+      )
+      const isCurrentRead = () =>
+        documentScopeRef.current === documentScope &&
+        documentReadScopeSeqRef.current === requestScopeSeq &&
+        clientRef.current === requestClient &&
+        connStateRef.current === 'connected' &&
+        worktreeIdRef.current === requestWorktreeId &&
+        sessionTabsRef.current.some((candidate) => candidate.id === tab.id) &&
+        isCurrentMobileSessionDocumentRead(documentReadRequestsRef.current, request)
+
+      setMarkdownDocs((prev) => beginMarkdownTabRead(prev, tab.id))
       try {
-        const response = await client.sendRequest('markdown.readTab', {
+        const response = await requestClient.sendRequest('markdown.readTab', {
           worktree: `id:${worktreeId}`,
           tabId: tab.id
         })
+        if (!isCurrentRead()) {
+          return
+        }
         if (response.ok) {
           const result = (response as RpcSuccess).result as {
             content: string
@@ -1518,16 +1772,7 @@ export default function SessionScreen() {
             readOnlyReason?: string
           }
           setMarkdownDocs((prev) =>
-            new Map(prev).set(tab.id, {
-              status: 'ready',
-              content: result.content,
-              localContent: result.content,
-              baseVersion: result.version,
-              isDirty: false,
-              editable: result.editable === true,
-              stale: result.isDirty,
-              readOnlyReason: result.readOnlyReason
-            })
+            isCurrentRead() ? applyMarkdownTabReadSuccess(prev, tab.id, result, options) : prev
           )
           return
         }
@@ -1535,10 +1780,13 @@ export default function SessionScreen() {
           throw new Error((response as RpcFailure).error.message)
         }
         // Why: a headless host fails markdown.readTab (renderer_unavailable); fall back to the on-disk file for read-only render.
-        const fallback = await client.sendRequest('files.read', {
+        const fallback = await requestClient.sendRequest('files.read', {
           worktree: `id:${worktreeId}`,
           relativePath: tab.relativePath
         })
+        if (!isCurrentRead()) {
+          return
+        }
         if (!fallback.ok) {
           throw new Error('Unable to read markdown')
         }
@@ -1548,42 +1796,53 @@ export default function SessionScreen() {
           byteLength: number
         }
         setMarkdownDocs((prev) =>
-          new Map(prev).set(
-            tab.id,
-            buildMarkdownDiskFallbackDoc({
-              content: fileResult.content,
-              truncated: fileResult.truncated,
-              tabIsDirty: tab.isDirty
-            })
-          )
+          isCurrentRead()
+            ? applyMarkdownDiskFallbackReadSuccess(prev, tab, fileResult, options)
+            : prev
         )
       } catch {
         setMarkdownDocs((prev) =>
-          new Map(prev).set(tab.id, {
-            status: 'error',
-            message: "Couldn't load markdown"
-          })
+          isCurrentRead()
+            ? applyMarkdownTabReadFailure(prev, tab.id, "Couldn't load markdown")
+            : prev
         )
       }
     },
-    [client, worktreeId]
+    [client, connState, documentScope, documentScopeActive, worktreeId]
   )
 
   const readFileTab = useCallback(
     async (tab: Extract<MobileSessionTab, { type: 'file' }>) => {
-      if (!client) {
+      if (!client || !documentScopeActive || connState !== 'connected') {
         return
       }
-      setFileDocs((prev) => new Map(prev).set(tab.id, { status: 'loading' }))
+      const requestClient = client
+      const requestWorktreeId = worktreeId
+      const requestScopeSeq = documentReadScopeSeqRef.current
+      const request = reserveMobileSessionDocumentRead(
+        documentReadRequestsRef.current,
+        'file',
+        tab.id
+      )
+      const isCurrentRead = () =>
+        documentScopeRef.current === documentScope &&
+        documentReadScopeSeqRef.current === requestScopeSeq &&
+        clientRef.current === requestClient &&
+        connStateRef.current === 'connected' &&
+        worktreeIdRef.current === requestWorktreeId &&
+        sessionTabsRef.current.some((candidate) => candidate.id === tab.id) &&
+        isCurrentMobileSessionDocumentRead(documentReadRequestsRef.current, request)
+
+      setFileDocs((prev) => beginFileTabRead(prev, tab.id))
       try {
-        const doc = await resolveMobileFileTabDoc(client, {
+        const doc = await resolveMobileFileTabDoc(requestClient, {
           worktreeId,
           relativePath: tab.relativePath,
           mode: tab.mode,
           diffSource: tab.diffSource,
           historicalDiff: tab.historicalDiff
         })
-        setFileDocs((prev) => new Map(prev).set(tab.id, doc))
+        setFileDocs((prev) => (isCurrentRead() ? applyFileTabReadSuccess(prev, tab.id, doc) : prev))
       } catch (err) {
         const message = err instanceof Error ? err.message : ''
         const previewMessage =
@@ -1597,115 +1856,38 @@ export default function SessionScreen() {
                   ? "Couldn't load diff preview"
                   : "Couldn't load file preview"
         setFileDocs((prev) =>
-          new Map(prev).set(tab.id, {
-            status: 'error',
-            message: previewMessage
-          })
+          isCurrentRead() ? applyFileTabReadFailure(prev, tab.id, previewMessage) : prev
         )
       }
     },
-    [client, worktreeId]
-  )
-
-  const loadDiffComments = useCallback(async (): Promise<void> => {
-    if (!client || connState !== 'connected' || !worktreeId || isFloatingWorkspaceRoute) {
-      setDiffComments([])
-      return
-    }
-    const response = await client.sendRequest('worktree.show', {
-      worktree: `id:${worktreeId}`
-    })
-    if (!response.ok) {
-      return
-    }
-    const result = (response as RpcSuccess).result as {
-      worktree?: { diffComments?: unknown }
-    }
-    setDiffComments(normalizeMobileDiffComments(result.worktree?.diffComments, worktreeId))
-  }, [client, connState, worktreeId, isFloatingWorkspaceRoute])
-
-  const persistDiffComments = useCallback(
-    async (comments: readonly DiffComment[]): Promise<void> => {
-      if (!client || connState !== 'connected') {
-        throw new Error('Waiting for desktop...')
-      }
-      const response = await client.sendRequest('worktree.set', {
-        worktree: `id:${worktreeId}`,
-        diffComments: comments
-      })
-      if (!response.ok) {
-        throw new Error((response as RpcFailure).error.message || 'Failed to save review notes')
-      }
-    },
-    [client, connState, worktreeId]
+    [client, connState, documentScope, documentScopeActive, worktreeId]
   )
 
   useEffect(() => {
-    void loadDiffComments()
-  }, [loadDiffComments])
-
-  const addDiffCommentForFile = useCallback(
-    async (filePath: string, lineNumber: number, body: string): Promise<boolean> => {
-      if (diffCommentBusy) {
-        return false
+    const wasConnected = previousDocumentConnectionStateRef.current === 'connected'
+    previousDocumentConnectionStateRef.current = connState
+    if (connState !== 'connected') {
+      documentReadRequestsRef.current.file.clear()
+      documentReadRequestsRef.current.markdown.clear()
+      setMarkdownDocs(recoverInterruptedMobileSessionDocumentStates)
+      setFileDocs(recoverInterruptedMobileSessionDocumentStates)
+      return
+    }
+    if (wasConnected) {
+      return
+    }
+    if (activeSessionTab?.type === 'markdown') {
+      const doc = markdownDocsRef.current.get(activeSessionTab.id)
+      if (doc && doc.status !== 'loading') {
+        void readMarkdownTab(activeSessionTab)
       }
-      const nextId = `mobile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-      const result = addMobileDiffComment(diffCommentsRef.current, {
-        id: nextId,
-        worktreeId,
-        filePath,
-        lineNumber,
-        body,
-        createdAt: Date.now()
-      })
-      if (!result.comment) {
-        return false
+    } else if (activeSessionTab?.type === 'file') {
+      const doc = fileDocs.get(activeSessionTab.id)
+      if (doc && doc.status !== 'loading') {
+        void readFileTab(activeSessionTab)
       }
-      const previous = diffCommentsRef.current
-      setDiffCommentBusy(true)
-      setDiffComments(result.comments)
-      try {
-        await persistDiffComments(result.comments)
-        triggerSuccess()
-        showToast('Note added')
-        return true
-      } catch (err) {
-        setDiffComments(previous)
-        triggerError()
-        showToast(err instanceof Error ? err.message : 'Failed to save note', 1600)
-        return false
-      } finally {
-        setDiffCommentBusy(false)
-      }
-    },
-    [diffCommentBusy, persistDiffComments, showToast, worktreeId]
-  )
-
-  const deleteDiffCommentForFile = useCallback(
-    async (commentId: string): Promise<void> => {
-      if (diffCommentBusy) {
-        return
-      }
-      const previous = diffCommentsRef.current
-      const next = removeMobileDiffComments(previous, new Set([commentId]))
-      if (next.length === previous.length) {
-        return
-      }
-      setDiffCommentBusy(true)
-      setDiffComments(next)
-      try {
-        await persistDiffComments(next)
-        triggerSelection()
-      } catch (err) {
-        setDiffComments(previous)
-        triggerError()
-        showToast(err instanceof Error ? err.message : 'Failed to delete note', 1600)
-      } finally {
-        setDiffCommentBusy(false)
-      }
-    },
-    [diffCommentBusy, persistDiffComments, showToast]
-  )
+    }
+  }, [activeSessionTab, connState, fileDocs, readFileTab, readMarkdownTab])
 
   const copyDiffCommentsToClipboard = useCallback(async (): Promise<void> => {
     const comments = diffCommentsRef.current
@@ -1733,28 +1915,8 @@ export default function SessionScreen() {
     })
   }, [])
 
-  const clearDeliveredDiffComments = useCallback(
-    async (delivered: readonly DiffComment[]): Promise<void> => {
-      const previous = diffCommentsRef.current
-      const next = removeDeliveredMobileDiffComments(previous, delivered)
-      if (next.length === previous.length) {
-        return
-      }
-      setDiffCommentBusy(true)
-      setDiffComments(next)
-      try {
-        await persistDiffComments(next)
-      } catch {
-        setDiffComments(previous)
-      } finally {
-        setDiffCommentBusy(false)
-      }
-    },
-    [persistDiffComments]
-  )
-
   const updateMarkdownLocalContent = useCallback((tabId: string, content: string) => {
-    setMarkdownDocs((prev) => {
+    const apply = (prev: Map<string, MarkdownDocState>) => {
       const current = prev.get(tabId)
       if (current?.status !== 'ready') {
         return prev
@@ -1767,7 +1929,9 @@ export default function SessionScreen() {
         saveError: undefined
       })
       return next
-    })
+    }
+    markdownDocsRef.current = apply(markdownDocsRef.current)
+    setMarkdownDocs(apply)
   }, [])
 
   const copyMarkdownLocalContent = useCallback(
@@ -1788,16 +1952,10 @@ export default function SessionScreen() {
     [markdownDocs, showToast]
   )
 
-  const getDirtyMarkdownDrafts = useCallback(() => {
-    const drafts: DirtyMarkdownDraft[] = []
-    for (const [tabId, doc] of markdownDocs) {
-      if (doc.status === 'ready' && doc.isDirty) {
-        const tab = sessionTabs.find((candidate) => candidate.id === tabId)
-        drafts.push({ tabId, title: tab?.title || 'Markdown', content: doc.localContent })
-      }
-    }
-    return drafts
-  }, [markdownDocs, sessionTabs])
+  const getDirtyMarkdownDrafts = useCallback(
+    () => collectDirtyMobileMarkdownDrafts(markdownDocsRef.current, sessionTabsRef.current),
+    []
+  )
 
   const leaveSession = useCallback(() => {
     if (router.canGoBack()) {
@@ -1818,17 +1976,77 @@ export default function SessionScreen() {
   }, [])
 
   const requestLeaveSession = useCallback(() => {
+    if (!isCurrentLeaveSource()) {
+      return
+    }
     const dirtyDrafts = getDirtyMarkdownDrafts()
     if (dirtyDrafts.length === 0) {
+      leaveCopyIntentRef.current = null
       leaveSession()
       return
     }
     Keyboard.dismiss()
     setLeaveDrafts(dirtyDrafts)
-  }, [getDirtyMarkdownDrafts, leaveSession])
+  }, [getDirtyMarkdownDrafts, isCurrentLeaveSource, leaveSession, setLeaveDrafts])
+
+  function handleCopyDraftsAndLeave(): void {
+    const prompt = leaveDraftsState
+    if (
+      !prompt ||
+      !leaveDrafts ||
+      !isCurrentLeaveSource() ||
+      leaveFocusTokenRef.current !== prompt.focusToken ||
+      leavePromptTokenRef.current !== prompt.token
+    ) {
+      return
+    }
+    setLeaveDrafts(null, prompt.token)
+    const intent = {}
+    leaveCopyIntentRef.current = intent
+    void copyMobileMarkdownDraftsBeforeLeave({
+      isCurrent: () =>
+        isCurrentLeaveSource() &&
+        leaveFocusTokenRef.current === prompt.focusToken &&
+        leaveCopyIntentRef.current === intent,
+      getDrafts: () =>
+        collectDirtyMobileMarkdownDrafts(markdownDocsRef.current, sessionTabsRef.current),
+      copy: async (text) => {
+        await Clipboard.setStringAsync(text)
+      },
+      leave: leaveSession,
+      onChanged: setLeaveDrafts,
+      onError: () => {
+        triggerError()
+        showToast("Couldn't copy drafts", 1500)
+      }
+    }).finally(() => {
+      if (leaveCopyIntentRef.current === intent) {
+        leaveCopyIntentRef.current = null
+      }
+    })
+  }
+
+  function handleDiscardDraftsAndLeave(): void {
+    const prompt = leaveDraftsState
+    if (
+      !prompt ||
+      !leaveDrafts ||
+      !isCurrentLeaveSource() ||
+      leaveFocusTokenRef.current !== prompt.focusToken ||
+      leavePromptTokenRef.current !== prompt.token
+    ) {
+      return
+    }
+    setLeaveDrafts(null, prompt.token)
+    leaveCopyIntentRef.current = null
+    leaveSession()
+  }
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!isCurrentLeaveSource()) {
+        return false
+      }
       switch (resolveSessionBackAction({ activePanel, keyboardHeight })) {
         case 'dismiss-keyboard':
           dismissSoftwareKeyboard()
@@ -1842,7 +2060,13 @@ export default function SessionScreen() {
       }
     })
     return () => subscription.remove()
-  }, [activePanel, dismissSoftwareKeyboard, keyboardHeight, requestLeaveSession])
+  }, [
+    activePanel,
+    dismissSoftwareKeyboard,
+    isCurrentLeaveSource,
+    keyboardHeight,
+    requestLeaveSession
+  ])
 
   const discardMarkdownLocalContent = useCallback(
     (tab: Extract<MobileSessionTab, { type: 'markdown' }>) => {
@@ -1855,94 +2079,57 @@ export default function SessionScreen() {
         return
       }
       Keyboard.dismiss()
-      setDiscardMarkdownTarget(tab)
+      setDiscardMarkdownTarget({
+        tab,
+        action: 'refresh',
+        scopeSeq: documentReadScopeSeqRef.current
+      })
     },
     [markdownDocs, readMarkdownTab]
   )
 
-  const confirmDiscardMarkdown = useCallback(() => {
+  function confirmDiscardMarkdown() {
     const target = discardMarkdownTarget
     setDiscardMarkdownTarget(null)
-    if (target) {
-      void readMarkdownTab(target)
+    if (!target || target.scopeSeq !== documentReadScopeSeqRef.current) {
+      return
     }
-  }, [discardMarkdownTarget, readMarkdownTab])
+    if (target.action === 'close') {
+      void handleCloseSessionTab(target.tab)
+    } else {
+      clearMobileSessionDocumentRead(documentReadRequestsRef.current, target.tab.id)
+      void readMarkdownTab(target.tab, { preserveDirty: false })
+    }
+  }
 
   const saveMarkdownTab = useCallback(
     async (tab: Extract<MobileSessionTab, { type: 'markdown' }>) => {
-      if (!client) {
+      if (!client || !documentScopeActive || connStateRef.current !== 'connected') {
         return
       }
-      const current = markdownDocs.get(tab.id)
-      if (current?.status !== 'ready' || current.saving || !current.editable) {
-        return
-      }
-      if (markdownSaveInFlightRef.current.has(tab.id)) {
-        return
-      }
-      markdownSaveInFlightRef.current.add(tab.id)
-      const saveSeq = (markdownSaveSeqRef.current.get(tab.id) ?? 0) + 1
-      markdownSaveSeqRef.current.set(tab.id, saveSeq)
-      setMarkdownDocs((prev) => {
-        const existing = prev.get(tab.id)
-        if (existing?.status !== 'ready') {
-          return prev
-        }
-        return new Map(prev).set(tab.id, { ...existing, saving: true, saveError: undefined })
+      const scopeSeq = documentReadScopeSeqRef.current
+      await saveMobileMarkdownDocument({
+        client,
+        current: markdownDocsRef.current.get(tab.id),
+        tabId: tab.id,
+        worktreeId,
+        requests: markdownSaveRequestsRef.current,
+        isCurrentScope: () =>
+          documentScopeRef.current === documentScope &&
+          documentReadScopeSeqRef.current === scopeSeq &&
+          worktreeIdRef.current === worktreeId &&
+          sessionTabsRef.current.some((candidate) => candidate.id === tab.id),
+        invalidateReads: () =>
+          clearMobileSessionDocumentRead(documentReadRequestsRef.current, tab.id),
+        updateDocs: setMarkdownDocs,
+        onSaved: () => {
+          triggerSuccess()
+          showToast('Saved')
+        },
+        onError: triggerError
       })
-      try {
-        const response = await client.sendRequest('markdown.saveTab', {
-          worktree: `id:${worktreeId}`,
-          tabId: tab.id,
-          baseVersion: current.baseVersion,
-          content: current.localContent
-        })
-        if (!response.ok) {
-          throw new Error((response as RpcFailure).error.message)
-        }
-        const result = (response as RpcSuccess).result as {
-          content: string
-          version: string
-          isDirty: false
-        }
-        if (markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
-          return
-        }
-        setMarkdownDocs((prev) =>
-          new Map(prev).set(tab.id, {
-            status: 'ready',
-            content: result.content,
-            localContent: result.content,
-            baseVersion: result.version,
-            isDirty: false,
-            editable: true
-          })
-        )
-        markdownSaveSeqRef.current.delete(tab.id)
-        triggerSuccess()
-        showToast('Saved')
-      } catch (error) {
-        triggerError()
-        const message = error instanceof Error ? error.message : 'Save failed'
-        if (markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
-          return
-        }
-        setMarkdownDocs((prev) => {
-          const existing = prev.get(tab.id)
-          if (existing?.status !== 'ready') {
-            return prev
-          }
-          return new Map(prev).set(tab.id, {
-            ...existing,
-            saving: false,
-            saveError: message || 'Save failed'
-          })
-        })
-      } finally {
-        markdownSaveInFlightRef.current.delete(tab.id)
-      }
     },
-    [client, markdownDocs, showToast, worktreeId]
+    [client, documentScope, documentScopeActive, showToast, worktreeId]
   )
 
   const consumeAcceptedSessionTabs = useCallback(
@@ -2028,6 +2215,39 @@ export default function SessionScreen() {
     onPendingTerminalRecoveryParked: setParkedPendingTerminalContext,
     getApplicationRevision: getSessionTabsApplicationRevision,
     ...sessionTabsFetchReporting
+  })
+
+  const { creatingMarkdown, createMarkdownNote: handleCreateMarkdownNote } =
+    useMobileMarkdownNoteCreation({
+      client,
+      connState,
+      hostId,
+      worktreeId,
+      fetchSessionTabs,
+      scheduleDelayedAction,
+      setCreateError,
+      showToast
+    })
+  const {
+    creatingBrowser,
+    handleCreateBrowser,
+    openBrowserDialog,
+    submitBrowserUrl,
+    cancelBrowserDialog,
+    isCurrentSource: isCurrentBrowserSource
+  } = useMobileBrowserTabCreation({
+    client,
+    connState,
+    hostId,
+    worktreeId,
+    browserScreencastSupportedRef,
+    pendingBrowserFocusPageIdRef,
+    fetchSessionTabs,
+    fetchPendingBrowserSessionTabs,
+    scheduleDelayedAction,
+    setCreateError,
+    showToast,
+    setShowCreateBrowserModal
   })
 
   useEffect(
@@ -2282,6 +2502,11 @@ export default function SessionScreen() {
 
   useEffect(() => {
     // Why: Expo reuses this screen across worktrees; reset route state so it can't open stale UI or reject the next snapshot.
+    setDocumentScope({ hostId, worktreeId })
+    documentReadScopeSeqRef.current += 1
+    documentReadRequestsRef.current.file.clear()
+    documentReadRequestsRef.current.markdown.clear()
+    markdownSaveRequestsRef.current.clear()
     sessionTabActionSheetRequestSeqRef.current += 1
     sessionTabActionSheetKeyboardHideSubRef.current?.remove()
     sessionTabActionSheetKeyboardHideSubRef.current = null
@@ -2292,7 +2517,6 @@ export default function SessionScreen() {
     selectedSessionTabIdRef.current = null
     pendingActiveTerminalHandleRef.current = null
     pendingBrowserFocusPageIdRef.current = null
-    pendingTerminalActivationAttemptRef.current = null
     initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()
     terminalDiagnosticsRef.current.resetRoute()
     appliedSnapshotMarkerRef.current = { epoch: null, version: -1 }
@@ -2313,8 +2537,17 @@ export default function SessionScreen() {
     clearPendingLiveInputCommit()
     setMarkdownDocs(new Map())
     setFileDocs(new Map())
+    setMarkdownActionTarget(null)
+    setFileActionTarget(null)
+    setBrowserActionTarget(null)
+    setDiscardMarkdownTarget(null)
+    setActionTarget(null)
     clearDelayedActionTimers()
     return () => {
+      documentReadScopeSeqRef.current += 1
+      documentReadRequestsRef.current.file.clear()
+      documentReadRequestsRef.current.markdown.clear()
+      markdownSaveRequestsRef.current.clear()
       sessionTabActionSheetRequestSeqRef.current += 1
       sessionTabActionSheetKeyboardHideSubRef.current?.remove()
       bufferedTerminalDraftState.clearPendingRestorations()
@@ -2598,6 +2831,7 @@ export default function SessionScreen() {
           terminalGestureInputBucketsRef,
           terminalGestureInputInFlightRef,
           terminalGestureInputQueuesRef,
+          terminalRenderedHandlesRef,
           terminalRefs,
           terminalUnsubsRef,
           unsubscribeTerminal,
@@ -2624,6 +2858,7 @@ export default function SessionScreen() {
         // Why: WebView reloaded (hot reload / Android churn); old xterm buffer is gone, so resubscribe for a fresh scrollback.
         unsubscribeTerminal(handle)
         initializedHandlesRef.current.delete(handle)
+        terminalRenderedHandlesRef.current.delete(handle)
         if (handle === activeHandleRef.current) {
           subscribeToTerminal(handle)
         }
@@ -2672,50 +2907,41 @@ export default function SessionScreen() {
 
   async function handleSend() {
     // Why: the return key still submits while offline; hold the composed text instead of firing a doomed RPC (#6713).
-    if (!client || !activeHandle || sendingRef.current || !canSend) {
+    const scope = bufferedSendScope
+    if (!canSendBufferedCommand || !scope) {
       return
     }
-    sendingRef.current = true
-
     const draft = bufferedTerminalDraftState.input
-    const text = normalizeTerminalTextInput(draft)
-    const bufferedDraftSend = bufferedTerminalDraftState.beginBufferedTerminalDraftSend(
-      activeHandle,
-      draft
-    )
     const sendOrigin = {
-      handle: activeHandle,
+      handle: scope.handle,
       tab: activeSessionTab,
       generation: getSendCompletionGeneration()
     }
-    const restoreRejectedDraft = () =>
-      bufferedTerminalDraftState.restoreRejectedDraft(bufferedDraftSend)
-
-    try {
-      // Why: fail now and restore the text — a send parked across a reconnect would execute long after the tap.
-      const response = await client.sendRequest(
-        'terminal.send',
-        buildTerminalSendParams({
-          terminal: activeHandle,
-          text,
-          enter: true,
-          deviceToken: deviceTokenRef.current
-        }),
-        TERMINAL_INPUT_SEND_OPTIONS
-      )
-      const accepted = isTerminalSendRpcAccepted(response)
-      if (!accepted) {
-        restoreRejectedDraft()
+    await sendMobileTerminalBufferedCommand({
+      state: bufferedSendStateRef.current,
+      scope,
+      getCurrentScope: () => bufferedSendScopeRef.current,
+      draft,
+      deviceToken: deviceTokenRef.current,
+      beginDraftSend: () => {
+        const send = bufferedTerminalDraftState.beginBufferedTerminalDraftSend(scope.handle, draft)
+        return {
+          restoreRejectedDraft: () => bufferedTerminalDraftState.restoreRejectedDraft(send),
+          settle: () => bufferedTerminalDraftState.settleBufferedTerminalDraftSend(send)
+        }
+      },
+      canRestoreDraft: () => committedLeaveSourceRef.current === createFeedbackSource,
+      onAccepted: (draftUnchanged) => dismissKeyboardAfterAgentSend(sendOrigin, draftUnchanged),
+      onFailure: (outcome) => {
+        if (outcome.kind === 'rejected') {
+          triggerError()
+        }
+        const message = getTerminalLiveSendToastMessage(outcome)
+        if (message) {
+          showToast(message, 1800)
+        }
       }
-      const draftUnchanged =
-        accepted && bufferedTerminalDraftState.settleBufferedTerminalDraftSend(bufferedDraftSend)
-      dismissKeyboardAfterAgentSend(sendOrigin, accepted && draftUnchanged)
-    } catch {
-      restoreRejectedDraft()
-    } finally {
-      bufferedTerminalDraftState.settleBufferedTerminalDraftSend(bufferedDraftSend)
-      sendingRef.current = false
-    }
+    })
   }
 
   async function handleAccessoryKey(
@@ -3161,17 +3387,31 @@ export default function SessionScreen() {
   }, [])
 
   async function handleClearTerminal(target: Terminal) {
-    if (!client) {
+    if (
+      !client ||
+      connState !== 'connected' ||
+      !documentScopeActive ||
+      !terminalCreation.isCurrent() ||
+      !terminalsRef.current.some((terminal) => terminal.handle === target.handle)
+    ) {
       return
     }
     getTerminalRef(target.handle)?.clear()
     try {
-      await client.sendRequest('terminal.clearBuffer', {
+      const response = await client.sendRequest('terminal.clearBuffer', {
         terminal: target.handle
       })
+      if (!terminalCreation.isCurrent()) {
+        return
+      }
+      if (!response.ok) {
+        throw new Error((response as RpcFailure).error.message)
+      }
       showToast('Terminal cleared')
     } catch {
-      showToast("Couldn't clear terminal", 1500)
+      if (terminalCreation.isCurrent()) {
+        showToast("Couldn't clear terminal", 1500)
+      }
     }
   }
 
@@ -3323,19 +3563,11 @@ export default function SessionScreen() {
   }, [])
 
   const getActiveWorktreeConnectionId = useCallback(async (): Promise<string | null> => {
-    // Why: the floating workspace always runs on the paired host itself, never an SSH repo target.
-    if (!client || isFloatingWorkspaceRoute) {
-      return null
+    if (!client) {
+      throw new Error('Not connected')
     }
-    const repoId = getRepoIdFromMobileWorktreeId(worktreeId)
-    const repoResponse = await client.sendRequest('repo.list')
-    if (!repoResponse.ok) {
-      throw new Error((repoResponse as RpcFailure).error.message)
-    }
-    const repos =
-      ((repoResponse as RpcSuccess).result as { repos?: RuntimeRepoSummary[] }).repos ?? []
-    return repos.find((repo) => repo.id === repoId)?.connectionId?.trim() || null
-  }, [client, isFloatingWorkspaceRoute, worktreeId])
+    return resolveMobileWorktreeExecutionConnectionId(client, worktreeId)
+  }, [client, worktreeId])
 
   const refreshCanPaste = useCallback(() => {
     void Promise.all([
@@ -3468,12 +3700,13 @@ export default function SessionScreen() {
       errorToast?: string
     }
   ) {
-    if (!client || creatingTerminalRef.current) {
+    if (!client) {
       return
     }
-    creatingTerminalRef.current = true
-
-    setCreating(true)
+    const creation = terminalCreation.begin()
+    if (!creation) {
+      return
+    }
     setCreateError('')
 
     // Why: idempotency key so a transport retry (reconnect replay) resolves to the same terminal, not a duplicate; kept compact (no worktree id) for the schema length cap.
@@ -3494,6 +3727,9 @@ export default function SessionScreen() {
         select: true,
         navigation: 'caller'
       })
+      if (!creation.isCurrent()) {
+        return
+      }
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
         const created = result.tab
@@ -3551,6 +3787,9 @@ export default function SessionScreen() {
                 })
               )
               .then((sendResponse) => {
+                if (!creation.isCurrent()) {
+                  return
+                }
                 if (!sendResponse.ok) {
                   throw new Error(
                     (sendResponse as RpcFailure).error.message || 'Failed to send notes'
@@ -3567,6 +3806,9 @@ export default function SessionScreen() {
                 options.onPromptSent?.()
               })
               .catch((err) => {
+                if (!creation.isCurrent()) {
+                  return
+                }
                 triggerError()
                 showToast(
                   options.errorToast ??
@@ -3584,7 +3826,11 @@ export default function SessionScreen() {
           activeHandleRef.current = null
           setActiveHandle(null)
         }
-        scheduleDelayedAction(() => void fetchSessionTabs(), 500)
+        scheduleDelayedAction(() => {
+          if (creation.isCurrent()) {
+            void fetchSessionTabs()
+          }
+        }, 500)
       } else {
         const message =
           options?.errorToast ??
@@ -3596,6 +3842,9 @@ export default function SessionScreen() {
         }
       }
     } catch (err) {
+      if (!creation.isCurrent()) {
+        return
+      }
       const message =
         options?.errorToast ?? formatUnknownErrorMessage(err, 'Failed to create terminal')
       setCreateError(message)
@@ -3604,8 +3853,7 @@ export default function SessionScreen() {
         showToast(message, 1800)
       }
     } finally {
-      creatingTerminalRef.current = false
-      setCreating(false)
+      creation.release()
     }
   }
 
@@ -3616,7 +3864,8 @@ export default function SessionScreen() {
     if (
       !client ||
       connState !== 'connected' ||
-      creatingTerminalRef.current ||
+      !terminalCreation.isCurrent() ||
+      terminalCreation.isBusy() ||
       creatingBrowser ||
       creatingMarkdown
     ) {
@@ -3636,104 +3885,6 @@ export default function SessionScreen() {
     return true
   }
 
-  async function handleCreateMarkdownNote() {
-    if (!client || creatingMarkdown) {
-      return
-    }
-
-    setCreatingMarkdown(true)
-    setCreateError('')
-
-    try {
-      const worktree = `id:${worktreeId}`
-      const mutationOwnership = await captureMobileFileMutationOwnership(client, worktree)
-      for (let attempt = 1; attempt <= 100; attempt += 1) {
-        const relativePath = attempt === 1 ? 'untitled.md' : `untitled-${attempt}.md`
-        const createResponse = await client.sendRequest(
-          'files.createFile',
-          { worktree, relativePath, ...mutationOwnership },
-          { timeoutMs: 15_000 }
-        )
-        if (!createResponse.ok) {
-          const message = (createResponse as RpcFailure).error.message
-          if (isFileExistsErrorMessage(message) && attempt < 100) {
-            continue
-          }
-          throw new Error(message || 'Failed to create markdown note')
-        }
-
-        const openResponse = await client.sendRequest(
-          'files.open',
-          { worktree, relativePath },
-          { timeoutMs: 15_000 }
-        )
-        if (!openResponse.ok) {
-          throw new Error((openResponse as RpcFailure).error.message)
-        }
-        scheduleDelayedAction(() => void fetchSessionTabs(), 300)
-        return
-      }
-      throw new Error('Unable to create untitled markdown note')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create markdown note'
-      setCreateError(message)
-      showToast(message, 1800)
-    } finally {
-      setCreatingMarkdown(false)
-    }
-  }
-
-  async function handleCreateBrowser(rawUrl = 'about:blank'): Promise<boolean> {
-    if (!client || creatingBrowser) {
-      return false
-    }
-    // Why: read via ref so a tap before the capability probe resolves (or a stale callback) still sees the live value.
-    if (browserScreencastSupportedRef.current !== true) {
-      showToast('Desktop update required for mobile browser streaming', 1600)
-      return false
-    }
-    const url = normalizeBrowserUrl(rawUrl)
-    if (!url) {
-      const message = 'Enter a valid URL'
-      setCreateError(message)
-      showToast(message, 1400)
-      return false
-    }
-
-    setCreatingBrowser(true)
-    setCreateError('')
-    try {
-      const response = await client.sendRequest(
-        'browser.tabCreate',
-        {
-          worktree: `id:${worktreeId}`,
-          url,
-          // The user opened this tab (tapped HTML / address bar) → focus it.
-          activate: true
-        },
-        { timeoutMs: 30_000 }
-      )
-      if (!response.ok) {
-        throw new Error((response as RpcFailure).error.message)
-      }
-      // Focus the new browser tab once it syncs; refresh a few times since the desktop registers the tab asynchronously.
-      const created = (response as RpcSuccess).result as { browserPageId?: string }
-      if (created.browserPageId) {
-        pendingBrowserFocusPageIdRef.current = created.browserPageId
-      }
-      void fetchSessionTabs()
-      scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 400)
-      scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 1200)
-      return true
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to create browser'
-      setCreateError(message)
-      showToast(message, 1800)
-      return false
-    } finally {
-      setCreatingBrowser(false)
-    }
-  }
   // Keep the ref at the latest handleCreateBrowser so a terminal URL tap always runs the current closure.
   handleCreateBrowserRef.current = handleCreateBrowser
 
@@ -3741,7 +3892,20 @@ export default function SessionScreen() {
     tab: Extract<MobileSessionTab, { type: 'browser' }>,
     method: 'browser.back' | 'browser.forward' | 'browser.reload'
   ) {
-    if (!client || !tab.browserPageId) {
+    const isCurrentTarget = () =>
+      isCurrentBrowserSource() &&
+      connStateRef.current === 'connected' &&
+      isCurrentTabCloseTarget(tab) &&
+      sessionTabsRef.current.some(
+        (current) =>
+          current.id === tab.id &&
+          current.type === 'browser' &&
+          current.browserPageId === tab.browserPageId
+      )
+    if (!client || !isCurrentTarget()) {
+      return
+    }
+    if (!tab.browserPageId) {
       showToast('Browser page is not available yet.', 1500)
       return
     }
@@ -3754,21 +3918,43 @@ export default function SessionScreen() {
         },
         { timeoutMs: 15_000 }
       )
+      if (!isCurrentTarget()) {
+        return
+      }
       if (!response.ok) {
         throw new Error((response as RpcFailure).error.message)
       }
-      scheduleDelayedAction(() => void fetchSessionTabs(), 250)
+      scheduleDelayedAction(() => {
+        if (isCurrentTarget()) {
+          void fetchSessionTabs()
+        }
+      }, 250)
     } catch (err) {
+      if (!isCurrentTarget()) {
+        return
+      }
       const message = err instanceof Error ? err.message : 'Browser command failed'
       showToast(message, 1600)
     }
   }
 
   async function handleRenameTerminal(value: string) {
-    if (!client || !renameTarget) {
+    const attempt = renameTargetState
+    if (
+      !client ||
+      !renameTarget ||
+      !attempt ||
+      connState !== 'connected' ||
+      !documentScopeActive ||
+      !terminalCreation.isCurrent() ||
+      !isCurrentLiveTerminalHandle(renameTarget.handle) ||
+      renamePendingRef.current.has(attempt.token)
+    ) {
       return
     }
+    renamePendingRef.current.add(attempt.token)
     const target = renameTarget
+    renameLatestRef.current.set(target.handle, attempt.token)
     setRenameTarget(null)
 
     try {
@@ -3777,25 +3963,40 @@ export default function SessionScreen() {
         terminal: target.handle,
         title
       })
-      if (response.ok) {
-        setTerminals((prev) => {
-          const next = prev.map((terminal) =>
-            terminal.handle === target.handle
-              ? { ...terminal, title: title || 'Terminal' }
-              : terminal
-          )
-          terminalsRef.current = next
-          return next
-        })
-        scheduleDelayedAction(() => void fetchTerminals(), 300)
+      if (
+        response.ok &&
+        terminalCreation.isCurrent() &&
+        renameLatestRef.current.get(target.handle) === attempt.token &&
+        isCurrentLiveTerminalHandle(target.handle)
+      ) {
+        const rename = (terminal: Terminal) =>
+          terminal.handle === target.handle ? { ...terminal, title: title || 'Terminal' } : terminal
+        terminalsRef.current = terminalsRef.current.map(rename)
+        setTerminals((previous) => previous.map(rename))
+        scheduleDelayedAction(() => {
+          if (terminalCreation.isCurrent()) {
+            void fetchTerminals()
+          }
+        }, 300)
       }
     } catch {
       // Rename failed — refresh will restore the server title.
+    } finally {
+      renamePendingRef.current.delete(attempt.token)
+      if (renameLatestRef.current.get(target.handle) === attempt.token) {
+        renameLatestRef.current.delete(target.handle)
+      }
     }
   }
 
   async function handleCloseTerminal(target: Terminal) {
-    if (!client) {
+    if (
+      !client ||
+      connState !== 'connected' ||
+      !documentScopeActive ||
+      !terminalCreation.isCurrent() ||
+      !terminalsRef.current.some((terminal) => terminal.handle === target.handle)
+    ) {
       return
     }
 
@@ -3803,16 +4004,21 @@ export default function SessionScreen() {
       const response = await client.sendRequest('terminal.close', {
         terminal: target.handle
       })
-      if (response.ok) {
+      if (response.ok && terminalCreation.isCurrent()) {
+        const currentTerminals = terminalsRef.current
+        if (!currentTerminals.some((terminal) => terminal.handle === target.handle)) {
+          return
+        }
+        const next = currentTerminals.filter((terminal) => terminal.handle !== target.handle)
         unsubscribeTerminal(target.handle)
         terminalRefs.current.delete(target.handle)
         initializedHandlesRef.current.delete(target.handle)
+        terminalRenderedHandlesRef.current.delete(target.handle)
         clearTerminalLiveInputDefault(target.handle)
-        const next = terminals.filter((terminal) => terminal.handle !== target.handle)
-        setTerminals(next)
         terminalsRef.current = next
+        setTerminals((previous) => previous.filter((terminal) => terminal.handle !== target.handle))
         if (activeHandleRef.current === target.handle) {
-          const replacement = next[0] ?? null
+          const replacement = currentTerminals.find((terminal) => terminal.handle !== target.handle)
           activeHandleRef.current = replacement?.handle ?? null
           pendingActiveTerminalHandleRef.current = replacement?.handle ?? null
           setActiveHandle(replacement?.handle ?? null)
@@ -3826,20 +4032,39 @@ export default function SessionScreen() {
     }
   }
 
+  const tabCloseScopeSeq = documentReadScopeSeqRef.current
+  function isCurrentTabCloseScope(): boolean {
+    return (
+      documentScopeActive &&
+      documentScopeRef.current === documentScope &&
+      documentReadScopeSeqRef.current === tabCloseScopeSeq &&
+      clientRef.current === client
+    )
+  }
+  function isCurrentTabCloseTarget(tab: MobileSessionTab): boolean {
+    return (
+      isCurrentTabCloseScope() &&
+      sessionTabsRef.current.some((current) => current.id === tab.id && current.type === tab.type)
+    )
+  }
+
   async function handleCloseSessionTab(tab: MobileSessionTab) {
-    if (!client) {
+    if (!client || !isCurrentTabCloseTarget(tab)) {
       return
     }
     try {
-      const response = await client.sendRequest('session.tabs.close', {
-        worktree: `id:${worktreeId}`,
+      const closed = await closeMobileSessionTabIfCurrent({
+        client,
+        worktreeId,
         tabId: tab.id,
-        // Why: a tapped tab close is explicit user intent; older hosts strip
-        // the unknown field and keep their legacy behavior.
-        reason: 'user'
+        isCurrent: isCurrentTabCloseScope
       })
-      if (response.ok) {
+      if (closed) {
         purgeMobileNativeChatRuntimeScope(mobileNativeChatScopeKey(hostId, worktreeId, tab.id))
+        clearMobileSessionDocumentRead(documentReadRequestsRef.current, tab.id)
+        markdownSaveRequestsRef.current.delete(tab.id)
+        setMarkdownDocs((prev) => deleteMobileSessionDocumentState(prev, tab.id))
+        setFileDocs((prev) => deleteMobileSessionDocumentState(prev, tab.id))
         const remainingTabs = sessionTabsRef.current.filter((candidate) => candidate.id !== tab.id)
         reconcileBufferedDraftsRef.current(sessionTabsRef.current, remainingTabs)
         if (tab.type === 'browser' && tab.browserPageId === pendingBrowserFocusPageIdRef.current) {
@@ -3850,6 +4075,7 @@ export default function SessionScreen() {
           unsubscribeTerminal(terminalHandle)
           terminalRefs.current.delete(terminalHandle)
           initializedHandlesRef.current.delete(terminalHandle)
+          terminalRenderedHandlesRef.current.delete(terminalHandle)
           clearTerminalLiveInputDefault(terminalHandle)
         }
         sessionTabsRef.current = remainingTabs
@@ -3876,17 +4102,25 @@ export default function SessionScreen() {
 
   const bulkCloseActions = createBulkCloseSheetActions({
     sessionTabsRef,
-    markdownDocs,
+    markdownDocsRef,
     activeSessionTabIdRef,
     switchSessionTab,
     closeSessionTab: handleCloseSessionTab
   })
-  const closeWithBulkActions = createCloseWithBulkActions(handleCloseSessionTab, bulkCloseActions)
+  const closeWithBulkActions = createCloseWithBulkActions(handleCloseSessionTab, bulkCloseActions, {
+    markdownDocsRef,
+    isCurrentTarget: isCurrentTabCloseTarget,
+    onDirtyClose: (tab) => {
+      Keyboard.dismiss()
+      setDiscardMarkdownTarget({ tab, action: 'close', scopeSeq: tabCloseScopeSeq })
+    }
+  })
 
   const visibleTabs: MobileSessionTab[] = sessionTabs
   const activeMarkdownTab = activeSessionTab?.type === 'markdown' ? activeSessionTab : null
   const activeFileTab = activeSessionTab?.type === 'file' ? activeSessionTab : null
   const activeBrowserTab = activeSessionTab?.type === 'browser' ? activeSessionTab : null
+  const activeDocumentTab = activeMarkdownTab ?? activeFileTab
   const activePendingTerminalTab =
     activeSessionTab?.type === 'terminal' && typeof activeSessionTab.terminal !== 'string'
       ? activeSessionTab
@@ -3895,58 +4129,47 @@ export default function SessionScreen() {
     pendingTerminalRecoveryContextKey !== null &&
     pendingTerminalRecoveryContextKey === parkedPendingTerminalContext
 
-  useEffect(() => {
-    if (!client || connState !== 'connected' || !activePendingTerminalTab) {
-      if (connState !== 'connected' || !activePendingTerminalTab) {
-        pendingTerminalActivationAttemptRef.current = null
-      }
-      return
-    }
-    const activationKey = `${worktreeId}:${activePendingTerminalTab.id}:${activePendingTerminalTab.leafId ?? ''}`
-    if (pendingTerminalActivationAttemptRef.current === activationKey) {
-      return
-    }
-    // Why: a server-owned tab can be active but still pending; activation is the RPC that materializes its PTY handle.
-    pendingTerminalActivationAttemptRef.current = activationKey
-    void activateMobileSessionTab(client, {
-      worktree: `id:${worktreeId}`,
-      tabId: activePendingTerminalTab.id,
-      leafId: activePendingTerminalTab.leafId,
-      notifyClients: false,
-      navigation: 'caller',
-      // Why: this only ever runs for the tab the user is looking at, so it is the
-      // tail of their tap — the gesture that materializes a parked pane.
-      intent: 'user'
-    })
-      .then((response) => {
-        if (!response.ok) {
-          if (pendingTerminalActivationAttemptRef.current === activationKey) {
-            pendingTerminalActivationAttemptRef.current = null
-          }
-          return
-        }
-        applySessionTabs((response as RpcSuccess).result as SessionTabsResult)
-        scheduleDelayedAction(() => void fetchSessionTabs(), 300)
-        scheduleDelayedAction(() => void fetchSessionTabs(), 1200)
-      })
-      .catch(() => {
-        if (pendingTerminalActivationAttemptRef.current === activationKey) {
-          pendingTerminalActivationAttemptRef.current = null
-        }
-      })
-  }, [
-    activePendingTerminalTab,
+  useMobilePendingTerminalActivation({
+    activeSessionTab,
     applySessionTabs,
     client,
     connState,
     fetchSessionTabs,
+    isCurrentDocumentScope: isCurrentTabCloseScope,
+    isCurrentSource: terminalCreation.isCurrent,
     scheduleDelayedAction,
     worktreeId
-  ])
+  })
 
   const showLoadingState = connState === 'connected' && !terminalsLoaded && visibleTabs.length === 0
   const showEmptyState =
     connState === 'connected' && terminalsLoaded && visibleTabs.length === 0 && !activeHandle
+  const terminalSurfaceVisible =
+    !showLoadingState &&
+    !showEmptyState &&
+    !activeMarkdownTab &&
+    !activeFileTab &&
+    !activeBrowserTab &&
+    !activePendingTerminalTab
+  const activeTerminalCoveredBySessionOverlay = isActiveTerminalCoveredBySessionOverlay({
+    activeTabType: activeSessionTab?.type ?? null,
+    browserActionSheetVisible: browserActionTarget != null,
+    createBrowserModalVisible: showCreateBrowserModal,
+    customKeyModalVisible: showCustomKeyModal,
+    deleteCustomKeySheetVisible: deleteKeyTarget != null,
+    dictationSetupVisible: showDictationSetup,
+    discardMarkdownConfirmVisible: discardMarkdownTarget != null,
+    fileActionSheetVisible: fileActionTarget != null,
+    headerMoreActionsVisible: showHeaderMoreActions,
+    leaveDraftsSheetVisible: leaveDrafts != null,
+    markdownActionSheetVisible: markdownActionTarget != null,
+    newTabSheetVisible: showCreateTabDrawer,
+    pendingDiffNotesSheetVisible: pendingDiffNotesDelivery != null,
+    quickCommandsSheetVisible: showQuickCommands && quickCommandsSupported === true,
+    renameTerminalModalVisible: renameTarget != null,
+    showNativeChat,
+    terminalActionSheetVisible: actionTarget != null
+  })
 
   // Why: a newly created workspace can hydrate with zero tabs before its first terminal exists.
   useInitialSessionTerminalAutoCreate({
@@ -4001,6 +4224,38 @@ export default function SessionScreen() {
     opacity: toastOpacityRef.current,
     transform: [{ translateY: -keyboardLift }]
   }
+  const activeSurfaceToast = toastMessage ? (
+    <Animated.View pointerEvents="none" style={[styles.toast, toastAnimatedStyle]}>
+      <Text style={styles.toastText}>{toastMessage}</Text>
+    </Animated.View>
+  ) : null
+  const resolveDiffCommentActionsForFile = useCallback(
+    (tab: Extract<MobileSessionTab, { type: 'file' }>): DiffCommentActions | undefined =>
+      tab.diffSource === 'staged' || tab.diffSource === 'unstaged'
+        ? {
+            comments: diffComments,
+            busy: diffCommentBusy,
+            loading: diffCommentsLoading,
+            loadError: diffCommentsLoadError,
+            onRetry: reloadDiffComments,
+            onAdd: addDiffCommentForFile,
+            onDelete: deleteDiffCommentForFile,
+            onCopyAll: copyDiffCommentsToClipboard,
+            onSendAll: sendDiffCommentsToAgent
+          }
+        : undefined,
+    [
+      addDiffCommentForFile,
+      copyDiffCommentsToClipboard,
+      deleteDiffCommentForFile,
+      diffCommentBusy,
+      diffCommentsLoading,
+      diffCommentsLoadError,
+      reloadDiffComments,
+      diffComments,
+      sendDiffCommentsToAgent
+    ]
+  )
   const createTabAgentActions =
     createTabAgentLoadState === 'loading'
       ? [
@@ -4354,70 +4609,6 @@ export default function SessionScreen() {
                   </Pressable>
                 </View>
               </View>
-            ) : activeMarkdownTab ? (
-              <View style={[styles.markdownFrame, { paddingBottom: insets.bottom }]}>
-                <MobileMarkdownReader
-                  documentId={activeMarkdownTab.id}
-                  doc={markdownDocs.get(activeMarkdownTab.id)}
-                  onRefresh={() => void readMarkdownTab(activeMarkdownTab)}
-                  onChange={(content) => updateMarkdownLocalContent(activeMarkdownTab.id, content)}
-                  onSave={() => void saveMarkdownTab(activeMarkdownTab)}
-                  onCopy={() => void copyMarkdownLocalContent(activeMarkdownTab.id)}
-                  onDiscard={() => discardMarkdownLocalContent(activeMarkdownTab)}
-                  keyboardLift={keyboardLift}
-                />
-                {toastMessage && (
-                  <Animated.View pointerEvents="none" style={[styles.toast, toastAnimatedStyle]}>
-                    <Text style={styles.toastText}>{toastMessage}</Text>
-                  </Animated.View>
-                )}
-              </View>
-            ) : activeFileTab ? (
-              <View style={[styles.markdownFrame, { paddingBottom: insets.bottom }]}>
-                <MobileSessionFileReader
-                  doc={fileDocs.get(activeFileTab.id)}
-                  title={activeFileTab.title || 'File'}
-                  relativePath={activeFileTab.relativePath}
-                  language={activeFileTab.language}
-                  diffCommentActions={
-                    activeFileTab.diffSource === 'staged' || activeFileTab.diffSource === 'unstaged'
-                      ? {
-                          comments: diffComments,
-                          busy: diffCommentBusy,
-                          onAdd: addDiffCommentForFile,
-                          onDelete: deleteDiffCommentForFile,
-                          onCopyAll: copyDiffCommentsToClipboard,
-                          onSendAll: sendDiffCommentsToAgent
-                        }
-                      : undefined
-                  }
-                />
-                {toastMessage && (
-                  <Animated.View pointerEvents="none" style={[styles.toast, toastAnimatedStyle]}>
-                    <Text style={styles.toastText}>{toastMessage}</Text>
-                  </Animated.View>
-                )}
-              </View>
-            ) : activeBrowserTab ? (
-              <View style={styles.browserFrame}>
-                {/* Why: pane owns imperative frame refs; don't render a stale frame while the old stream effect cleans up. */}
-                <MobileBrowserPane
-                  key={activeBrowserTab.browserPageId ?? activeBrowserTab.id}
-                  client={client}
-                  pairedHostId={hostId}
-                  worktreeId={worktreeId}
-                  tab={activeBrowserTab}
-                  screencastSupported={browserScreencastSupported}
-                  keyboardLift={keyboardLift}
-                  bottomInset={insets.bottom}
-                  onToast={showToast}
-                />
-                {toastMessage && (
-                  <Animated.View pointerEvents="none" style={[styles.toast, toastAnimatedStyle]}>
-                    <Text style={styles.toastText}>{toastMessage}</Text>
-                  </Animated.View>
-                )}
-              </View>
             ) : activePendingTerminalTab ? (
               <View style={styles.emptyState}>
                 {!isPendingTerminalRecoveryParked && (
@@ -4442,70 +4633,98 @@ export default function SessionScreen() {
                   </Pressable>
                 )}
               </View>
-            ) : (
-              <View
-                style={styles.terminalFrame}
-                onLayout={(e) => {
-                  terminalFrameHeightRef.current = e.nativeEvent.layout.height
-                  // Why: notify height imperatively so dock settling re-fits the PTY without rerendering SessionScreen.
-                  const nextWidth = Math.round(e.nativeEvent.layout.width)
-                  const nextHeight = Math.round(e.nativeEvent.layout.height)
-                  setTerminalFrameWidth((prev) => (prev === nextWidth ? prev : nextWidth))
-                  notifyTerminalFrameHeight(nextHeight)
-                }}
-              >
-                {terminals.map((terminal) => (
-                  <TerminalPaneView
-                    key={terminal.handle}
-                    handle={terminal.handle}
-                    active={terminal.handle === activeHandle}
-                    covered={showNativeChat}
-                    keyboardLift={terminal.handle === activeHandle ? activeTerminalKeyboardLift : 0}
-                    terminalTheme={terminal.terminalTheme}
-                    textScale={terminalTextScale}
-                    onTextScaleChange={(scale) => {
-                      // Why: pinch-to-zoom reports a new preset; persist it so the size sticks across panes and launches.
-                      setTerminalTextScale(scale)
-                      void saveTerminalTextScale(scale)
-                    }}
-                    onRef={setTerminalWebViewRef}
-                    onWebReady={handleTerminalWebReady}
-                    onSelectionMode={handleSelectionMode}
-                    onSelectionCopy={handleSelectionCopy}
-                    onSelectionEvicted={handleSelectionEvicted}
-                    onModesChanged={handleModesChanged}
-                    onKeyboardAvoidanceMetrics={handleKeyboardAvoidanceMetrics}
-                    onHaptic={handleHaptic}
-                    onTerminalInput={handleTerminalInput}
-                    onTerminalQueryReply={handleTerminalQueryReply}
-                    onTerminalTap={handleTerminalTap}
-                    onFileTap={handleFileTap}
-                    onOpenUrl={handleTerminalOpenUrl}
-                  />
-                ))}
-                <MobileNativeChatOverlay
-                  controller={nativeChatController}
-                  onOpenFile={handleNativeChatFileTap}
-                  images={nativeChatImages}
-                  onMicPress={handleDictationToggle}
-                  micActive={dictation.isRecording}
-                  dictationMode={dictationMode}
-                  onMicPressIn={handleDictationPressIn}
-                  onMicPressOut={handleDictationPressOut}
-                  inputLockReason={nativeChatInputLockReason}
-                  sendErrorMessage={nativeChatSendError.message}
-                  onClearSendError={nativeChatSendError.clear}
-                  sendSurfaceId={nativeChatScopeKey ?? ''}
-                  getSendCompletionGeneration={getSendCompletionGeneration}
-                  keyboardInset={keyboardLift}
-                />
-                {toastMessage && (
-                  <Animated.View pointerEvents="none" style={[styles.toast, toastAnimatedStyle]}>
-                    <Text style={styles.toastText}>{toastMessage}</Text>
-                  </Animated.View>
-                )}
-              </View>
-            )}
+            ) : null}
+
+            <RetainedSessionDocumentSurfaces
+              key={`documents:${terminalInventoryRecoveryScope}`}
+              activeTab={activeDocumentTab}
+              fileDocs={fileDocs}
+              frameStyle={[styles.markdownFrame, { paddingBottom: insets.bottom }]}
+              hiddenFrameStyle={styles.retainedSessionSurfaceHidden}
+              keyboardLift={keyboardLift}
+              markdownDocs={markdownDocs}
+              resolveDiffCommentActions={resolveDiffCommentActionsForFile}
+              tabs={visibleTabs}
+              toast={activeSurfaceToast}
+              onFileRefresh={(tab) => void readFileTab(tab)}
+              onMarkdownChange={(tab, content) => updateMarkdownLocalContent(tab.id, content)}
+              onMarkdownCopy={(tab) => void copyMarkdownLocalContent(tab.id)}
+              onMarkdownDiscard={discardMarkdownLocalContent}
+              onMarkdownRefresh={(tab) => void readMarkdownTab(tab)}
+              onMarkdownSave={(tab) => void saveMarkdownTab(tab)}
+            />
+
+            <RetainedSessionBrowserSurfaces
+              key={`browser:${terminalInventoryRecoveryScope}`}
+              activeTab={activeBrowserTab}
+              bottomInset={insets.bottom}
+              client={client}
+              frameStyle={styles.browserFrame}
+              hiddenFrameStyle={styles.retainedSessionSurfaceHidden}
+              keyboardLift={keyboardLift}
+              pairedHostId={hostId}
+              screencastSupported={browserScreencastSupported}
+              tabs={visibleTabs}
+              toast={activeSurfaceToast}
+              worktreeId={worktreeId}
+              onToast={showToast}
+            />
+
+            <RetainedTerminalPaneHost
+              key={`terminal:${terminalInventoryRecoveryScope}`}
+              activeHandle={activeHandle}
+              covered={activeTerminalCoveredBySessionOverlay}
+              frameStyle={styles.terminalFrame}
+              hiddenFrameStyle={styles.terminalFrameRetainedHidden}
+              keyboardLift={activeTerminalKeyboardLift}
+              terminals={terminals}
+              textScale={terminalTextScale}
+              visible={terminalSurfaceVisible}
+              onLayout={(e) => {
+                terminalFrameHeightRef.current = e.nativeEvent.layout.height
+                // Why: notify height imperatively so dock settling re-fits the PTY without rerendering SessionScreen.
+                const nextWidth = Math.round(e.nativeEvent.layout.width)
+                const nextHeight = Math.round(e.nativeEvent.layout.height)
+                setTerminalFrameWidth((prev) => (prev === nextWidth ? prev : nextWidth))
+                notifyTerminalFrameHeight(nextHeight)
+              }}
+              onTextScaleChange={(scale) => {
+                // Why: pinch-to-zoom reports a new preset; persist it so the size sticks across panes and launches.
+                setTerminalTextScale(scale)
+                void saveTerminalTextScale(scale)
+              }}
+              onRef={setTerminalWebViewRef}
+              onWebReady={handleTerminalWebReady}
+              onSelectionMode={handleSelectionMode}
+              onSelectionCopy={handleSelectionCopy}
+              onSelectionEvicted={handleSelectionEvicted}
+              onModesChanged={handleModesChanged}
+              onKeyboardAvoidanceMetrics={handleKeyboardAvoidanceMetrics}
+              onHaptic={handleHaptic}
+              onTerminalInput={handleTerminalInput}
+              onTerminalQueryReply={handleTerminalQueryReply}
+              onTerminalTap={handleTerminalTap}
+              onFileTap={handleFileTap}
+              onOpenUrl={handleTerminalOpenUrl}
+            >
+              <MobileNativeChatOverlay
+                controller={nativeChatController}
+                onOpenFile={handleNativeChatFileTap}
+                images={nativeChatImages}
+                onMicPress={handleDictationToggle}
+                micActive={dictation.isRecording}
+                dictationMode={dictationMode}
+                onMicPressIn={handleDictationPressIn}
+                onMicPressOut={handleDictationPressOut}
+                inputLockReason={nativeChatInputLockReason}
+                sendErrorMessage={nativeChatSendError.message}
+                onClearSendError={nativeChatSendError.clear}
+                sendSurfaceId={nativeChatScopeKey ?? ''}
+                getSendCompletionGeneration={getSendCompletionGeneration}
+                keyboardInset={keyboardLift}
+              />
+              {activeSurfaceToast}
+            </RetainedTerminalPaneHost>
 
             {/* Why: translate instead of resize so keyboard toggles don't trigger a server-side PTY viewport change. */}
             {!activeMarkdownTab && !activeFileTab && !activeBrowserTab && !showNativeChat && (
@@ -4775,7 +4994,7 @@ export default function SessionScreen() {
                       onSubmitEditing={() => void handleSend()}
                     />
                     <MobileTerminalInputActions
-                      canSend={canSend}
+                      canSend={canSendBufferedCommand}
                       isAttaching={isAttaching}
                       dictation={dictation}
                       dictationMode={dictationMode}
@@ -4790,8 +5009,11 @@ export default function SessionScreen() {
                       onDictationCancel={cancelDictation}
                     />
                     <Pressable
-                      style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-                      disabled={!canSend}
+                      style={[
+                        styles.sendButton,
+                        !canSendBufferedCommand && styles.sendButtonDisabled
+                      ]}
+                      disabled={!canSendBufferedCommand}
                       onPress={() => void handleSend()}
                       accessibilityLabel="Send command"
                     >
@@ -4862,13 +5084,7 @@ export default function SessionScreen() {
                   label: 'Browser',
                   icon: Globe,
                   closeBeforePress: true,
-                  onPress: () => {
-                    if (browserScreencastSupported !== true) {
-                      showToast('Desktop update required for mobile browser streaming', 1600)
-                      return
-                    }
-                    setShowCreateBrowserModal(true)
-                  }
+                  onPress: openBrowserDialog
                 },
                 {
                   label: 'Markdown Note',
@@ -5006,38 +5222,33 @@ export default function SessionScreen() {
           {
             label: 'Copy All & Leave',
             icon: FileText,
-            onPress: () => {
-              const drafts = leaveDrafts ?? []
-              const combined = drafts
-                .map((draft) => `# ${draft.title}\n\n${draft.content}`)
-                .join('\n\n---\n\n')
-              void Clipboard.setStringAsync(combined)
-                .then(() => {
-                  setLeaveDrafts(null)
-                  leaveSession()
-                })
-                .catch(() => {
-                  triggerError()
-                  showToast("Couldn't copy drafts", 1500)
-                })
-            }
+            onPress: handleCopyDraftsAndLeave
           },
           {
             label: 'Discard & Leave',
             destructive: true,
-            onPress: () => {
-              setLeaveDrafts(null)
-              leaveSession()
-            }
+            onPress: handleDiscardDraftsAndLeave
           }
         ]}
-        onClose={() => setLeaveDrafts(null)}
+        onClose={() => {
+          if (leaveDraftsState) {
+            setLeaveDrafts(null, leaveDraftsState.token)
+          }
+        }}
       />
       <ConfirmModal
         visible={discardMarkdownTarget != null}
-        title="Discard Changes"
-        message="Replace the phone draft with the latest desktop file?"
-        confirmLabel="Discard"
+        title={t('mobile.session.shell.modals.discardMarkdownTitle')}
+        message={
+          discardMarkdownTarget?.action === 'close'
+            ? t('mobile.session.shell.modals.discardMarkdownAndCloseMessage')
+            : t('mobile.session.shell.modals.discardMarkdownMessage')
+        }
+        confirmLabel={
+          discardMarkdownTarget?.action === 'close'
+            ? t('mobile.session.shell.actions.discardAndClose')
+            : t('mobile.session.shell.actions.discard')
+        }
         destructive
         onConfirm={confirmDiscardMarkdown}
         onCancel={() => setDiscardMarkdownTarget(null)}
@@ -5047,6 +5258,7 @@ export default function SessionScreen() {
         title="Rename Terminal"
         defaultValue={renameTarget?.title || 'Terminal'}
         placeholder="Terminal name"
+        allowEmpty
         onSubmit={(value) => void handleRenameTerminal(value)}
         onCancel={() => setRenameTarget(null)}
       />
@@ -5060,14 +5272,8 @@ export default function SessionScreen() {
         allowEmpty
         selectTextOnFocus
         keyboardType={Platform.OS === 'ios' ? 'url' : 'default'}
-        onSubmit={(value) => {
-          void handleCreateBrowser(value).then((created) => {
-            if (created) {
-              setShowCreateBrowserModal(false)
-            }
-          })
-        }}
-        onCancel={() => setShowCreateBrowserModal(false)}
+        onSubmit={(value) => void submitBrowserUrl(value)}
+        onCancel={cancelBrowserDialog}
       />
       <CustomKeyModal
         visible={showCustomKeyModal}

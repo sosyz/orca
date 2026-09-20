@@ -1,6 +1,7 @@
 import { createElement, type ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { i18n } from '../i18n/i18n'
 import { MobileSessionFileReader } from './MobileSessionFileReader'
 import { highlightMobileCode } from './mobile-file-syntax'
 import type { FileDocState } from './mobile-session-route-types'
@@ -103,8 +104,18 @@ const diffDoc: FileDocState = {
   lines: [{ kind: 'add', text: 'const diffed = true', newLineNumber: 1 }]
 }
 
-function reader(doc: FileDocState) {
+function reader(
+  doc: FileDocState,
+  props: Partial<{
+    active: boolean
+    diffCommentActions: NonNullable<
+      Parameters<typeof MobileSessionFileReader>[0]['diffCommentActions']
+    >
+    onRefresh: () => void
+  }> = {}
+) {
   return createElement(MobileSessionFileReader, {
+    ...props,
     doc,
     title: 'App.ts',
     relativePath: 'src/App.ts',
@@ -123,12 +134,13 @@ describe('MobileSessionFileReader syntax lifecycle', () => {
     vi.useFakeTimers()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     act(() => renderer?.unmount())
     renderer = null
     vi.useRealTimers()
     vi.clearAllMocks()
     mocks.syntaxSegments = []
+    await i18n.changeLanguage('en')
   })
 
   it.each([
@@ -174,5 +186,136 @@ describe('MobileSessionFileReader syntax lifecycle', () => {
         .map((segment) => segment.text)
         .join('')
     ).toBe(secondFileDoc.content)
+  })
+
+  it('keeps old file content visible with a non-blocking refresh error and retry', () => {
+    const onRefresh = vi.fn()
+    act(() => {
+      renderer = create(reader({ ...fileDoc, refreshError: 'Refresh failed' }, { onRefresh }))
+    })
+
+    expect(
+      renderer.root.findAllByType('Text').some((node) => node.props.children === 'Refresh failed')
+    ).toBe(true)
+    expect(lastSegments()).toEqual([{ text: fileDoc.content, kind: 'plain' }])
+
+    const retry = renderer.root
+      .findAllByType('Pressable')
+      .find((node) => node.findAllByType('Text').some((text) => text.props.children === 'Retry'))
+    act(() => retry?.props.onPress())
+
+    expect(onRefresh).toHaveBeenCalledOnce()
+  })
+
+  it('passes inactive state to diff rows so retained offscreen comments cannot focus', () => {
+    act(() => {
+      renderer = create(
+        reader(diffDoc, {
+          active: false,
+          diffCommentActions: {
+            busy: false,
+            comments: [],
+            onAdd: vi.fn(),
+            onCopyAll: vi.fn(),
+            onDelete: vi.fn(),
+            onSendAll: vi.fn()
+          }
+        })
+      )
+    })
+
+    const list = renderer.root.findByType('FlatList')
+    const row = list.props.renderItem({ item: list.props.data[0], index: 0 })
+
+    expect(row.props.active).toBe(false)
+    expect(row.props.commentsBusy).toBe(true)
+  })
+
+  it('keeps notes disabled after a metadata error and exposes a separate retry', () => {
+    const onRetry = vi.fn().mockResolvedValue(undefined)
+    const onRefresh = vi.fn()
+    act(() => {
+      renderer = create(
+        reader(diffDoc, {
+          onRefresh,
+          diffCommentActions: {
+            comments: [],
+            busy: true,
+            loadError: 'Could not load review notes',
+            onRetry,
+            onAdd: vi.fn(),
+            onCopyAll: vi.fn(),
+            onDelete: vi.fn(),
+            onSendAll: vi.fn()
+          }
+        })
+      )
+    })
+    expect(
+      renderer.root
+        .findAllByType('Text')
+        .some((node) => node.props.children === 'Could not load review notes')
+    ).toBe(true)
+    const list = renderer.root.findByType('FlatList')
+    expect(list.props.renderItem({ item: list.props.data[0], index: 0 }).props.commentsBusy).toBe(
+      true
+    )
+    const retry = renderer.root
+      .findAllByType('Pressable')
+      .find((node) => node.findAllByType('Text').some((text) => text.props.children === 'Retry'))
+    expect(retry?.props.disabled).toBe(false)
+    act(() => retry?.props.onPress())
+    expect(onRetry).toHaveBeenCalledOnce()
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  it('renders review-note toolbar copy in Chinese', async () => {
+    await i18n.changeLanguage('zh')
+
+    act(() => {
+      renderer = create(
+        reader(diffDoc, {
+          diffCommentActions: {
+            busy: false,
+            comments: [
+              {
+                body: 'first',
+                createdAt: 1,
+                filePath: 'src/App.ts',
+                id: 'note-1',
+                lineNumber: 1,
+                side: 'modified',
+                worktreeId: 'worktree-1'
+              },
+              {
+                body: 'second',
+                createdAt: 2,
+                filePath: 'src/App.ts',
+                id: 'note-2',
+                lineNumber: 1,
+                side: 'modified',
+                worktreeId: 'worktree-1'
+              }
+            ],
+            onAdd: vi.fn(),
+            onCopyAll: vi.fn(),
+            onDelete: vi.fn(),
+            onSendAll: vi.fn()
+          }
+        })
+      )
+    })
+
+    const text = renderer.root
+      .findAllByType('Text')
+      .flatMap((node) => node.children)
+      .filter((child): child is string => typeof child === 'string')
+    const labels = renderer.root
+      .findAllByType('Pressable')
+      .map((node) => node.props.accessibilityLabel)
+      .filter((label): label is string => typeof label === 'string')
+
+    expect(text).toEqual(expect.arrayContaining(['2 条审阅备注', '复制', '发送']))
+    expect(labels).toEqual(expect.arrayContaining(['复制审阅备注', '将审阅备注发送给 AI']))
   })
 })

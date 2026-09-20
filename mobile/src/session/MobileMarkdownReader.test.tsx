@@ -1,6 +1,7 @@
 import { createElement, forwardRef, useImperativeHandle } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { i18n } from '../i18n/i18n'
 import { MobileMarkdownReader } from './MobileMarkdownReader'
 import type { MarkdownDocState } from './mobile-session-route-types'
 
@@ -33,7 +34,7 @@ vi.mock('../components/MobileRichMarkdownEditor', () => {
     (props: { onKeyboardInsetChange?: (bottom: number) => void }, ref: unknown) => {
       mocks.reportKeyboardInset = props.onKeyboardInsetChange ?? null
       useImperativeHandle(ref as never, () => ({ dismissKeyboard: mocks.dismissKeyboard }))
-      return createElement('MobileRichMarkdownEditor')
+      return createElement('MobileRichMarkdownEditor', props)
     }
   )
   return { MobileRichMarkdownEditor: Editor }
@@ -51,10 +52,15 @@ const readyDoc: MarkdownDocState = {
 describe('MobileMarkdownReader', () => {
   let renderer: ReactTestRenderer | null = null
 
-  function render(keyboardLift: number, doc: MarkdownDocState = readyDoc): ReactTestRenderer {
+  function render(
+    keyboardLift: number,
+    doc: MarkdownDocState = readyDoc,
+    active = true
+  ): ReactTestRenderer {
     act(() => {
       renderer = create(
         createElement(MobileMarkdownReader, {
+          active,
           documentId: 'doc-1',
           doc,
           keyboardLift,
@@ -76,11 +82,12 @@ describe('MobileMarkdownReader', () => {
     )
   }
 
-  afterEach(() => {
+  afterEach(async () => {
     act(() => renderer?.unmount())
     renderer = null
     mocks.reportKeyboardInset = null
     vi.clearAllMocks()
+    await i18n.changeLanguage('en')
   })
 
   it('offers keyboard dismissal while the keyboard covers the editor', () => {
@@ -115,5 +122,91 @@ describe('MobileMarkdownReader', () => {
     act(() => mocks.reportKeyboardInset?.(291))
 
     expect(dismissButtons(instance)).toHaveLength(1)
+  })
+
+  it('renders markdown actions in the active mobile language', async () => {
+    await i18n.changeLanguage('zh')
+
+    const instance = render(291, {
+      ...readyDoc,
+      isDirty: true,
+      stale: true
+    })
+
+    const text = instance.root
+      .findAllByType('Text')
+      .flatMap((node) => node.children)
+      .filter((child): child is string => typeof child === 'string')
+    const labels = instance.root
+      .findAllByType('Pressable')
+      .map((node) => node.props.accessibilityLabel)
+      .filter((label): label is string => typeof label === 'string')
+    expect(text).toEqual(expect.arrayContaining(['桌面端已更改', '放弃', '保存']))
+    expect(labels).toContain('收起键盘')
+  })
+
+  it('dismisses and disables the editor while retained offscreen', () => {
+    const instance = render(291, readyDoc)
+    expect(instance.root.findByType('MobileRichMarkdownEditor').props.editable).toBe(true)
+
+    act(() => {
+      instance.update(
+        createElement(MobileMarkdownReader, {
+          active: false,
+          documentId: 'doc-1',
+          doc: readyDoc,
+          keyboardLift: 291,
+          onChange: vi.fn(),
+          onCopy: vi.fn(),
+          onDiscard: vi.fn(),
+          onRefresh: vi.fn(),
+          onSave: vi.fn()
+        })
+      )
+    })
+
+    expect(mocks.dismissKeyboard).toHaveBeenCalledOnce()
+    expect(instance.root.findByType('MobileRichMarkdownEditor').props.editable).toBe(false)
+    expect(dismissButtons(instance)).toHaveLength(0)
+  })
+
+  it('does not reuse a stale WebView keyboard inset after tab reactivation', () => {
+    const instance = render(0)
+
+    act(() => mocks.reportKeyboardInset?.(291))
+    expect(dismissButtons(instance)).toHaveLength(1)
+
+    act(() => {
+      instance.update(
+        createElement(MobileMarkdownReader, {
+          active: false,
+          documentId: 'doc-1',
+          doc: readyDoc,
+          keyboardLift: 0,
+          onChange: vi.fn(),
+          onCopy: vi.fn(),
+          onDiscard: vi.fn(),
+          onRefresh: vi.fn(),
+          onSave: vi.fn()
+        })
+      )
+    })
+    act(() => {
+      instance.update(
+        createElement(MobileMarkdownReader, {
+          active: true,
+          documentId: 'doc-1',
+          doc: readyDoc,
+          keyboardLift: 0,
+          onChange: vi.fn(),
+          onCopy: vi.fn(),
+          onDiscard: vi.fn(),
+          onRefresh: vi.fn(),
+          onSave: vi.fn()
+        })
+      )
+    })
+
+    expect(dismissButtons(instance)).toHaveLength(0)
   })
 })

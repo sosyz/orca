@@ -96,6 +96,21 @@ export const mobileSessionReaderStyles = StyleSheet.create({
     fontSize: typography.metaSize,
     fontWeight: '600'
   },
+  fileRefreshBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.borderSubtle,
+    backgroundColor: colors.bgPanel
+  },
+  fileRefreshText: {
+    flex: 1,
+    color: colors.statusRed,
+    fontSize: typography.metaSize
+  },
   diffLineBlock: {
     marginBottom: spacing.xs
   },

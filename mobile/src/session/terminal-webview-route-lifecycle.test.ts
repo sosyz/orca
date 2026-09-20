@@ -20,6 +20,7 @@ function registrationHarness() {
     terminalGestureInputBucketsRef: mutableRef(new Map()),
     terminalGestureInputInFlightRef: mutableRef(new Set<string>()),
     terminalGestureInputQueuesRef: mutableRef(new Map()),
+    terminalRenderedHandlesRef: mutableRef(new Set<string>()),
     terminalRefs: mutableRef(new Map<string, TerminalWebViewHandle>()),
     terminalUnsubsRef: mutableRef(new Map<string, () => void>()),
     unsubscribeTerminal: vi.fn((handle: string) => {
@@ -54,6 +55,7 @@ describe('session terminal WebView registration', () => {
     refs.terminalRefs.current.set(HANDLE, WEB_VIEW_REF)
     refs.webReadyHandlesRef.current.add(HANDLE)
     refs.initializedHandlesRef.current.add(HANDLE)
+    refs.terminalRenderedHandlesRef.current.add(HANDLE)
     refs.terminalUnsubsRef.current.set(HANDLE, terminalUnsubscribe)
     refs.terminalGestureInputBucketsRef.current.set(HANDLE, { tokens: 1, lastRefillMs: 0 })
     refs.terminalGestureInputQueuesRef.current.set(HANDLE, {
@@ -72,6 +74,7 @@ describe('session terminal WebView registration', () => {
     expect(refs.terminalRefs.current.has(HANDLE)).toBe(false)
     expect(refs.webReadyHandlesRef.current.has(HANDLE)).toBe(false)
     expect(refs.initializedHandlesRef.current.has(HANDLE)).toBe(false)
+    expect(refs.terminalRenderedHandlesRef.current.has(HANDLE)).toBe(false)
     expect(refs.terminalGestureInputBucketsRef.current.has(HANDLE)).toBe(false)
     expect(refs.terminalGestureInputQueuesRef.current.has(HANDLE)).toBe(false)
     expect(refs.terminalGestureInputInFlightRef.current.has(HANDLE)).toBe(false)

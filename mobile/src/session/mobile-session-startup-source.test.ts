@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(
@@ -15,6 +16,10 @@ const terminalInventoryRecoverySource = readFileSync(
 )
 const autoCreateHookSource = readFileSync(
   new URL('./use-initial-session-terminal-autocreate.ts', import.meta.url),
+  'utf8'
+)
+const pendingActivationHookSource = readFileSync(
+  new URL('./use-mobile-pending-terminal-activation.ts', import.meta.url),
   'utf8'
 )
 
@@ -110,6 +115,96 @@ describe('mobile session startup', () => {
     )
   })
 
+  it('hosts retained tab surfaces outside the mutually exclusive empty states', () => {
+    expect(source).toContain('import { RetainedSessionBrowserSurfaces }')
+    expect(source).toContain('import { RetainedSessionDocumentSurfaces }')
+    expect(source).toContain('import { RetainedTerminalPaneHost }')
+    const contentStart = source.indexOf('{showLoadingState ? (')
+    const documentHostStart = source.indexOf('<RetainedSessionDocumentSurfaces', contentStart)
+    const browserHostStart = source.indexOf('<RetainedSessionBrowserSurfaces', contentStart)
+    const retainedHostStart = source.indexOf('<RetainedTerminalPaneHost', contentStart)
+    const commandDockStart = source.indexOf('{/* Why: translate instead of resize', contentStart)
+    expect(contentStart).toBeGreaterThanOrEqual(0)
+    expect(documentHostStart).toBeGreaterThan(contentStart)
+    expect(browserHostStart).toBeGreaterThan(documentHostStart)
+    expect(retainedHostStart).toBeGreaterThan(browserHostStart)
+    expect(commandDockStart).toBeGreaterThan(retainedHostStart)
+
+    expect(source.slice(contentStart, documentHostStart)).not.toContain('<MobileMarkdownReader')
+    expect(source.slice(contentStart, documentHostStart)).not.toContain('<MobileSessionFileReader')
+    expect(source.slice(contentStart, documentHostStart)).not.toContain('<MobileBrowserPane')
+    expect(source.slice(contentStart, retainedHostStart)).not.toContain('<TerminalPaneView')
+    const documentHost = source.slice(documentHostStart, browserHostStart)
+    expect(documentHost).toContain('activeTab={activeDocumentTab}')
+    expect(documentHost).toContain('hiddenFrameStyle={styles.retainedSessionSurfaceHidden}')
+    const browserHost = source.slice(browserHostStart, retainedHostStart)
+    expect(browserHost).toContain('activeTab={activeBrowserTab}')
+    expect(browserHost).toContain('hiddenFrameStyle={styles.retainedSessionSurfaceHidden}')
+    const retainedHost = source.slice(retainedHostStart, commandDockStart)
+    expect(retainedHost).toContain('visible={terminalSurfaceVisible}')
+    expect(retainedHost).toContain('hiddenFrameStyle={styles.terminalFrameRetainedHidden}')
+    expect(documentHost).toContain('key={`documents:${terminalInventoryRecoveryScope}`}')
+    expect(browserHost).toContain('key={`browser:${terminalInventoryRecoveryScope}`}')
+    expect(retainedHost).toContain('key={`terminal:${terminalInventoryRecoveryScope}`}')
+    expect(source).toContain('!activeMarkdownTab &&')
+    expect(source).toContain('!activeFileTab &&')
+    expect(source).toContain('!activeBrowserTab &&')
+    expect(source).toContain('!activePendingTerminalTab')
+  })
+
+  it('refreshes document tabs without replacing ready content with loading state', () => {
+    const markdownRead = sliceBetween('const readMarkdownTab = useCallback(', 'const readFileTab =')
+    expect(markdownRead).toContain('reserveMobileSessionDocumentRead(')
+    expect(markdownRead).toContain('beginMarkdownTabRead(prev, tab.id)')
+    expect(markdownRead).toContain('applyMarkdownTabReadSuccess(')
+    expect(markdownRead).toContain('applyMarkdownDiskFallbackReadSuccess(')
+    expect(markdownRead).toContain('applyMarkdownTabReadFailure(')
+    expect(markdownRead).toContain('documentReadScopeSeqRef.current === requestScopeSeq')
+    expect(markdownRead).toContain("connStateRef.current === 'connected'")
+    expect(markdownRead).not.toContain('releaseMobileSessionDocumentRead(')
+    expect(markdownRead).not.toContain("new Map(prev).set(tab.id, { status: 'loading' })")
+
+    const fileRead = sliceBetween(
+      'const readFileTab = useCallback(',
+      'const copyDiffCommentsToClipboard ='
+    )
+    expect(fileRead).toContain('reserveMobileSessionDocumentRead(')
+    expect(fileRead).toContain('beginFileTabRead(prev, tab.id)')
+    expect(fileRead).toContain('applyFileTabReadSuccess(')
+    expect(fileRead).toContain('applyFileTabReadFailure(')
+    expect(fileRead).toContain('isCurrentMobileSessionDocumentRead(')
+    expect(fileRead).not.toContain('releaseMobileSessionDocumentRead(')
+    expect(fileRead).not.toContain("new Map(prev).set(tab.id, { status: 'loading' })")
+
+    const discardRead = sliceBetween('function confirmDiscardMarkdown()', 'const saveMarkdownTab =')
+    expect(discardRead).toContain(
+      'clearMobileSessionDocumentRead(documentReadRequestsRef.current, target.tab.id)'
+    )
+
+    const markdownSave = sliceBetween(
+      'const saveMarkdownTab = useCallback(',
+      'const consumeAcceptedSessionTabs ='
+    )
+    expect(markdownSave).toContain(
+      'clearMobileSessionDocumentRead(documentReadRequestsRef.current, tab.id)'
+    )
+  })
+
+  it('preserves retained scrollback and fences delayed cold-start zoom reset', () => {
+    const scrollbackBranch = sliceBetween(
+      "if (data.type === 'scrollback') {",
+      "} else if (data.type === 'metadata')"
+    )
+    expect(scrollbackBranch).toContain(
+      'const wasRendered = terminalRenderedHandlesRef.current.has(handle)'
+    )
+    expect(scrollbackBranch).toContain('ref.init(cols, rows, initialData, wasRendered, oscLinks)')
+    expect(scrollbackBranch).toContain('if (!wasRendered) {')
+    expect(scrollbackBranch).toContain('if (getTerminalRef(handle) === ref')
+    expect(scrollbackBranch).toContain('initializedHandlesRef.current.has(handle)')
+    expect(scrollbackBranch).toContain('ref.resetZoom()')
+  })
+
   it('loads session tabs without waiting for desktop activation', () => {
     const startupEffect = sliceBetween(
       'void (async () => {',
@@ -151,27 +246,40 @@ describe('mobile session startup', () => {
   })
 
   it('activates an already-selected pending terminal tab after hydration', () => {
-    expect(source).toContain(
-      'const pendingTerminalActivationAttemptRef = useRef<string | null>(null)'
-    )
-    expect(source).toContain('pendingTerminalActivationAttemptRef.current = null')
-
-    const pendingActivationEffect = sliceBetween(
-      "if (!client || connState !== 'connected' || !activePendingTerminalTab) {",
+    const pendingActivationCall = sliceBetween(
+      'useMobilePendingTerminalActivation({',
       'const showLoadingState ='
     )
-    expect(pendingActivationEffect).toContain(
-      'pendingTerminalActivationAttemptRef.current === activationKey'
+    for (const binding of [
+      'activeSessionTab,',
+      'applySessionTabs,',
+      'client,',
+      'connState,',
+      'fetchSessionTabs,',
+      'isCurrentDocumentScope: isCurrentTabCloseScope,',
+      'isCurrentSource: terminalCreation.isCurrent,',
+      'scheduleDelayedAction,',
+      'worktreeId'
+    ]) {
+      expect(pendingActivationCall).toContain(binding)
+    }
+    expect(pendingActivationHookSource).toContain(
+      "if (!client || connState !== 'connected' || !target || ready)"
     )
-    expect(pendingActivationEffect).toContain('activateMobileSessionTab(client,')
-    expect(pendingActivationEffect).toContain('tabId: activePendingTerminalTab.id')
-    expect(pendingActivationEffect).toContain('leafId: activePendingTerminalTab.leafId')
-    expect(pendingActivationEffect).toContain('notifyClients: false')
-    expect(pendingActivationEffect).toContain("navigation: 'caller'")
-    expect(pendingActivationEffect).toContain(
-      'applySessionTabs((response as RpcSuccess).result as SessionTabsResult)'
+    expect(pendingActivationHookSource).toContain(
+      'attemptRef.current?.target === target && attemptRef.current.isCurrent()'
     )
-    expect(pendingActivationEffect).toContain('scheduleDelayedAction(() => void fetchSessionTabs()')
+    expect(pendingActivationHookSource).toContain('tabId: target.tabId')
+    expect(pendingActivationHookSource).toContain('leafId: target.leafId')
+    expect(pendingActivationHookSource).toContain('{ isCurrent: isCurrentAttempt }')
+    expect(pendingActivationHookSource).toContain('if (!isCurrentAttempt())')
+    expect(pendingActivationHookSource).toContain(
+      'args.applySessionTabs(response.result as SessionTabsResult)'
+    )
+    expect(pendingActivationHookSource).toContain('for (const delay of [300, 1200])')
+    expect(pendingActivationHookSource).toContain('args.scheduleDelayedAction(() => {')
+    expect(pendingActivationHookSource).toContain('if (isCurrent())')
+    expect(pendingActivationHookSource).toContain('void args.fetchSessionTabs()')
   })
 
   it('keeps ready terminal taps local while publishing caller selection', () => {
@@ -187,12 +295,37 @@ describe('mobile session startup', () => {
   })
 
   it('keeps background and pending session-tab activation local to the phone', () => {
-    const activationRequests = source.split('activateMobileSessionTab(client,').slice(1)
+    function activationParams(text: string): string[] {
+      const tree = ts.createSourceFile(
+        'source.tsx',
+        text,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX
+      )
+      const params: string[] = []
+      function visit(node: ts.Node) {
+        if (
+          ts.isCallExpression(node) &&
+          node.expression.getText(tree) === 'activateMobileSessionTab'
+        ) {
+          expect(node.arguments[0]?.getText(tree)).toBe('client')
+          params.push(node.arguments[1]?.getText(tree) ?? '')
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(tree)
+      return params
+    }
+    const pendingRequests = activationParams(pendingActivationHookSource)
+    const activationRequests = [...activationParams(source), ...pendingRequests]
 
+    expect(pendingRequests).toHaveLength(1)
     expect(activationRequests).toHaveLength(4)
     for (const request of activationRequests) {
-      expect(request.slice(0, request.indexOf('})'))).toContain('notifyClients: false')
-      expect(request.slice(0, request.indexOf('})'))).toContain("navigation: 'caller'")
+      expect(request).toContain('notifyClients: false')
+      expect(request).toContain("navigation: 'caller'")
+      expect(request).toContain("intent: 'user'")
     }
   })
 

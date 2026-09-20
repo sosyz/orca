@@ -115,6 +115,114 @@ describe('useLiveWorktreeName request volume', () => {
     expect(sendRequest).toHaveBeenCalledTimes(4)
   })
 
+  it('accepts a slow fallback read without stacking requests behind it', async () => {
+    let resolveRead: ((response: unknown) => void) | null = null
+    let name = ''
+    sendRequest.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve
+        })
+    )
+    function SlowHarness(): null {
+      name = useLiveWorktreeName({
+        client,
+        connState: 'connected',
+        routeName: 'Route name',
+        worktreeId: 'repo-1::/worktree'
+      }).name
+      return null
+    }
+
+    await act(async () => {
+      renderer = create(createElement(SlowHarness))
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000)
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveRead?.({
+        id: 'worktree-show',
+        ok: true,
+        result: { worktree: { id: 'repo-1::/worktree', displayName: 'Slow live name' } },
+        _meta: { runtimeId: 'runtime-1' }
+      })
+      await Promise.resolve()
+    })
+    expect(name).toBe('Slow live name')
+  })
+
+  it('coalesces invalidations while a read is pending and publishes only the reread', async () => {
+    const resolvers: Array<(response: unknown) => void> = []
+    let name = ''
+    sendRequest.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve)
+        })
+    )
+    function SlowHarness(): null {
+      name = useLiveWorktreeName({
+        client,
+        connState: 'connected',
+        routeName: 'Route name',
+        worktreeId: 'repo-1::/worktree'
+      }).name
+      return null
+    }
+
+    await act(async () => {
+      renderer = create(createElement(SlowHarness))
+    })
+    await emitEvent({ type: 'worktreesChanged', repoId: 'repo-1' })
+    await emitEvent({ type: 'reposChanged' })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolvers[0]?.({
+        id: 'worktree-show',
+        ok: true,
+        result: { worktree: { id: 'repo-1::/worktree', displayName: 'Outdated name' } }
+      })
+      await Promise.resolve()
+    })
+    expect(name).toBe('Route name')
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      resolvers[1]?.({
+        id: 'worktree-show',
+        ok: true,
+        result: { worktree: { id: 'repo-1::/worktree', displayName: 'Latest name' } }
+      })
+      await Promise.resolve()
+    })
+    expect(name).toBe('Latest name')
+  })
+
+  it('does not start a queued reread after the screen loses focus', async () => {
+    let resolveRead: ((response: unknown) => void) | null = null
+    sendRequest.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve
+        })
+    )
+    await mountHarness()
+    await emitEvent({ type: 'worktreesChanged', repoId: 'repo-1' })
+    act(() => renderer?.unmount())
+    renderer = null
+
+    await act(async () => {
+      resolveRead?.({ id: 'worktree-show', ok: false, error: { code: 'runtime_busy' } })
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(unsubscribeStream).toHaveBeenCalledTimes(1)
+  })
+
   it('retries a failed initial read even after the event stream is ready', async () => {
     sendRequest.mockRejectedValueOnce(new Error('transient')).mockResolvedValue({
       id: 'worktree-show',

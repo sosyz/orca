@@ -23,7 +23,8 @@ type MobileSessionTabActivationParams = {
 async function retryIdempotentActivationAfterCutover(
   request: () => Promise<RpcResponse>,
   operation: 'terminal.focus' | 'session.tabs.activate',
-  target: string
+  target: string,
+  isCurrent?: () => boolean
 ): Promise<RpcResponse> {
   const diagnosticTarget = shortenMobileTerminalDiagnosticId(target)
   logMobileTerminalDiagnostic('activation-request', { operation, target: diagnosticTarget })
@@ -43,6 +44,9 @@ async function retryIdempotentActivationAfterCutover(
         target: diagnosticTarget,
         errorName: getMobileTerminalDiagnosticErrorName(error)
       })
+      throw error
+    }
+    if (isCurrent?.() === false) {
       throw error
     }
     logMobileTerminalDiagnostic('activation-cutover-retry', {
@@ -84,11 +88,13 @@ export function focusMobileTerminal(
 
 export function activateMobileSessionTab(
   client: ActivationClient,
-  params: MobileSessionTabActivationParams
+  params: MobileSessionTabActivationParams,
+  options?: { isCurrent: () => boolean }
 ): Promise<RpcResponse> {
   return retryIdempotentActivationAfterCutover(
     () => client.sendRequest('session.tabs.activate', params),
     'session.tabs.activate',
-    params.tabId
+    params.tabId,
+    options?.isCurrent
   )
 }

@@ -12,6 +12,7 @@ type TerminalWebViewRegistrationRefs = {
   terminalGestureInputBucketsRef: MutableRefObject<Map<string, TerminalGestureInputBucket>>
   terminalGestureInputInFlightRef: MutableRefObject<Set<string>>
   terminalGestureInputQueuesRef: MutableRefObject<Map<string, TerminalGestureInputQueue>>
+  terminalRenderedHandlesRef: MutableRefObject<Set<string>>
   terminalRefs: MutableRefObject<Map<string, TerminalWebViewHandle>>
   terminalUnsubsRef: MutableRefObject<Map<string, () => void>>
   unsubscribeTerminal: (handle: string) => void
@@ -48,6 +49,7 @@ export function setTerminalWebViewRegistration(
   refs.terminalRefs.current.delete(handle)
   refs.webReadyHandlesRef.current.delete(handle)
   refs.initializedHandlesRef.current.delete(handle)
+  refs.terminalRenderedHandlesRef.current.delete(handle)
   refs.terminalGestureInputBucketsRef.current.delete(handle)
   const queued = refs.terminalGestureInputQueuesRef.current.get(handle)
   if (queued?.timer) {

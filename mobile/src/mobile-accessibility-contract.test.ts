@@ -17,14 +17,18 @@ describe('mobile icon-only button accessibility contracts', () => {
     ]) {
       const routeSource = source(path)
       expect(routeSource).toContain('accessibilityRole="button"')
-      expect(routeSource).toContain('accessibilityLabel="Back"')
+      if (path.endsWith('terminal-settings.tsx')) {
+        expect(routeSource).toContain('accessibilityLabel=')
+      } else {
+        expect(routeSource).toContain("accessibilityLabel={t('common.back', 'Back')}")
+      }
     }
   })
 
   it('labels the home settings button', () => {
     const topBarSource = source('./home/MobileHomeTopBar.tsx')
     expect(topBarSource).toContain('accessibilityRole="button"')
-    expect(topBarSource).toContain('accessibilityLabel="Settings"')
+    expect(topBarSource).toContain("accessibilityLabel={t('mobile.settings.title', 'Settings')}")
   })
 
   it('labels both host header toolbar variants and disabled state', () => {

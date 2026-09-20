@@ -1,4 +1,5 @@
 import { ActivityIndicator, Pressable, type StyleProp, type ViewStyle } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { ImagePlus, Mic } from 'lucide-react-native'
 import { colors } from '../theme/mobile-theme'
 
@@ -41,6 +42,7 @@ export function MobileTerminalInputActions({
   onDictationPressOut,
   onDictationCancel
 }: MobileTerminalInputActionsProps) {
+  const { t } = useTranslation()
   const dictationActive = dictation.isStarting || dictation.isRecording
   return (
     <>
@@ -52,8 +54,15 @@ export function MobileTerminalInputActions({
         onPress={onAttachImage}
         onLongPress={onAttachFile}
         delayLongPress={350}
-        accessibilityLabel={isAttaching ? 'Sending image' : 'Attach a photo'}
-        accessibilityHint="Long press to attach a file instead"
+        accessibilityLabel={
+          isAttaching
+            ? t('mobile.session.terminalInput.attach.sendingImageLabel', 'Sending image')
+            : t('mobile.session.terminalInput.attach.photoLabel', 'Attach a photo')
+        }
+        accessibilityHint={t(
+          'mobile.session.terminalInput.attach.fileHint',
+          'Long press to attach a file instead'
+        )}
       >
         {isAttaching ? (
           <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -78,12 +87,12 @@ export function MobileTerminalInputActions({
         }
         accessibilityLabel={
           dictation.isRecording
-            ? 'Stop voice dictation'
+            ? t('mobile.session.terminalInput.dictation.stop', 'Stop voice dictation')
             : dictation.isProcessing
-              ? 'Cancel voice dictation'
+              ? t('mobile.session.terminalInput.dictation.cancel', 'Cancel voice dictation')
               : dictation.isStarting
-                ? 'Starting voice dictation'
-                : 'Start voice dictation'
+                ? t('mobile.session.terminalInput.dictation.starting', 'Starting voice dictation')
+                : t('mobile.session.terminalInput.dictation.start', 'Start voice dictation')
         }
       >
         {dictation.isProcessing ? (

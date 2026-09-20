@@ -18,7 +18,8 @@ export const mobileSessionFrameStyles = StyleSheet.create({
   },
   sessionContentMain: {
     flex: 1,
-    minWidth: 0
+    minWidth: 0,
+    position: 'relative'
   },
   sessionChrome: {
     backgroundColor: colors.bgPanel,
@@ -147,6 +148,14 @@ export const mobileSessionFrameStyles = StyleSheet.create({
     minHeight: 0,
     position: 'relative',
     overflow: 'hidden'
+  },
+  terminalFrameRetainedHidden: {
+    ...StyleSheet.absoluteFillObject,
+    display: 'none'
+  },
+  retainedSessionSurfaceHidden: {
+    ...StyleSheet.absoluteFillObject,
+    display: 'none'
   },
   terminalPane: {
     ...StyleSheet.absoluteFillObject

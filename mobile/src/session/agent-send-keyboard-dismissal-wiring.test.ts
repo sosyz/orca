@@ -9,6 +9,14 @@ const bufferedDraftHookSource = readFileSync(
   new URL('../terminal/use-buffered-terminal-drafts.ts', import.meta.url),
   'utf8'
 )
+const bufferedSendSource = readFileSync(
+  new URL('../terminal/mobile-terminal-buffered-send.ts', import.meta.url),
+  'utf8'
+)
+const liveInputBarSource = readFileSync(
+  new URL('./MobileTerminalLiveInputBar.tsx', import.meta.url),
+  'utf8'
+)
 const keyboardDismissalHookSource = readFileSync(
   new URL('./use-agent-send-keyboard-dismissal.ts', import.meta.url),
   'utf8'
@@ -60,7 +68,7 @@ describe('terminal send keyboard dismissal wiring', () => {
   it('dismisses after the live input submits, which is the only Enter path', () => {
     // terminal-live-input.ts deliberately keeps Enter off the key map, so
     // onSubmitEditing is the single send seam for the live field.
-    const slice = routeSlice('ref={liveInputRef}', 'importantForAutofill="no"')
+    const slice = routeSlice('inputRef={liveInputRef}', 'onDictationCancel={cancelDictation}')
     expect(slice).toContain('generation: getSendCompletionGeneration()')
     expect(slice).toContain('const submit = handleLiveInputSubmit()')
     expect(slice).toContain('interaction: getLiveInteractionGeneration()')
@@ -68,30 +76,23 @@ describe('terminal send keyboard dismissal wiring', () => {
     expect(slice).toContain('dismissKeyboardAfterAgentSend(')
     // Explicit dismissal replaces RN's blur, which stays off so a shell send
     // does not drop focus.
-    expect(slice).toContain('blurOnSubmit={false}')
+    expect(liveInputBarSource).toContain('blurOnSubmit={false}')
   })
 
   it('dismisses the buffered command send only once the write is accepted', () => {
     const slice = routeSlice('async function handleSend() {', 'async function handleAccessoryKey(')
-    const acceptedAt = slice.indexOf('const accepted = isTerminalSendRpcAccepted(response)')
-    const restoreAt = slice.indexOf('restoreRejectedDraft()', acceptedAt)
-    const dismissAt = slice.indexOf('dismissKeyboardAfterAgentSend(')
-    const responseAt = slice.indexOf('const response = await client.sendRequest(')
-    const catchAt = slice.indexOf('} catch {')
-    expect(dismissAt).toBeGreaterThan(0)
-    expect(responseAt).toBeGreaterThan(0)
-    expect(acceptedAt).toBeGreaterThan(responseAt)
-    expect(restoreAt).toBeGreaterThan(acceptedAt)
-    expect(dismissAt).toBeGreaterThan(responseAt)
+    expect(slice).toContain('await sendMobileTerminalBufferedCommand({')
+    expect(slice).toContain('beginDraftSend: () => {')
     expect(slice).toContain(
-      'const draftUnchanged =\n        accepted && bufferedTerminalDraftState.settleBufferedTerminalDraftSend(bufferedDraftSend)'
+      'settle: () => bufferedTerminalDraftState.settleBufferedTerminalDraftSend(send)'
     )
-    expect(slice).toContain('dismissKeyboardAfterAgentSend(sendOrigin, accepted && draftUnchanged)')
-    expect(catchAt).toBeGreaterThan(0)
-    // Both resolved rejections and transport failures restore the raw draft.
-    expect(dismissAt).toBeLessThan(catchAt)
-    expect(slice.slice(catchAt)).not.toContain('dismissKeyboardAfterAgentSend(')
-    expect(slice.slice(catchAt)).toContain('restoreRejectedDraft()')
+    expect(slice).toContain('onAccepted: (draftUnchanged) =>')
+    expect(slice).toContain('dismissKeyboardAfterAgentSend(sendOrigin, draftUnchanged)')
+    expect(bufferedSendSource).toContain('const response = await scope.client.sendRequest(')
+    expect(bufferedSendSource).toContain('isTerminalSendRpcAccepted(response)')
+    expect(bufferedSendSource).toContain("if (outcome.kind === 'accepted') {")
+    expect(bufferedSendSource).toContain('args.onAccepted(draftUnchanged)')
+    expect(bufferedSendSource).not.toContain('args.onAccepted(outcome.kind !==')
   })
 
   it('keeps buffered Return focused until accepted-agent dismissal runs', () => {
@@ -104,20 +105,20 @@ describe('terminal send keyboard dismissal wiring', () => {
       'async function handleSend() {',
       'async function handleAccessoryKey('
     )
-    const originAt = sendSlice.indexOf('handle: activeHandle')
-    const requestAt = sendSlice.indexOf('await client.sendRequest(')
-    const restoreSlice = routeSlice(
-      'const bufferedDraftSend = bufferedTerminalDraftState.beginBufferedTerminalDraftSend(',
-      'bufferedTerminalDraftState.restoreRejectedDraft(bufferedDraftSend)'
-    )
+    const originAt = sendSlice.indexOf('handle: scope.handle')
+    const requestAt = sendSlice.indexOf('await sendMobileTerminalBufferedCommand(')
     expect(originAt).toBeGreaterThan(0)
     expect(originAt).toBeLessThan(requestAt)
-    expect(restoreSlice).toContain('activeHandle,\n      draft')
+    expect(sendSlice).toContain('beginBufferedTerminalDraftSend(scope.handle, draft)')
+    expect(sendSlice).toContain('bufferedTerminalDraftState.restoreRejectedDraft(send)')
+    expect(sendSlice).toContain(
+      'canRestoreDraft: () => committedLeaveSourceRef.current === createFeedbackSource'
+    )
+    expect(bufferedSendSource).toContain('draftSend.restoreRejectedDraft()')
     expect(bufferedDraftHookSource).not.toContain('getSendCompletionGeneration()')
     expect(bufferedDraftHookSource).toContain(
       'restoreRejectedBufferedTerminalDraft(current, send.token.handle, send.draft)'
     )
-    expect(sendSlice.match(/restoreRejectedDraft\(\)/g)).toHaveLength(2)
     expect(keyboardDismissalHookSource).toContain(
       'origin.generation === getSendCompletionGeneration()'
     )

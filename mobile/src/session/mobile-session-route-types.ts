@@ -83,16 +83,34 @@ export type MarkdownDocState =
       stale?: boolean
       saving?: boolean
       saveError?: string
+      refreshing?: boolean
+      refreshError?: string
       readOnlyReason?: string
     }
   | { status: 'error'; message: string }
 
+type RefreshingFileDocState = {
+  refreshing?: boolean
+  refreshError?: string
+}
+
 export type FileDocState =
   | { status: 'loading' }
-  | { status: 'ready'; kind: 'file'; content: string; truncated: boolean; byteLength: number }
-  | { status: 'ready'; kind: 'diff'; lines: MobileDiffLine[]; truncated: boolean }
-  | { status: 'ready'; kind: 'image'; dataUri: string }
-  | { status: 'ready'; kind: 'html'; content: string }
+  | ({
+      status: 'ready'
+      kind: 'file'
+      content: string
+      truncated: boolean
+      byteLength: number
+    } & RefreshingFileDocState)
+  | ({
+      status: 'ready'
+      kind: 'diff'
+      lines: MobileDiffLine[]
+      truncated: boolean
+    } & RefreshingFileDocState)
+  | ({ status: 'ready'; kind: 'image'; dataUri: string } & RefreshingFileDocState)
+  | ({ status: 'ready'; kind: 'html'; content: string } & RefreshingFileDocState)
   | { status: 'error'; message: string }
 
 export type RenderableDiffLine = MobileHighlightedDiffLine<MobileDiffLine>

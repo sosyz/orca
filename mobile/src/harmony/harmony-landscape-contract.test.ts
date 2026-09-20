@@ -31,7 +31,8 @@ describe('Harmony landscape contract', () => {
     )
     expect(
       session.match(/\[styles\.markdownFrame, \{ paddingBottom: insets\.bottom \}\]/gu)
-    ).toHaveLength(2)
+    ).toHaveLength(1)
+    expect(session).toContain('<RetainedSessionDocumentSurfaces')
     expect(preview).toContain("edges={isLandscape ? ['left', 'right', 'bottom'] : ['bottom']}")
     expect(preview).toContain('onLayout={handlePreviewBodyLayout}')
     expect(preview).toContain('previewBodySize.width - spacing.md * 2')

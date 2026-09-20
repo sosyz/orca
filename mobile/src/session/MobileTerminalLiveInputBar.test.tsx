@@ -2,6 +2,7 @@ import { createElement, useCallback, useRef, useState, type RefObject } from 're
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import type { TextInput } from 'react-native'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { i18n } from '../i18n/i18n'
 import type { TerminalLiveInputSender } from '../terminal/terminal-live-input-sender'
 import { useTerminalLiveInputCommit } from '../terminal/use-terminal-live-input-commit'
 import {
@@ -168,10 +169,11 @@ async function changeLiveInput(
 }
 
 describe('MobileTerminalLiveInputBar', () => {
-  afterEach(() => {
+  afterEach(async () => {
     mockTextInputHandle.blur.mockClear()
     mockTextInputHandle.focus.mockClear()
     mockTextInputHandle.setNativeProps.mockClear()
+    await i18n.changeLanguage('en')
   })
 
   it('updates the visible capture locally without re-rendering the route owner', async () => {
@@ -219,6 +221,24 @@ describe('MobileTerminalLiveInputBar', () => {
         { handle: 'terminal-a', bytes: 'a' },
         { handle: 'terminal-b', bytes: 'b' }
       ])
+    )
+    harness.unmount()
+  })
+
+  it('renders live terminal input status and accessibility labels in Chinese', async () => {
+    await i18n.changeLanguage('zh')
+
+    const harness = createLiveInputBarHarness()
+    const labels = harness.renderer.root
+      .findAllByType('Pressable')
+      .map((node) => node.props.accessibilityLabel)
+      .filter((label): label is string => typeof label === 'string')
+
+    expect(textValues(harness.renderer)).toEqual(
+      expect.arrayContaining(['实时输入', '点按显示键盘'])
+    )
+    expect(labels).toEqual(
+      expect.arrayContaining(['显示实时终端输入键盘', '附加照片', '开始语音听写'])
     )
     harness.unmount()
   })

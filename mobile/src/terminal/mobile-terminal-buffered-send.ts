@@ -21,18 +21,16 @@ type PendingBufferedSend = {
 }
 
 export type MobileTerminalBufferedSendState = {
-  draftRevision: number
   pending: Set<PendingBufferedSend>
 }
 
 export function createMobileTerminalBufferedSendState(): MobileTerminalBufferedSendState {
-  return { draftRevision: 0, pending: new Set() }
+  return { pending: new Set() }
 }
 
-export function markMobileTerminalBufferedDraftEdited(
-  state: MobileTerminalBufferedSendState
-): void {
-  state.draftRevision += 1
+type BufferedDraftSend = {
+  restoreRejectedDraft: () => void
+  settle: () => boolean
 }
 
 function sameScope(
@@ -56,7 +54,9 @@ export async function sendMobileTerminalBufferedCommand(args: {
   readonly getCurrentScope: () => MobileTerminalBufferedSendScope | null
   readonly draft: string
   readonly deviceToken: string | null
-  readonly setDraft: (update: (current: string) => string) => void
+  readonly beginDraftSend: () => BufferedDraftSend
+  readonly canRestoreDraft: () => boolean
+  readonly onAccepted: (draftUnchanged: boolean) => void
   readonly onFailure: (outcome: Exclude<TerminalLiveSendOutcome, { kind: 'accepted' }>) => void
 }): Promise<'accepted' | 'rejected' | 'unknown' | 'skipped'> {
   const { state, scope } = args
@@ -69,11 +69,11 @@ export async function sendMobileTerminalBufferedCommand(args: {
 
   const pending = { scope }
   state.pending.add(pending)
-  const draftRevision = state.draftRevision
-  const text = normalizeTerminalTextInput(args.draft)
-  args.setDraft(() => '')
+  let draftSend: BufferedDraftSend | null = null
 
   try {
+    const text = normalizeTerminalTextInput(args.draft)
+    draftSend = args.beginDraftSend()
     let outcome: TerminalLiveSendOutcome
     try {
       const response = await scope.client.sendRequest(
@@ -93,18 +93,22 @@ export async function sendMobileTerminalBufferedCommand(args: {
       outcome = classifyTerminalLiveSendError(error)
     }
 
-    if (outcome.kind !== 'accepted' && sameScope(scope, args.getCurrentScope())) {
-      args.setDraft((current) =>
-        sameScope(scope, args.getCurrentScope()) &&
-        state.draftRevision === draftRevision &&
-        current === ''
-          ? args.draft
-          : current
-      )
-      args.onFailure(outcome)
+    if (outcome.kind === 'accepted') {
+      const draftUnchanged = draftSend.settle()
+      if (scope === args.getCurrentScope()) {
+        args.onAccepted(draftUnchanged)
+      }
+    } else {
+      if (args.canRestoreDraft()) {
+        draftSend.restoreRejectedDraft()
+      }
+      if (scope === args.getCurrentScope()) {
+        args.onFailure(outcome)
+      }
     }
     return outcome.kind
   } finally {
+    draftSend?.settle()
     state.pending.delete(pending)
   }
 }

@@ -5,6 +5,10 @@ const sessionRouteSource = readFileSync(
   new URL('../../app/h/[hostId]/session/[worktreeId].tsx', import.meta.url),
   'utf8'
 )
+const bufferedSendSource = readFileSync(
+  new URL('./mobile-terminal-buffered-send.ts', import.meta.url),
+  'utf8'
+)
 
 // Why: iOS terminates an active keyboard-dictation (and IME) session whenever
 // JS writes a value into the focused field that differs from the native text
@@ -20,6 +24,6 @@ describe('terminal iOS dictation write-back', () => {
   })
 
   it('still normalizes the buffered command text at send time', () => {
-    expect(sessionRouteSource).toContain('normalizeTerminalTextInput(draft)')
+    expect(bufferedSendSource).toContain('normalizeTerminalTextInput(args.draft)')
   })
 })

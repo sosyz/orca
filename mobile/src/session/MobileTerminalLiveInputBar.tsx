@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useImperativeHandle, useState, type RefObject } from 'react'
 import { Keyboard as KeyboardIcon } from 'lucide-react-native'
 import { Platform, Pressable, TextInput, View, type TextInputProps } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { getTerminalLiveInputKeyboardType } from '../terminal/terminal-keyboard-type'
 import { colors } from '../theme/mobile-theme'
 import { MobileTerminalInputActions } from './MobileTerminalInputActions'
@@ -58,6 +59,7 @@ export const MobileTerminalLiveInputBar = forwardRef<
   },
   ref
 ) {
+  const { t } = useTranslation()
   const [liveInputText, setLiveInputText] = useState('')
   const setCaptureText = useCallback((text: string) => {
     setLiveInputText(text)
@@ -76,8 +78,14 @@ export const MobileTerminalLiveInputBar = forwardRef<
         disabled={!canSend}
         onPress={onFocusLiveInput}
         accessibilityRole="button"
-        accessibilityLabel="Show keyboard for live terminal input"
-        accessibilityHint="Typed text is sent directly to the active terminal"
+        accessibilityLabel={t(
+          'mobile.session.terminalInput.focus.label',
+          'Show keyboard for live terminal input'
+        )}
+        accessibilityHint={t(
+          'mobile.session.terminalInput.focus.hint',
+          'Typed text is sent directly to the active terminal'
+        )}
       >
         <KeyboardIcon size={16} color={colors.textSecondary} strokeWidth={2} />
         <MobileTerminalLiveInputStatus

@@ -3,8 +3,14 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { RpcResponse } from '../transport/types'
 import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import {
+  beginBufferedTerminalDraftRestoration,
+  invalidateBufferedTerminalDraftRestoration,
+  restoreRejectedBufferedTerminalDraft,
+  settleBufferedTerminalDraftRestoration,
+  type BufferedTerminalDraftRestorationToken
+} from './buffered-terminal-draft-restoration'
+import {
   createMobileTerminalBufferedSendState,
-  markMobileTerminalBufferedDraftEdited,
   sendMobileTerminalBufferedCommand,
   type MobileTerminalBufferedSendScope
 } from './mobile-terminal-buffered-send'
@@ -48,19 +54,37 @@ function harness(initialResponse: Promise<RpcResponse>) {
     worktreeId: 'worktree-a',
     tabId: 'tab-a'
   }
-  let draft = 'first'
+  let drafts: Record<string, string> = { 'terminal-a': 'first' }
+  const restorations = new Map<string, BufferedTerminalDraftRestorationToken>()
   const state = createMobileTerminalBufferedSendState()
   const outcomes: string[] = []
-  const send = (target = scope, text = draft) =>
+  const acceptedUnchanged: boolean[] = []
+  const send = (target = scope, text = target ? (drafts[target.handle] ?? '') : '') =>
     sendMobileTerminalBufferedCommand({
       state,
       scope: target,
       getCurrentScope: () => scope,
       draft: text,
       deviceToken: 'device-a',
-      setDraft: (update) => {
-        draft = update(draft)
+      beginDraftSend: () => {
+        const token = beginBufferedTerminalDraftRestoration(restorations, target!.handle)
+        drafts = { ...drafts, [target!.handle]: '' }
+        return {
+          restoreRejectedDraft: () => {
+            if (settleBufferedTerminalDraftRestoration(restorations, target!.handle, token)) {
+              drafts = restoreRejectedBufferedTerminalDraft(drafts, token.handle, text)
+            }
+          },
+          settle: () => settleBufferedTerminalDraftRestoration(restorations, target!.handle, token)
+        }
       },
+      canRestoreDraft: () =>
+        scope !== null &&
+        target !== null &&
+        scope.client === target.client &&
+        scope.hostId === target.hostId &&
+        scope.worktreeId === target.worktreeId,
+      onAccepted: (unchanged) => acceptedUnchanged.push(unchanged),
       onFailure: (outcome) => outcomes.push(outcome.kind)
     })
   return {
@@ -69,8 +93,12 @@ function harness(initialResponse: Promise<RpcResponse>) {
     state,
     send,
     outcomes,
+    acceptedUnchanged,
     get draft() {
-      return draft
+      return drafts[scope?.handle ?? 'terminal-a'] ?? ''
+    },
+    draftFor(handle: string) {
+      return drafts[handle] ?? ''
     },
     get scope() {
       return scope
@@ -79,8 +107,11 @@ function harness(initialResponse: Promise<RpcResponse>) {
       scope = value
     },
     editDraft(text: string) {
-      markMobileTerminalBufferedDraftEdited(state)
-      draft = text
+      if (!scope) {
+        return
+      }
+      invalidateBufferedTerminalDraftRestoration(restorations, scope.handle)
+      drafts = { ...drafts, [scope.handle]: text }
     }
   }
 }
@@ -156,6 +187,20 @@ describe('mobile buffered terminal send', () => {
     pending.resolve(failedResponse)
     expect(await send).toBe('rejected')
     expect(h.draft).toBe('')
+    expect(h.outcomes).toEqual([])
+  })
+
+  it('restores a rejected A draft while B stays visible without reporting A failure on B', async () => {
+    const pending = deferred<RpcResponse>()
+    const h = harness(pending.promise)
+    const sendA = h.send()
+    h.scope = { ...h.scope!, handle: 'terminal-b', tabId: 'tab-b' }
+    h.editDraft('B command')
+
+    pending.resolve(rejectedResponse)
+    expect(await sendA).toBe('rejected')
+    expect(h.draftFor('terminal-a')).toBe('first')
+    expect(h.draft).toBe('B command')
     expect(h.outcomes).toEqual([])
   })
 

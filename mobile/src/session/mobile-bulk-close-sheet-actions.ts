@@ -9,7 +9,7 @@ import {
 /** Session-route state the bulk close orchestration reads and drives. */
 type BulkCloseSheetDeps = {
   sessionTabsRef: { readonly current: readonly MobileSessionTab[] }
-  markdownDocs: ReadonlyMap<string, MarkdownDocState>
+  markdownDocsRef: { readonly current: ReadonlyMap<string, MarkdownDocState> }
   activeSessionTabIdRef: { readonly current: string | null }
   switchSessionTab: (tab: MobileSessionTab) => void
   closeSessionTab: (tab: MobileSessionTab) => Promise<void>
@@ -29,7 +29,7 @@ export function createBulkCloseSheetActions(deps: BulkCloseSheetDeps) {
       }
       // Why: the tab list's isDirty can lag behind a phone draft; the local
       // markdown doc state is the authority on unsaved edits.
-      const doc = deps.markdownDocs.get(candidate.id)
+      const doc = deps.markdownDocsRef.current.get(candidate.id)
       return !(doc?.status === 'ready' && doc.isDirty)
     })
 
@@ -44,7 +44,11 @@ export function createBulkCloseSheetActions(deps: BulkCloseSheetDeps) {
       deps.switchSessionTab(anchor)
     }
     for (const target of targets) {
-      await deps.closeSessionTab(target)
+      // A user can edit or close the next tab while an earlier host request is pending.
+      const current = selectClosable(anchor.id, mode).find((tab) => tab.id === target.id)
+      if (current) {
+        await deps.closeSessionTab(current)
+      }
     }
   }
 
@@ -75,15 +79,26 @@ export function createBulkCloseSheetActions(deps: BulkCloseSheetDeps) {
  */
 export function createCloseWithBulkActions(
   closeSessionTab: (tab: MobileSessionTab) => Promise<void>,
-  bulkActions: ReturnType<typeof createBulkCloseSheetActions>
+  bulkActions: ReturnType<typeof createBulkCloseSheetActions>,
+  markdownClose: {
+    markdownDocsRef: { readonly current: ReadonlyMap<string, MarkdownDocState> }
+    isCurrentTarget: (tab: MobileSessionTab) => boolean
+    onDirtyClose: (tab: Extract<MobileSessionTab, { type: 'markdown' }>) => void
+  }
 ) {
   return (target: MobileSessionTab | null, dismiss: () => void): ActionSheetAction[] => [
     {
       label: 'Close',
       destructive: true,
+      closeBeforePress: target?.type === 'markdown',
       onPress: () => {
         dismiss()
-        if (target) {
+        if (target && markdownClose.isCurrentTarget(target)) {
+          const doc = markdownClose.markdownDocsRef.current.get(target.id)
+          if (target.type === 'markdown' && doc?.status === 'ready' && doc.isDirty) {
+            markdownClose.onDirtyClose(target)
+            return
+          }
           void closeSessionTab(target)
         }
       }

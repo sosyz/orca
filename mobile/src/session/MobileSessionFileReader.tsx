@@ -10,6 +10,7 @@ import {
   View,
   type ListRenderItem
 } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { Copy, MessageSquare, Send } from 'lucide-react-native'
 import type { DiffComment } from '../../../src/shared/diff-comment-types'
 import { MobileCodeScaleControls } from '../files/MobileCodeScaleControls'
@@ -39,18 +40,23 @@ import { MOBILE_SESSION_DIFF_GUTTER_WIDTH } from './mobile-session-reader-styles
 import { styles } from './mobile-session-styles'
 
 export function MobileSessionFileReader({
+  active = true,
   doc,
   title,
   relativePath,
   language,
-  diffCommentActions
+  diffCommentActions,
+  onRefresh
 }: {
+  active?: boolean
   doc: FileDocState | undefined
   title: string
   relativePath: string
   language?: string
   diffCommentActions?: DiffCommentActions
+  onRefresh?: () => void
 }) {
+  const { t } = useTranslation()
   const { textScale, panHandlers, zoomOut, zoomIn, resetZoom } = useMobileCodeTextScale()
   const codeTextMetrics = useMemo(
     () => scaledMobileCodeTextMetrics(typography.bodySize, 22, textScale),
@@ -144,8 +150,9 @@ export function MobileSessionFileReader({
           item.newLineNumber !== undefined ? (diffCommentsByLine.get(item.newLineNumber) ?? []) : []
         }
         activeCommentLine={activeCommentLine}
+        active={active}
         commentDraft={commentDraft}
-        commentsBusy={diffCommentActions?.busy === true}
+        commentsBusy={!active || diffCommentActions?.busy === true}
         onStartComment={startComment}
         onCancelComment={cancelComment}
         onDraftChange={setCommentDraft}
@@ -158,6 +165,7 @@ export function MobileSessionFileReader({
       />
     ),
     [
+      active,
       activeCommentLine,
       cancelComment,
       codeTextMetrics,
@@ -216,9 +224,27 @@ export function MobileSessionFileReader({
     return (
       <View style={styles.markdownState}>
         <Text style={styles.markdownError}>{doc.message}</Text>
+        {onRefresh ? (
+          <Pressable style={styles.markdownRefreshButton} onPress={onRefresh}>
+            <Text style={styles.markdownRefreshText}>{t('common.retry', 'Retry')}</Text>
+          </Pressable>
+        ) : null}
       </View>
     )
   }
+
+  const refreshErrorBanner = doc.refreshError ? (
+    <View style={styles.fileRefreshBanner}>
+      <Text style={styles.fileRefreshText} numberOfLines={2}>
+        {doc.refreshError}
+      </Text>
+      {onRefresh ? (
+        <Pressable style={styles.markdownRefreshButton} onPress={onRefresh}>
+          <Text style={styles.markdownRefreshText}>{t('common.retry', 'Retry')}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  ) : null
 
   if (doc.kind === 'diff') {
     const activeDiffSyntax =
@@ -226,11 +252,26 @@ export function MobileSessionFileReader({
     const commentCount = diffCommentActions?.comments.length ?? 0
     const unsentCommentCount =
       diffCommentActions?.comments.filter((comment) => !comment.sentAt).length ?? 0
-    const commentsBusy = diffCommentActions?.busy === true
+    const commentsBusy = !active || diffCommentActions?.busy === true
     const canCopyNotes = commentCount > 0 && !commentsBusy
     const canSendNotes = unsentCommentCount > 0 && !commentsBusy
     return (
       <View style={styles.markdownEditor} {...panHandlers}>
+        {refreshErrorBanner}
+        {diffCommentActions?.loadError ? (
+          <View style={styles.fileRefreshBanner}>
+            <Text style={styles.fileRefreshText}>{diffCommentActions.loadError}</Text>
+            {diffCommentActions.onRetry ? (
+              <Pressable
+                style={styles.markdownRefreshButton}
+                disabled={!active}
+                onPress={() => void diffCommentActions.onRetry?.()}
+              >
+                <Text style={styles.markdownRefreshText}>{t('common.retry', 'Retry')}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         <MobileCodeScaleControls
           textScale={textScale}
           onZoomOut={zoomOut}
@@ -242,9 +283,17 @@ export function MobileSessionFileReader({
             <View style={styles.diffNotesTitleRow}>
               <MessageSquare size={14} color={colors.textSecondary} strokeWidth={2.2} />
               <Text style={styles.diffNotesTitle}>
-                {commentCount === 0
-                  ? 'No review notes'
-                  : `${commentCount} review ${commentCount === 1 ? 'note' : 'notes'}`}
+                {diffCommentActions.loading
+                  ? t('common.loading', 'Loading...')
+                  : commentCount === 0
+                    ? t('mobile.session.reviewNotes.empty', 'No review notes')
+                    : t(
+                        commentCount === 1
+                          ? 'mobile.session.reviewNotes.summaryOne'
+                          : 'mobile.session.reviewNotes.summaryMany',
+                        commentCount === 1 ? '{{count}} review note' : '{{count}} review notes',
+                        { count: commentCount }
+                      )}
               </Text>
             </View>
             <View style={styles.diffNotesActions}>
@@ -255,10 +304,12 @@ export function MobileSessionFileReader({
                 ]}
                 disabled={!canCopyNotes}
                 onPress={() => void diffCommentActions.onCopyAll()}
-                accessibilityLabel="Copy review notes"
+                accessibilityLabel={t('mobile.session.reviewNotes.copyLabel', 'Copy review notes')}
               >
                 <Copy size={13} color={colors.textSecondary} strokeWidth={2.2} />
-                <Text style={styles.diffNotesActionText}>Copy</Text>
+                <Text style={styles.diffNotesActionText}>
+                  {t('mobile.session.reviewNotes.copy', 'Copy')}
+                </Text>
               </Pressable>
               <Pressable
                 style={[
@@ -267,10 +318,15 @@ export function MobileSessionFileReader({
                 ]}
                 disabled={!canSendNotes}
                 onPress={diffCommentActions.onSendAll}
-                accessibilityLabel="Send review notes to AI"
+                accessibilityLabel={t(
+                  'mobile.session.reviewNotes.sendLabel',
+                  'Send review notes to AI'
+                )}
               >
                 <Send size={13} color={colors.textSecondary} strokeWidth={2.2} />
-                <Text style={styles.diffNotesActionText}>Send</Text>
+                <Text style={styles.diffNotesActionText}>
+                  {t('mobile.session.reviewNotes.send', 'Send')}
+                </Text>
               </Pressable>
             </View>
           </View>
@@ -297,6 +353,7 @@ export function MobileSessionFileReader({
   if (doc.kind === 'image') {
     return (
       <View style={styles.imagePreviewContainer}>
+        {refreshErrorBanner}
         <ScrollView
           style={styles.imagePreviewScroll}
           contentContainerStyle={styles.imagePreviewContent}
@@ -308,15 +365,16 @@ export function MobileSessionFileReader({
             source={{ uri: doc.dataUri }}
             style={styles.imagePreview}
             resizeMode="contain"
-            accessibilityLabel={`${title} image`}
+            accessibilityLabel={t('mobile.session.file.imageLabel', '{{title}} image', { title })}
           />
         </ScrollView>
       </View>
     )
   }
 
-  const renderSourceText = () => (
+  const renderSourceText = (includeRefreshError = true) => (
     <View style={styles.markdownEditor} {...panHandlers}>
+      {includeRefreshError ? refreshErrorBanner : null}
       <MobileCodeScaleControls
         textScale={textScale}
         onZoomOut={zoomOut}
@@ -330,7 +388,9 @@ export function MobileSessionFileReader({
         <Text
           selectable
           style={[styles.filePreviewText, codeTextMetrics]}
-          accessibilityLabel={`${title} preview`}
+          accessibilityLabel={t('mobile.session.file.previewLabel', '{{title}} preview', {
+            title
+          })}
         >
           <MobileSyntaxSegments segments={sourceSegments} />
         </Text>
@@ -341,7 +401,8 @@ export function MobileSessionFileReader({
   if (doc.kind === 'html') {
     return (
       <View style={styles.markdownEditor}>
-        <MobileHtmlPreview html={doc.content} renderSource={renderSourceText} />
+        {refreshErrorBanner}
+        <MobileHtmlPreview html={doc.content} renderSource={() => renderSourceText(false)} />
       </View>
     )
   }
