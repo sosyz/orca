@@ -103,9 +103,9 @@ export function applyMobileNativeChatStreamFrame(args: {
       ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset })
     }
   }
-  const previousFirstId = merger.list[0]?.id
+  const unboundedFirstId = merger.list[0]?.id ?? frame.messages[0]?.id
   const messages = applyAppend(merger, frame.messages, limit)
-  const cursorInvalidated = Boolean(previousFirstId && messages[0]?.id !== previousFirstId)
+  const cursorInvalidated = Boolean(unboundedFirstId && messages[0]?.id !== unboundedFirstId)
   const replayStillStartsAtOldest = frame.type === 'snapshot' && replayStartIndex === 0
   return {
     kind: 'messages',
@@ -114,9 +114,9 @@ export function applyMobileNativeChatStreamFrame(args: {
     // Why: once the bounded live window drops its oldest row, the snapshot's
     // byte cursor no longer describes the oldest retained message.
     ...(cursorInvalidated ? { cursorInvalidated: true } : {}),
-    // A trimmed replay creates page-able history even if the prior window had
-    // none; otherwise only a replay sharing our oldest row owns its metadata.
-    ...(frame.type === 'snapshot' && cursorInvalidated
+    // Any trimmed window creates earlier history; otherwise only a replay
+    // sharing our oldest row owns its paging metadata.
+    ...(cursorInvalidated
       ? { hasMore: true }
       : replayStillStartsAtOldest
         ? {

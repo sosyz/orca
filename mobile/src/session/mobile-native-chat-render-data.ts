@@ -1,4 +1,6 @@
 import { formatAgentTypeLabel } from '../../../src/shared/agent-type-label'
+import { getVerifiedNativeChatCommands } from '../../../src/shared/native-chat-agent-profiles'
+import { surfaceSkillInvocationUserTurns } from '../../../src/shared/native-chat-command-envelope'
 import {
   formatNativeChatEmptyStateCopy,
   type NativeChatEmptyStateCopy
@@ -51,10 +53,20 @@ export type MobileNativeChatPendingItem = {
   baselineTailMessageId?: string | null
 }
 
-export function foldMobileNativeChatMessages(messages: NativeChatMessage[]): NativeChatMessage[] {
+export function foldMobileNativeChatMessages(
+  messages: NativeChatMessage[],
+  agent?: string | null
+): NativeChatMessage[] {
+  const surfaced =
+    agent === 'claude' || agent === 'openclaude'
+      ? surfaceSkillInvocationUserTurns(
+          messages,
+          new Set(getVerifiedNativeChatCommands(agent).map((command) => command.name))
+        )
+      : messages
   // Normalize first (desktop assembler parity): image marker turns fold into
   // image-ref blocks instead of rendering as raw `[Image: …]` text.
-  return stripNoiseMessages(foldToolMessages(normalizeImageTranscriptMessages(messages)))
+  return stripNoiseMessages(foldToolMessages(normalizeImageTranscriptMessages(surfaced)))
 }
 
 /** Assemble the folded transcript, streaming text, and optimistic user echoes. */

@@ -32,22 +32,144 @@ describe('useMobileNativeChatSession', () => {
     renderer = null
   })
 
-  function Harness({ client }: { client: RpcClient | null }): null {
+  function Harness({
+    client,
+    sourceIdentity = 'host-a\0workspace-a',
+    onLoadEarlierError
+  }: {
+    client: RpcClient | null
+    sourceIdentity?: string
+    onLoadEarlierError?: (message: string) => void
+  }): null {
     state = useMobileNativeChatSession({
       client,
-      sourceIdentity: 'host-a\0workspace-a',
+      sourceIdentity,
       agent: 'claude',
       sessionId: 'session',
-      transcriptPath: null
+      transcriptPath: null,
+      onLoadEarlierError
     })
     return null
   }
 
-  async function mount(client: RpcClient): Promise<void> {
+  async function mount(
+    client: RpcClient,
+    onLoadEarlierError?: (message: string) => void
+  ): Promise<void> {
     await act(async () => {
-      renderer = create(createElement(Harness, { client }))
+      renderer = create(createElement(Harness, { client, onLoadEarlierError }))
     })
   }
+
+  it.each(['transport', 'rpc', 'read-result'])(
+    'retains the transcript and allows retry after an older-page %s failure',
+    async (failure) => {
+      const sendRequest = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          if (failure === 'transport') {
+            throw new Error('Connection interrupted')
+          }
+          return failure === 'rpc'
+            ? { ok: false, error: { message: 'History unavailable' } }
+            : { ok: true, result: { error: 'History unavailable' } }
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          result: { messages: [message('earlier')], hasMore: false, beforeOffset: 0 }
+        })
+      const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+        onData({
+          type: 'snapshot',
+          messages: [message('visible')],
+          hasMore: true,
+          beforeOffset: 100
+        })
+        return () => {}
+      })
+      const onLoadEarlierError = vi.fn()
+      await mount({ sendRequest, subscribe } as unknown as RpcClient, onLoadEarlierError)
+
+      await act(async () => {
+        state?.loadEarlier()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      expect(state?.messages.map((entry) => entry.id)).toEqual(['visible'])
+      expect(state?.status).toBe('ready')
+      expect(state?.loadingEarlier).toBe(false)
+      expect(state?.hasMore).toBe(true)
+      expect(onLoadEarlierError).toHaveBeenCalledExactlyOnceWith(
+        `Could not load earlier messages: ${failure === 'transport' ? 'Connection interrupted' : 'History unavailable'}`
+      )
+
+      await act(async () => state?.loadEarlier())
+
+      expect(sendRequest).toHaveBeenCalledTimes(2)
+      expect(state?.messages.map((entry) => entry.id)).toEqual(['earlier', 'visible'])
+      expect(state?.hasMore).toBe(false)
+    }
+  )
+
+  it('does not let an old workspace rejection notify or unlock the current page request', async () => {
+    let rejectOld!: (error: Error) => void
+    let resolveCurrent!: (response: unknown) => void
+    let visibleId = 'old-workspace'
+    const sendRequest = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectOld = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveCurrent = resolve
+          })
+      )
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({ type: 'snapshot', messages: [message(visibleId)], hasMore: true, beforeOffset: 100 })
+      return () => {}
+    })
+    const client = { sendRequest, subscribe } as unknown as RpcClient
+    const onLoadEarlierError = vi.fn()
+    await mount(client, onLoadEarlierError)
+    act(() => state?.loadEarlier())
+    visibleId = 'current-workspace'
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          client,
+          sourceIdentity: 'host-a\0workspace-b',
+          onLoadEarlierError
+        })
+      )
+    )
+    act(() => state?.loadEarlier())
+
+    await act(async () => {
+      rejectOld(new Error('Old connection interrupted'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(onLoadEarlierError).not.toHaveBeenCalled()
+    expect(state?.loadingEarlier).toBe(true)
+    expect(state?.messages.map((entry) => entry.id)).toEqual(['current-workspace'])
+
+    await act(async () =>
+      resolveCurrent({
+        ok: true,
+        result: { messages: [message('earlier-current')], hasMore: false, beforeOffset: 0 }
+      })
+    )
+    expect(state?.messages.map((entry) => entry.id)).toEqual([
+      'earlier-current',
+      'current-workspace'
+    ])
+    expect(state?.loadingEarlier).toBe(false)
+  })
 
   it('drops an older-page response captured before transcript replacement', async () => {
     let resolveEarlier: (response: unknown) => void = () => {}

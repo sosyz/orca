@@ -60,8 +60,9 @@ export function useMobileNativeChatSession(args: {
   agent: string | null
   sessionId: string | null
   transcriptPath: string | null
+  onLoadEarlierError?: (message: string) => void
 }): MobileNativeChatSession {
-  const { client, sourceIdentity, agent, sessionId, transcriptPath } = args
+  const { client, sourceIdentity, agent, sessionId, transcriptPath, onLoadEarlierError } = args
   const [messages, setMessages] = useState<NativeChatMessage[]>([])
   const identity = encodeNativeChatTranscriptIdentity([
     sourceIdentity,
@@ -197,7 +198,7 @@ export function useMobileNativeChatSession(args: {
         }
         setMessages(applied.messages)
         if (!applied.windowReplaced && applied.hasMore != null) {
-          setHasMore(applied.hasMore)
+          setHasMore(limitRef.current < MAX_MESSAGES && applied.hasMore)
         }
         if (!applied.windowReplaced && applied.beforeOffset != null) {
           beforeOffsetRef.current = applied.beforeOffset
@@ -216,6 +217,7 @@ export function useMobileNativeChatSession(args: {
 
     return () => {
       cancelled = true
+      streamGenerationRef.current += 1
       unsubscribe()
     }
   }, [client, agent, sessionId, transcriptPath, identity, setList])
@@ -247,11 +249,11 @@ export function useMobileNativeChatSession(args: {
           ...(transcriptPath ? { transcriptPath } : {})
         })
         if (!response.ok) {
-          return
+          throw new Error(response.error.message)
         }
         const result = response.result as ReadSessionResult
         if ('error' in result) {
-          return
+          throw new Error(result.error)
         }
         // Drop a stale resolve from a session that swapped underneath us.
         if (
@@ -272,6 +274,18 @@ export function useMobileNativeChatSession(args: {
           setList(result.messages)
           setHasMore(result.messages.length >= nextLimit)
         }
+      } catch (error) {
+        if (
+          sessionIdRef.current === requestSessionId &&
+          streamGenerationRef.current === requestGeneration
+        ) {
+          const detail = error instanceof Error ? error.message : ''
+          onLoadEarlierError?.(
+            detail
+              ? `Could not load earlier messages: ${detail}`
+              : 'Could not load earlier messages'
+          )
+        }
       } finally {
         // A late page from a prior tab must not unlock the current tab's request.
         if (
@@ -283,7 +297,7 @@ export function useMobileNativeChatSession(args: {
         }
       }
     })()
-  }, [client, agent, sessionId, transcriptPath, hasMore, setList])
+  }, [client, agent, sessionId, transcriptPath, hasMore, onLoadEarlierError, setList])
 
   // Held for any unsettled read, not just an in-flight one: a stream error or a
   // dropped client would otherwise trade the conversation for an error card.
