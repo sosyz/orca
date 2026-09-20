@@ -12,6 +12,9 @@ interface ImageSize {
 const HARMONY_IMAGE_MAX_PIXELS = 32 * 1024 * 1024;
 // Keep this in sync with CLIPBOARD_IMAGE_MAX_BASE64_CHARS in shared clipboard limits.
 const HARMONY_IMAGE_MAX_BYTES = Math.floor((24 * 1024 * 1024 / 4) * 3);
+const HARMONY_PREVIEW_MAX_BYTES = 768 * 1024;
+const HARMONY_PREVIEW_MAX_WIDTH = 400;
+const HARMONY_PREVIEW_MAX_HEIGHT = 300;
 
 export interface HarmonyClipboardImage {
   data: string;
@@ -22,6 +25,13 @@ export interface HarmonyManipulatedImage {
   base64: string;
   height: number;
   uri: string;
+  width: number;
+}
+
+interface HarmonyEncodedImage {
+  base64: string;
+  height: number;
+  packed: ArrayBuffer;
   width: number;
 }
 
@@ -40,10 +50,17 @@ export class HarmonyImageService {
       return null;
     }
     const data = await systemPasteboard.getData();
-    if (data.getPrimaryMimeType() !== pasteboard.MIMETYPE_PIXELMAP) {
+    let pixelMap: image.PixelMap | null = null;
+    for (let index = 0; index < data.getRecordCount(); index += 1) {
+      const record = data.getRecord(index);
+      if (record.mimeType === pasteboard.MIMETYPE_PIXELMAP) {
+        pixelMap = record.pixelMap;
+        break;
+      }
+    }
+    if (!pixelMap) {
       return null;
     }
-    const pixelMap = data.getPrimaryPixelMap();
     try {
       const info = await pixelMap.getImageInfo();
       this.assertImageSize(info.size.width, info.size.height);
@@ -62,6 +79,30 @@ export class HarmonyImageService {
   }
 
   async manipulate(uri: string, width: number, height: number): Promise<HarmonyManipulatedImage> {
+    const encoded = await this.encodeImage(uri, width, height, false, HARMONY_IMAGE_MAX_BYTES);
+    const path = this.files.cachePath(
+      `orca-image-${Date.now()}-${this.manipulatedImageSequence++}.png`,
+    );
+    const resultUri = this.files.fileUri(path);
+    this.files.writeBytes(resultUri, encoded.packed);
+    return {
+      base64: encoded.base64,
+      height: encoded.height,
+      uri: resultUri,
+      width: encoded.width,
+    };
+  }
+
+  async createImagePreview(uri: string): Promise<string> {
+    const encoded = await this.encodeImage(
+      uri, HARMONY_PREVIEW_MAX_WIDTH, HARMONY_PREVIEW_MAX_HEIGHT, true, HARMONY_PREVIEW_MAX_BYTES,
+    );
+    return encoded.base64;
+  }
+
+  private async encodeImage(
+    uri: string, width: number, height: number, fitWithin: boolean, maxBytes: number,
+  ): Promise<HarmonyEncodedImage> {
     const file = fileIo.openSync(this.files.resolveUri(uri), fileIo.OpenMode.READ_ONLY);
     let source: image.ImageSource | undefined = undefined;
     let pixelMap: image.PixelMap | undefined = undefined;
@@ -69,25 +110,33 @@ export class HarmonyImageService {
       source = image.createImageSource(file.fd);
       const original = await source.getImageInfo();
       this.assertImageSize(original.size.width, original.size.height);
-      const targetWidth = width > 0 ? width : original.size.width;
-      const targetHeight = height > 0 ? height : original.size.height;
+      const scale = fitWithin
+        ? Math.min(1, width / original.size.width, height / original.size.height)
+        : 1;
+      const targetWidth = fitWithin
+        ? Math.max(1, Math.floor(original.size.width * scale))
+        : (width > 0 ? width : original.size.width);
+      const targetHeight = fitWithin
+        ? Math.max(1, Math.floor(original.size.height * scale))
+        : (height > 0 ? height : original.size.height);
       this.assertImageSize(targetWidth, targetHeight);
       const desiredSize: image.Size = { width: targetWidth, height: targetHeight };
       const options: image.DecodingOptions = { desiredSize: desiredSize };
       pixelMap = await source.createPixelMap(options);
       const rendered = await pixelMap.getImageInfo();
       this.assertImageSize(rendered.size.width, rendered.size.height);
-      const packed = await this.packPng(pixelMap);
+      if (fitWithin && (
+        rendered.size.width > HARMONY_PREVIEW_MAX_WIDTH ||
+        rendered.size.height > HARMONY_PREVIEW_MAX_HEIGHT
+      )) {
+        throw new Error('Image preview exceeds the Harmony limit');
+      }
+      const packed = await this.packPng(pixelMap, maxBytes);
       const encoded = this.base64.encodeToStringSync(new Uint8Array(packed));
-      const path = this.files.cachePath(
-        `orca-image-${Date.now()}-${this.manipulatedImageSequence++}.png`,
-      );
-      const resultUri = this.files.fileUri(path);
-      this.files.writeBytes(resultUri, packed);
       return {
         base64: encoded,
         height: rendered.size.height,
-        uri: resultUri,
+        packed: packed,
         width: rendered.size.width,
       };
     } finally {
@@ -118,13 +167,13 @@ export class HarmonyImageService {
     }
   }
 
-  private async packPng(pixelMap: image.PixelMap): Promise<ArrayBuffer> {
+  private async packPng(pixelMap: image.PixelMap, maxBytes: number = HARMONY_IMAGE_MAX_BYTES): Promise<ArrayBuffer> {
     const packer = image.createImagePacker();
     const options: image.PackingOption = { format: 'image/png', quality: 100 };
     try {
       // API 12 compatibility: packToData starts at API 13.
       const packed = await packer.packing(pixelMap, options);
-      if (packed.byteLength > HARMONY_IMAGE_MAX_BYTES) {
+      if (packed.byteLength > maxBytes) {
         throw new Error('Image data exceeds the Harmony limit');
       }
       return packed;

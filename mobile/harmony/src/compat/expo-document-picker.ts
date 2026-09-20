@@ -1,4 +1,5 @@
 import { HarmonyNative, hasHarmonyNativeModule } from '../native/harmony-native-module'
+import { createHarmonyPickedImagePreview } from './harmony-picked-image-preview'
 
 export async function getDocumentAsync(options?: {
   copyToCacheDirectory?: boolean
@@ -6,12 +7,13 @@ export async function getDocumentAsync(options?: {
   type?: string | string[]
 }) {
   if (!hasHarmonyNativeModule()) {
-    return { assets: [], canceled: true }
+    throw new Error('Harmony document picker is unavailable')
   }
   const assets = await HarmonyNative.openFilePicker('document', options?.multiple === true)
   return {
     assets: assets.map((asset) => ({
       isTemporary: true,
+      getPreviewUri: createHarmonyPickedImagePreview(asset.uri),
       mimeType: asset.mimeType,
       name: asset.fileName ?? 'image',
       size: asset.fileSize,

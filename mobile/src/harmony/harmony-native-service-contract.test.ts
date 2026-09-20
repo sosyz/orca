@@ -40,7 +40,9 @@ describe('Harmony native service safety contract', () => {
     expect(source).toContain('this.assertImageSize(original.size.width, original.size.height)')
     expect(source).toContain('this.assertImageSize(targetWidth, targetHeight)')
     expect(source).toContain('this.assertImageSize(rendered.size.width, rendered.size.height)')
-    expect(source).toContain('packed.byteLength > HARMONY_IMAGE_MAX_BYTES')
+    expect(source).toContain('this.encodeImage(uri, width, height, false, HARMONY_IMAGE_MAX_BYTES)')
+    expect(source).toContain('maxBytes: number = HARMONY_IMAGE_MAX_BYTES')
+    expect(source).toContain('packed.byteLength > maxBytes')
     expect(source).toContain('width > Math.floor(HARMONY_IMAGE_MAX_PIXELS / height)')
     expect(source.indexOf('this.assertImageSize(info.size.width, info.size.height)')).toBeLessThan(
       source.indexOf('const packed = await this.packPng(pixelMap)')

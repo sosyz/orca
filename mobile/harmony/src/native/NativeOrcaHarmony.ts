@@ -5,6 +5,7 @@ import type { UnsafeObject } from 'react-native/Libraries/Types/CodegenTypes'
 export interface Spec extends TurboModule {
   activateKeepAwake(tag: string): Promise<void>
   clearLastNotificationResponse(): void
+  createImagePreview(uri: string): Promise<string>
   deactivateKeepAwake(tag: string): Promise<void>
   deleteFile(uri: string): void
   deleteSecureValue(key: string): Promise<void>

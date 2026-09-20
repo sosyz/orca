@@ -9,6 +9,7 @@ type ImageSize = {
 
 type ImageService = {
   clipboardImage(): Promise<{ data: string; size: ImageSize } | null>
+  createImagePreview(uri: string): Promise<string>
   manipulate(
     uri: string,
     width: number,
@@ -34,6 +35,8 @@ function nativeReleaseMock(failure: NativeReleaseFailure | undefined) {
 }
 
 function setupImageService(options?: {
+  clipboardHasData?: boolean
+  clipboardMimeTypes?: string[]
   closeError?: Error
   createPixelMapError?: Error
   packerReleaseFailure?: NativeReleaseFailure
@@ -75,14 +78,21 @@ function setupImageService(options?: {
     resolveUri: vi.fn((uri: string) => uri),
     writeBytes: vi.fn()
   }
+  const clipboardRecords = (options?.clipboardMimeTypes ?? ['pixelMap']).map((mimeType) => ({
+    mimeType,
+    pixelMap: mimeType === 'pixelMap' ? pixelMap : undefined
+  }))
+  const clipboardData = {
+    getPrimaryMimeType: vi.fn(() => clipboardRecords[0]?.mimeType ?? ''),
+    getPrimaryPixelMap: vi.fn(() => clipboardRecords[0]?.pixelMap),
+    getRecordCount: vi.fn(() => clipboardRecords.length),
+    getRecord: vi.fn((index: number) => clipboardRecords[index])
+  }
   const pasteboard = {
-    MIMETYPE_PIXELMAP: 'image/pixelmap',
+    MIMETYPE_PIXELMAP: 'pixelMap',
     getSystemPasteboard: vi.fn(() => ({
-      getData: vi.fn(async () => ({
-        getPrimaryMimeType: () => 'image/pixelmap',
-        getPrimaryPixelMap: () => pixelMap
-      })),
-      hasData: vi.fn(async () => true)
+      getData: vi.fn(async () => clipboardData),
+      hasData: vi.fn(async () => options?.clipboardHasData !== false)
     }))
   }
   const { HarmonyImageService } = loadHarmonyNativeService<{
@@ -109,6 +119,7 @@ function setupImageService(options?: {
   })
 
   return {
+    clipboardData,
     fileIo,
     files,
     packer,
@@ -119,6 +130,51 @@ function setupImageService(options?: {
 }
 
 describe('Harmony image service', () => {
+  it('reads and releases a primary image record with accompanying text', async () => {
+    const { pixelMap, service } = setupImageService({
+      clipboardMimeTypes: ['pixelMap', 'text/plain']
+    })
+
+    await expect(service.clipboardImage()).resolves.toEqual({
+      data: 'data:image/png;base64,AQIDBA==',
+      size: { height: 3, width: 2 }
+    })
+    expect(pixelMap.release).toHaveBeenCalledOnce()
+  })
+
+  it('reads and releases an image after text and HTML records', async () => {
+    const { clipboardData, pixelMap, service } = setupImageService({
+      clipboardMimeTypes: ['text/plain', 'text/html', 'pixelMap']
+    })
+
+    await expect(service.clipboardImage()).resolves.toEqual({
+      data: 'data:image/png;base64,AQIDBA==',
+      size: { height: 3, width: 2 }
+    })
+    expect(clipboardData.getRecord).toHaveBeenCalledWith(2)
+    expect(pixelMap.release).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { label: 'plain text only', mimeTypes: ['text/plain'], hasData: true },
+    { label: 'no image records', mimeTypes: [], hasData: true },
+    { label: 'empty clipboard', mimeTypes: [], hasData: false }
+  ])(
+    'returns no image for $label without acquiring an image resource',
+    async ({ mimeTypes, hasData }) => {
+      const { clipboardData, pixelMap, service } = setupImageService({
+        clipboardHasData: hasData,
+        clipboardMimeTypes: mimeTypes
+      })
+
+      await expect(service.clipboardImage()).resolves.toBeNull()
+      expect(pixelMap.release).not.toHaveBeenCalled()
+      if (!hasData) {
+        expect(clipboardData.getRecord).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it('returns a manipulated image when native cleanup releases reject asynchronously', async () => {
     const { fileIo, files, packer, pixelMap, service, source } = setupImageService({
       packerReleaseFailure: { error: new Error('packer release failed'), mode: 'reject' },
@@ -137,6 +193,67 @@ describe('Harmony image service', () => {
     expect(pixelMap.release).toHaveBeenCalledOnce()
     expect(source.release).toHaveBeenCalledOnce()
     expect(fileIo.closeSync).toHaveBeenCalledWith({ fd: 42 })
+  })
+
+  it('fits a preview without upscaling, avoids cache writes, and releases native resources', async () => {
+    const { fileIo, files, packer, pixelMap, service, source } = setupImageService()
+    source.getImageInfo.mockResolvedValue({ size: { width: 4000, height: 1000 } })
+    pixelMap.getImageInfo.mockResolvedValue({ size: { width: 400, height: 100 } })
+
+    await expect(service.createImagePreview('file:///cache/picked.heif')).resolves.toBe('AQIDBA==')
+    expect(source.createPixelMap).toHaveBeenCalledWith({ desiredSize: { width: 400, height: 100 } })
+    expect(files.writeBytes).not.toHaveBeenCalled()
+    expect(packer.release).toHaveBeenCalledOnce()
+    expect(pixelMap.release).toHaveBeenCalledOnce()
+    expect(source.release).toHaveBeenCalledOnce()
+    expect(fileIo.closeSync).toHaveBeenCalledWith({ fd: 42 })
+  })
+
+  it.each([
+    { original: { width: 1000, height: 4000 }, target: { width: 75, height: 300 } },
+    { original: { width: 200, height: 100 }, target: { width: 200, height: 100 } },
+    { original: { width: 1, height: 1000 }, target: { width: 1, height: 300 } }
+  ])('preserves aspect ratio and never upscales $original', async ({ original, target }) => {
+    const { service, source } = setupImageService()
+    source.getImageInfo.mockResolvedValue({ size: original })
+
+    await service.createImagePreview('file:///cache/picked.png')
+    expect(source.createPixelMap).toHaveBeenCalledWith({ desiredSize: target })
+  })
+
+  it('rejects oversized or ignored preview decoding while releasing every resource', async () => {
+    const oversized = setupImageService()
+    oversized.packer.packing.mockResolvedValue(new Uint8Array(768 * 1024 + 1).buffer)
+    await expect(oversized.service.createImagePreview('file:///cache/picked.png')).rejects.toThrow(
+      'Image data exceeds the Harmony limit'
+    )
+    expect(oversized.files.writeBytes).not.toHaveBeenCalled()
+    expect(oversized.packer.release).toHaveBeenCalledOnce()
+    expect(oversized.pixelMap.release).toHaveBeenCalledOnce()
+    expect(oversized.source.release).toHaveBeenCalledOnce()
+    expect(oversized.fileIo.closeSync).toHaveBeenCalledOnce()
+
+    const ignored = setupImageService()
+    ignored.pixelMap.getImageInfo.mockResolvedValue({ size: { width: 401, height: 300 } })
+    await expect(ignored.service.createImagePreview('file:///cache/picked.png')).rejects.toThrow(
+      'Image preview exceeds the Harmony limit'
+    )
+    expect(ignored.packer.packing).not.toHaveBeenCalled()
+    expect(ignored.pixelMap.release).toHaveBeenCalledOnce()
+    expect(ignored.source.release).toHaveBeenCalledOnce()
+    expect(ignored.fileIo.closeSync).toHaveBeenCalledOnce()
+  })
+
+  it('preserves decode failure and closes the picked file before the picker reads it', async () => {
+    const { fileIo, files, service, source } = setupImageService({
+      createPixelMapError: new Error('decode failed')
+    })
+    await expect(service.createImagePreview('file:///cache/picked.heif')).rejects.toThrow(
+      'decode failed'
+    )
+    expect(source.release).toHaveBeenCalledOnce()
+    expect(fileIo.closeSync).toHaveBeenCalledOnce()
+    expect(files.writeBytes).not.toHaveBeenCalled()
   })
 
   it('returns a manipulated image and keeps trying cleanup when releases throw synchronously', async () => {

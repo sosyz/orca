@@ -1,4 +1,5 @@
 import { HarmonyNative, hasHarmonyNativeModule } from '../native/harmony-native-module'
+import { createHarmonyPickedImagePreview } from './harmony-picked-image-preview'
 
 const grantedPermission = {
   canAskAgain: true,
@@ -8,6 +9,9 @@ const grantedPermission = {
 }
 
 export async function requestMediaLibraryPermissionsAsync() {
+  if (!hasHarmonyNativeModule()) {
+    throw new Error('Harmony image picker is unavailable')
+  }
   return grantedPermission
 }
 
@@ -20,7 +24,7 @@ export async function launchImageLibraryAsync(options?: {
   selectionLimit?: number
 }) {
   if (!hasHarmonyNativeModule()) {
-    return { assets: [], canceled: true }
+    throw new Error('Harmony image picker is unavailable')
   }
   const assets = await HarmonyNative.openFilePicker(
     'image',
@@ -31,6 +35,7 @@ export async function launchImageLibraryAsync(options?: {
       fileName: asset.fileName,
       fileSize: asset.fileSize,
       isTemporary: true,
+      getPreviewUri: createHarmonyPickedImagePreview(asset.uri),
       mimeType: asset.mimeType,
       uri: asset.uri
     })),

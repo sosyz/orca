@@ -210,6 +210,10 @@ export class OrcaHarmonyTurboModule extends UITurboModule implements HarmonyAppL
     return this.images.manipulate(uri, width, height);
   }
 
+  createImagePreview(uri: string): Promise<string> {
+    return this.images.createImagePreview(uri);
+  }
+
   async setClipboardString(value: string): Promise<void> {
     const data = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, value);
     await pasteboard.getSystemPasteboard().setData(data);
@@ -226,7 +230,14 @@ export class OrcaHarmonyTurboModule extends UITurboModule implements HarmonyAppL
     ) {
       return '';
     }
-    return (await systemPasteboard.getData()).getPrimaryText();
+    const data = await systemPasteboard.getData();
+    for (let index = 0; index < data.getRecordCount(); index += 1) {
+      const record = data.getRecord(index);
+      if (record.mimeType === pasteboard.MIMETYPE_TEXT_PLAIN) {
+        return record.plainText;
+      }
+    }
+    return '';
   }
 
   async hasClipboardString(): Promise<boolean> {
