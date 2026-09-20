@@ -26,7 +26,7 @@ function run(command, args, description, capture = false) {
   if (result.error || result.status !== 0) {
     throw new Error(`${description} failed`)
   }
-  return capture ? `${result.stdout ?? ''}\n${result.stderr ?? ''}` : ''
+  return capture ? `${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}` : ''
 }
 
 function javaExecutable(javaHome, name) {
