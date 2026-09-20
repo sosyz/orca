@@ -65,6 +65,9 @@ test('reverifies hosted publish artifacts and rejects associated evidence drift'
     writeFileSync(join(entry, 'oh-package-lock.json5'), 'entry-lock')
     writeFileSync(join(generated, 'rn_webview.har'), 'patched-har')
     writeFileSync(join(generated, 'safe_area.har'), 'patched-safe-area-har')
+    mkdirSync(join(root, 'scripts'))
+    writeFileSync(join(generated, 'react_native_openharmony.har'), 'patched-core-har')
+    writeFileSync(join(root, 'scripts/react-native-core-text-input-patch.mjs'), 'core-patch')
     writeFileSync(
       join(patches, '@react-native-oh-tpl+react-native-webview+13.10.3.patch'),
       'webview-patch'
@@ -213,6 +216,10 @@ test('reverifies hosted publish artifacts and rejects associated evidence drift'
           type: 'release'
         },
         provenance: {
+          patchedReactNativeCore: {
+            har: digest('patched-core-har'),
+            patch: digest('core-patch')
+          },
           locks: {
             npm: digest('npm-lock'),
             ohpmEntry: digest('entry-lock'),
@@ -308,6 +315,16 @@ test('reverifies hosted publish artifacts and rejects associated evidence drift'
       () => 'tampered-har',
       /WebView har evidence does not match/u
     )
+    for (const [path, field] of [
+      [join(generated, 'react_native_openharmony.har'), 'har'],
+      [join(root, 'scripts/react-native-core-text-input-patch.mjs'), 'patch']
+    ]) {
+      expectMutationRejected(
+        path,
+        () => 'tampered-core',
+        new RegExp(`React Native core ${field} evidence does not match`, 'u')
+      )
+    }
     expectMutationRejected(
       paths.buildEvidence,
       (content) => content.toString().replace(environment.GITHUB_SHA, 'b'.repeat(40)),

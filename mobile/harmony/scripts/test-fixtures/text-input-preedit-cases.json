@@ -1,0 +1,66 @@
+[
+  {
+    "name": "ASCII preedit and same-text commit after a redundant RN command",
+    "previewSupported": true,
+    "steps": [
+      { "text": "n", "preview": "n" },
+      { "text": "ni", "preview": "ni" },
+      { "command": "ni", "selection": [1, 2] },
+      { "text": "ni", "preview": "" }
+    ],
+    "events": [
+      { "text": "n", "isComposing": true },
+      { "text": "ni", "isComposing": true },
+      { "text": "ni", "isComposing": false }
+    ],
+    "sent": ["ni"]
+  },
+  {
+    "name": "cancel preedit without erasing terminal text",
+    "previewSupported": true,
+    "steps": [
+      { "text": "ni", "preview": "ni" },
+      { "text": "", "preview": "" }
+    ],
+    "events": [
+      { "text": "ni", "isComposing": true },
+      { "key": "Backspace" },
+      { "text": "", "isComposing": false }
+    ],
+    "sent": []
+  },
+  {
+    "name": "Chinese candidate commit",
+    "previewSupported": true,
+    "steps": [
+      { "text": "ni", "preview": "ni" },
+      { "text": "你", "preview": "" }
+    ],
+    "events": [
+      { "text": "ni", "isComposing": true },
+      { "text": "你", "isComposing": false }
+    ],
+    "sent": ["你"]
+  },
+  {
+    "name": "older API retains unreported preedit fallback",
+    "previewSupported": false,
+    "steps": [
+      { "text": "ㅎ", "preview": "" },
+      { "text": "한", "preview": "" }
+    ],
+    "events": [{ "text": "ㅎ" }, { "text": "한" }],
+    "sent": ["한"]
+  },
+  {
+    "name": "genuine RN write echo remains suppressed",
+    "previewSupported": true,
+    "steps": [
+      { "text": "ni", "preview": "ni" },
+      { "command": "n", "selection": [1, 1] },
+      { "text": "n", "preview": "" }
+    ],
+    "events": [{ "text": "ni", "isComposing": true }],
+    "sent": []
+  }
+]

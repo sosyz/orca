@@ -4,7 +4,7 @@
   version: '1.0.0',
   description: 'Orca companion for HarmonyOS',
   dependencies: {
-    '@rnoh/react-native-openharmony': 'file:./node_modules/@react-native-oh/react-native-harmony/react_native_openharmony.har',
+    '@rnoh/react-native-openharmony': 'file:./generated/react_native_openharmony.har',
     '@react-native-oh-tpl/async-storage': 'file:./node_modules/@react-native-oh-tpl/async-storage/harmony/async_storage.har',
     '@react-native-oh-tpl/react-native-reanimated': 'file:./node_modules/@react-native-oh-tpl/react-native-reanimated/harmony/reanimated.har',
     '@react-native-oh-tpl/react-native-safe-area-context': 'file:./generated/safe_area.har',
@@ -14,6 +14,6 @@
   },
   devDependencies: {},
   overrides: {
-    '@rnoh/react-native-openharmony': 'file:./node_modules/@react-native-oh/react-native-harmony/react_native_openharmony.har'
+    '@rnoh/react-native-openharmony': 'file:./generated/react_native_openharmony.har'
   }
 }

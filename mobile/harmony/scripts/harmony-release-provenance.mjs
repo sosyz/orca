@@ -53,6 +53,10 @@ export function collectHarmonyReleaseProvenance(options = {}) {
       ohpmEntry: sha256(join(harmonyRoot, 'entry/oh-package-lock.json5')),
       ohpmProject: sha256(join(harmonyRoot, 'oh-package-lock.json5'))
     },
+    patchedReactNativeCore: {
+      har: sha256(join(harmonyRoot, 'generated/react_native_openharmony.har')),
+      patch: sha256(join(harmonyRoot, 'scripts/react-native-core-text-input-patch.mjs'))
+    },
     patchedWebView: {
       har: sha256(join(harmonyRoot, 'generated/rn_webview.har')),
       patch: sha256(

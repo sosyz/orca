@@ -345,6 +345,10 @@ export function verifyHarmonyPublishArtifacts(paths, options = {}) {
   const provenance = evidence.provenance ?? {}
   assertSourceEvidence(provenance.source, environment)
   assertLockEvidence(provenance.locks, harmonyRoot)
+  assertPatchedDependencyEvidence('React Native core', provenance.patchedReactNativeCore, {
+    har: join(harmonyRoot, 'generated/react_native_openharmony.har'),
+    patch: join(harmonyRoot, 'scripts/react-native-core-text-input-patch.mjs')
+  })
   assertPatchedDependencyEvidence('WebView', provenance.patchedWebView, {
     har: join(harmonyRoot, 'generated/rn_webview.har'),
     patch: join(harmonyRoot, 'patches/@react-native-oh-tpl+react-native-webview+13.10.3.patch')

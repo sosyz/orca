@@ -6,6 +6,6 @@
   author: 'Stably AI',
   license: 'MIT',
   dependencies: {
-    '@rnoh/react-native-openharmony': 'file:../node_modules/@react-native-oh/react-native-harmony/react_native_openharmony.har'
+    '@rnoh/react-native-openharmony': 'file:../generated/react_native_openharmony.har'
   }
 }

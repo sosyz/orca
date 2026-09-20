@@ -12,11 +12,14 @@ test('records lock hashes, toolchain evidence, and exact CI source identity', ()
     mkdirSync(join(root, 'entry'))
     mkdirSync(join(root, 'generated'))
     mkdirSync(join(root, 'patches'))
+    mkdirSync(join(root, 'scripts'))
     writeFileSync(join(root, 'package-lock.json'), 'npm')
     writeFileSync(join(root, 'oh-package-lock.json5'), 'project')
     writeFileSync(join(root, 'entry/oh-package-lock.json5'), 'entry')
     writeFileSync(join(root, 'generated/rn_webview.har'), 'patched-har')
     writeFileSync(join(root, 'generated/safe_area.har'), 'patched-safe-area-har')
+    writeFileSync(join(root, 'generated/react_native_openharmony.har'), 'patched-core-har')
+    writeFileSync(join(root, 'scripts/react-native-core-text-input-patch.mjs'), 'core-patch')
     writeFileSync(
       join(root, 'patches/@react-native-oh-tpl+react-native-webview+13.10.3.patch'),
       'webview-patch'
@@ -62,6 +65,14 @@ test('records lock hashes, toolchain evidence, and exact CI source identity', ()
       createHash('sha256').update('safe-area-patch').digest('hex')
     )
     assert.equal(provenance.toolchain.node, '20.19.4')
+    assert.equal(
+      provenance.patchedReactNativeCore.har,
+      createHash('sha256').update('patched-core-har').digest('hex')
+    )
+    assert.equal(
+      provenance.patchedReactNativeCore.patch,
+      createHash('sha256').update('core-patch').digest('hex')
+    )
     assert.equal(provenance.sbom.artifact, 'release.cdx.json')
   } finally {
     rmSync(root, { force: true, recursive: true })

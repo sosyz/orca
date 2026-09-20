@@ -53,7 +53,9 @@ export async function preparePatchedHarmonyHar({
   expectedVersion,
   moduleName,
   harName,
-  files,
+  harRelativePath = join('harmony', harName),
+  files = [],
+  transformArchive,
   logLabel
 }) {
   const packageRoot = join(harmonyRoot, 'node_modules', ...packageName.split('/'))
@@ -63,7 +65,7 @@ export async function preparePatchedHarmonyHar({
   }
 
   const moduleRoot = join(packageRoot, 'harmony', moduleName)
-  const sourceHarPath = join(packageRoot, 'harmony', harName)
+  const sourceHarPath = join(packageRoot, harRelativePath)
   const generatedRoot = join(harmonyRoot, 'generated')
   const generatedHarPath = join(generatedRoot, harName)
   const temporaryRoot = mkdtempSync(join(tmpdir(), `orca-${moduleName}-har-`))
@@ -85,6 +87,7 @@ export async function preparePatchedHarmonyHar({
         copyFileSync(sourcePath, extractedPath)
       }
     }
+    await transformArchive?.(join(extractedRoot, 'package'))
 
     mkdirSync(generatedRoot, { recursive: true })
     const outputPath = join(temporaryRoot, harName)

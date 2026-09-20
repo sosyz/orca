@@ -44,8 +44,11 @@ ohpm install --all
 overwrites an existing DevEco Studio signing profile, and it restricts local profile and backup permissions to `0600`
 on macOS and Linux.
 
-`npm ci` deterministically prepares the patched local WebView HAR. Run `ohpm install --all` again whenever that HAR
-or its patch changes so `oh_modules` cannot retain an older native implementation.
+`npm ci` deterministically prepares the patched core TextInput, safe-area, and WebView HARs. Run
+`ohpm install --all` again whenever a HAR or its patch changes so `oh_modules` cannot retain an older native
+implementation. The core TextInput patch is locked to RNOH 0.84.3 and reports IME composition on API 15+;
+older devices retain the shared input fallback. `test:release-scripts` uses `CXX` (default: `clang++`) for
+the native TextInput behavior fixture; a full HAP build also verifies the production C++ targets.
 
 ## Build
 
