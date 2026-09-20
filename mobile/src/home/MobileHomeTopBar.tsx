@@ -1,9 +1,12 @@
 import { Settings } from 'lucide-react-native'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { OrcaLogo } from '../components/OrcaLogo'
 import { colors, spacing } from '../theme/mobile-theme'
 
 export function MobileHomeTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { t } = useTranslation()
+
   return (
     <View style={styles.topBar}>
       <View style={styles.brandLockup}>
@@ -16,7 +19,7 @@ export function MobileHomeTopBar({ onOpenSettings }: { onOpenSettings: () => voi
         style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
         onPress={onOpenSettings}
         accessibilityRole="button"
-        accessibilityLabel="Settings"
+        accessibilityLabel={t('mobile.settings.title', 'Settings')}
       >
         <Settings size={18} color={colors.textSecondary} />
       </Pressable>

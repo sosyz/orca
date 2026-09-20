@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { Alert, StyleSheet } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useOpenMobileAccounts } from '../accounts/use-open-mobile-accounts'
+import { useMobileI18n } from '../i18n'
 import { getProvenCachedWorktrees } from '../cache/worktree-cache'
 import { ActionSheetModal } from '../components/ActionSheetModal'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -35,6 +36,7 @@ import { useMobileHomeData } from './use-mobile-home-data'
 
 export function MobileHomeScreen() {
   const data = useMobileHomeData()
+  const { t } = useMobileI18n()
   const insets = useSafeAreaInsets()
   const { isWideLayout, contentMaxWidth } = useResponsiveLayout()
   const openMobileHostEdit = useOpenMobileHostEdit()
@@ -82,7 +84,12 @@ export function MobileHomeScreen() {
     } else if (host.credentialStatus === 'temporarily-unavailable') {
       void loadHostCatalog()
         .then(data.setHostCatalog)
-        .catch(() => Alert.alert('Could not check pairing', 'Please try again.'))
+        .catch(() =>
+          Alert.alert(
+            t('mobile.home.alerts.checkPairingFailed', 'Could not check pairing'),
+            t('mobile.home.alerts.tryAgain', 'Please try again.')
+          )
+        )
     } else {
       data.router.push(`/h/${host.id}`)
     }
@@ -107,7 +114,10 @@ export function MobileHomeScreen() {
       data.setHostCatalog(await loadHostCatalog())
     } catch {
       setConfirmRemove(host)
-      Alert.alert('Could not remove host', 'Please try again.')
+      Alert.alert(
+        t('mobile.home.alerts.removeHostFailed', 'Could not remove host'),
+        t('mobile.home.alerts.tryAgain', 'Please try again.')
+      )
     }
   }
 
@@ -164,6 +174,14 @@ export function MobileHomeScreen() {
         message={actionTarget ? hostEndpointLabel(actionTarget.endpoint) : undefined}
         actions={getHostListActionSheetActions({
           host: actionTarget,
+          copy: {
+            connect: t('mobile.home.desktopActions.connect', 'Connect'),
+            diagnostics: t('mobile.home.desktopActions.diagnostics', 'Network diagnostics'),
+            disconnect: t('mobile.home.desktopActions.disconnect', 'Disconnect'),
+            edit: t('mobile.home.desktopActions.edit', 'Edit host'),
+            reconnect: t('mobile.home.desktopActions.reconnect', 'Reconnect'),
+            remove: t('mobile.home.desktopActions.remove', 'Remove')
+          },
           state: actionTarget
             ? resolveHomeHostConnectionState(
                 actionTarget.id,
@@ -186,9 +204,11 @@ export function MobileHomeScreen() {
       />
       <ConfirmModal
         visible={confirmRemove != null}
-        title="Remove Host"
-        message={`Remove "${confirmRemove?.name}"? You can re-pair later.`}
-        confirmLabel="Remove"
+        title={t('mobile.home.removeHost.title', 'Remove Host')}
+        message={t('mobile.home.removeHost.message', 'Remove "{{name}}"? You can re-pair later.', {
+          name: confirmRemove?.name ?? ''
+        })}
+        confirmLabel={t('mobile.home.removeHost.confirm', 'Remove')}
         destructive
         onConfirm={() => void handleRemove()}
         onCancel={() => setConfirmRemove(null)}

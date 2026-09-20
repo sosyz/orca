@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import { ClaudeIcon, OpenAIIcon } from '../components/AgentIcons'
 import {
   getActiveProviderRateLimits,
@@ -8,6 +9,7 @@ import {
   type AccountsSnapshot,
   type ProviderKey
 } from '../components/AccountUsage'
+import { getMobileAccountDisplayActiveId } from '../components/mobile-account-display-selection'
 import { colors, radii, spacing } from '../theme/mobile-theme'
 import type { HostProfile } from '../transport/types'
 
@@ -15,21 +17,21 @@ export function MobileHomeAccountUsageCards(props: {
   items: { host: HostProfile; snapshot: AccountsSnapshot }[]
   onOpen: (hostId: string) => void
 }) {
+  const { t } = useTranslation()
+
   if (props.items.length === 0) {
     return null
   }
   return (
     <>
-      <Text style={styles.sectionHeading}>Account usage</Text>
+      <Text style={styles.sectionHeading}>{t('mobile.home.accountUsage', 'Account usage')}</Text>
       {props.items.map(({ host, snapshot }) => {
+        const claudeActiveId = getMobileAccountDisplayActiveId(snapshot, 'claude')
+        const codexActiveId = getMobileAccountDisplayActiveId(snapshot, 'codex')
         const claudeActive =
-          snapshot.claude.accounts.find(
-            (account) => account.id === snapshot.claude.activeAccountId
-          ) ?? null
+          snapshot.claude.accounts.find((account) => account.id === claudeActiveId) ?? null
         const codexActive =
-          snapshot.codex.accounts.find(
-            (account) => account.id === snapshot.codex.activeAccountId
-          ) ?? null
+          snapshot.codex.accounts.find((account) => account.id === codexActiveId) ?? null
         return (
           <Pressable
             key={host.id}
@@ -51,6 +53,7 @@ export function MobileHomeAccountUsageCards(props: {
               }
               const sessionBar = getUsageBarState(limits, 'session')
               const weeklyBar = getUsageBarState(limits, 'weekly')
+              const fableBar = limits?.fableWeekly ? getUsageBarState(limits, 'fableWeekly') : null
               return (
                 <View key={provider} style={styles.row}>
                   <View style={styles.icon}>
@@ -62,9 +65,9 @@ export function MobileHomeAccountUsageCards(props: {
                   </View>
                   <View style={styles.info}>
                     <Text style={styles.email} numberOfLines={1}>
-                      {active?.email ?? 'System default'}
+                      {active?.email ?? t('mobile.home.systemDefault', 'System default')}
                     </Text>
-                    <View style={styles.bars}>
+                    <View style={[styles.bars, fableBar && styles.barsStacked]}>
                       <UsageBar
                         label="5h"
                         usedPercent={sessionBar.usedPercent}
@@ -77,6 +80,14 @@ export function MobileHomeAccountUsageCards(props: {
                         unavailable={weeklyBar.unavailable}
                         loading={weeklyBar.loading}
                       />
+                      {fableBar ? (
+                        <UsageBar
+                          label="Fable"
+                          usedPercent={fableBar.usedPercent}
+                          unavailable={fableBar.unavailable}
+                          loading={fableBar.loading}
+                        />
+                      ) : null}
                     </View>
                   </View>
                 </View>
@@ -129,5 +140,6 @@ const styles = StyleSheet.create({
   },
   info: { flex: 1, minWidth: 0, gap: 2 },
   email: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
-  bars: { flexDirection: 'row', gap: spacing.md, marginTop: 4 }
+  bars: { flexDirection: 'row', gap: spacing.md, marginTop: 4 },
+  barsStacked: { flexDirection: 'column', gap: spacing.xs }
 })

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Plus, QrCode } from 'lucide-react-native'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { useTranslation } from 'react-i18next'
 import type { HostProfile } from '../transport/types'
 import { hostEndpointLabel } from '../transport/host-endpoint-label'
 import { colors, radii, spacing } from '../theme/mobile-theme'
@@ -33,6 +34,7 @@ function hostPickerOptions(hosts: HostProfile[]) {
 }
 
 export function MobileHomeQuickActions(props: Props) {
+  const { t } = useTranslation()
   const [hostPickerForHostSet, setHostPickerForHostSet] = useState<string | null>(null)
   const pendingHostIdRef = useRef<string | null>(null)
   const canCreateWorkspace = props.connectedHosts.length > 0
@@ -68,7 +70,7 @@ export function MobileHomeQuickActions(props: Props) {
 
   return (
     <>
-      <Text style={styles.sectionHeading}>Quick Actions</Text>
+      <Text style={styles.sectionHeading}>{t('mobile.home.quickActions', 'Quick Actions')}</Text>
       <View style={styles.quickActions}>
         <Pressable
           accessibilityRole="button"
@@ -78,7 +80,9 @@ export function MobileHomeQuickActions(props: Props) {
           <View style={styles.quickActionIcon}>
             <QrCode size={16} color={colors.textSecondary} />
           </View>
-          <Text style={styles.quickActionLabel}>Pair Desktop</Text>
+          <Text style={styles.quickActionLabel}>
+            {t('mobile.home.pairDesktop', 'Pair Desktop')}
+          </Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -94,12 +98,14 @@ export function MobileHomeQuickActions(props: Props) {
           <View style={styles.quickActionIcon}>
             <Plus size={16} color={colors.textSecondary} />
           </View>
-          <Text style={styles.quickActionLabel}>New Workspace</Text>
+          <Text style={styles.quickActionLabel}>
+            {t('mobile.home.newWorkspace', 'New Workspace')}
+          </Text>
         </Pressable>
       </View>
       <PickerModal
         visible={hostPickerVisible}
-        title="Create Workspace On"
+        title={t('mobile.home.workspaceHostPickerTitle', 'Create Workspace On')}
         options={hostPickerOptions(props.connectedHosts)}
         selected=""
         onSelect={handleHostSelect}
