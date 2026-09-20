@@ -18,6 +18,7 @@ import {
   catchUpWatermarkSeq,
   enqueueHostDelivery,
   getHostNotificationSession,
+  holdCatchUpWatermark,
   quarantineCatchUpWatermark,
   releaseQueuedShowNotificationId,
   resolveCatchUpQuarantine,
@@ -38,8 +39,8 @@ type SubscribeResult = {
 export function subscribeToDesktopNotifications(client: RpcClient, hostId: string): () => void {
   configureNotificationChannel()
 
-  let subscriptionId: string | null = null
   let disposed = false
+  let readyGeneration = 0
   // Why (#8591): survives the unsubscribe/resubscribe the app performs on every
   // socket drop, so a reconnect still knows its watermark and that it reconnected.
   const session = getHostNotificationSession(hostId)
@@ -57,6 +58,7 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
     type: 'notification' | 'dismiss',
     event: NotificationEvent | DismissNotificationEvent
   ): Promise<void> {
+    const generation = readyGeneration
     if (
       type === 'notification' &&
       !shouldQueueShowForNotificationId(session, event.notificationId)
@@ -65,6 +67,9 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
     }
     return enqueueHostDelivery(session, async () => {
       try {
+        if (disposed || generation !== readyGeneration) {
+          return
+        }
         await deliverLive(type, event)
       } finally {
         if (type === 'notification') {
@@ -88,13 +93,16 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
     } else {
       await dismissLocalNotification(event as DismissNotificationEvent, hostId)
     }
+    if (session.lastDeliveredEpoch !== epochAtDelivery) {
+      return
+    }
     // Why after the await, exactly like the watermark below: `seen` asserts this event
     // reached the user (#8129). Marked before, a rejected show leaves the key behind and
     // every later replay is dropped as a duplicate — loss the quarantine cannot recover,
     // since the first event to drain a batch lifts it past the one never shown.
     const key = seenKeyForEvent(event)
     // A mid-flight epoch adoption already cleared the counter lifetime this key indexes.
-    if (key && session.lastDeliveredEpoch === epochAtDelivery) {
+    if (key) {
       session.seen.add(key)
     }
     // Why after the await (#8591): the watermark is a promise that everything up
@@ -147,7 +155,18 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
     // Captured before the request: everything at or below it is known delivered, so
     // it is the floor the watermark falls back to if this catch-up never completes.
     const askFrom = catchUpWatermarkSeq(session)
-    const missed = await client
+    const releaseWatermark = holdCatchUpWatermark(session, hostId, askFrom)
+    try {
+      await replayMissed(askFrom)
+    } finally {
+      releaseWatermark()
+    }
+  }
+
+  async function replayMissed(askFrom: number): Promise<void> {
+    const requestedEpoch = session.lastDeliveredEpoch
+    const generation = readyGeneration
+    const result = await client
       .sendRequest('notifications.getMissedSince', {
         lastSeenSeq: askFrom,
         // Why: sending the epoch lets the desktop reject a watermark from a counter
@@ -158,18 +177,24 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
         if (!response.ok) {
           return null
         }
-        const result = response.result as { notifications?: unknown[]; epoch?: string } | undefined
-        adoptNotificationEpoch(session, hostId, result?.epoch)
-        return Array.isArray(result?.notifications) ? result.notifications : []
+        return (response.result ?? {}) as { notifications?: unknown[]; epoch?: string }
       })
       .catch(() => null)
-    if (missed == null) {
+    if (requestedEpoch !== session.lastDeliveredEpoch) {
+      return
+    }
+    if (result == null || disposed || generation !== readyGeneration) {
       // Why quarantine rather than retry: the range this catch-up abandoned stays
       // unrecovered until SOME later one succeeds, and a live seq persisting past it
       // meanwhile would make the desktop cut it forever.
       quarantineCatchUpWatermark(session, hostId, askFrom)
       return
     }
+    adoptNotificationEpoch(session, hostId, result.epoch)
+    const replayEpoch = session.lastDeliveredEpoch
+    const replayFrom = replayEpoch === requestedEpoch ? askFrom : 0
+    const releaseReplayWatermark = holdCatchUpWatermark(session, hostId, replayFrom)
+    const missed = Array.isArray(result.notifications) ? result.notifications : []
     // Why the whole batch is ONE queue entry (#8591): awaiting per event returns to
     // the event loop between replays, so a live seq 11 slots into the chain between
     // seq 6 and 7 and persists a watermark past a notification still unshown. Why the
@@ -178,13 +203,17 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
     await enqueueHostDelivery(session, async () => {
       // Advances only past events this batch settled, so a teardown or a failing show
       // quarantines the true contiguous point instead of the range it never reached.
-      let contiguousSeq = askFrom
+      let contiguousSeq = replayFrom
       let drained = false
       try {
         for (const raw of missed) {
           // Re-checked per event: the batch can start before a teardown and still be
           // draining after it, and a torn-down host must stop pushing.
-          if (disposed) {
+          if (
+            disposed ||
+            generation !== readyGeneration ||
+            replayEpoch !== session.lastDeliveredEpoch
+          ) {
             return
           }
           const event = raw as NotificationEvent | DismissNotificationEvent
@@ -193,25 +222,23 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
         }
         drained = true
       } finally {
-        if (drained) {
-          resolveCatchUpQuarantine(session, hostId)
-        } else {
-          quarantineCatchUpWatermark(session, hostId, contiguousSeq)
+        if (replayEpoch === session.lastDeliveredEpoch) {
+          if (drained && generation === readyGeneration) {
+            resolveCatchUpQuarantine(session, hostId)
+          } else {
+            quarantineCatchUpWatermark(session, hostId, contiguousSeq)
+          }
         }
       }
       // Why swallowed here: the `finally` above already recorded the contiguous point,
       // and the only caller is an un-awaited 'ready' continuation — letting a failed
       // show escape turns every one into an unhandled rejection (a RN redbox).
-    }).catch(() => {})
+    })
+      .catch(() => {})
+      .finally(releaseReplayWatermark)
   }
 
   seedWatermarkFromStorage(session, hostId)
-
-  function unsubscribeServer(id: string) {
-    if (client.getState() === 'connected') {
-      client.sendRequest('notifications.unsubscribe', { subscriptionId: id }).catch(() => {})
-    }
-  }
 
   const unsubscribeStream = client.subscribe('notifications.subscribe', {}, (data: unknown) => {
     const event = data as
@@ -220,12 +247,11 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
       | SubscribeResult
       | { type: 'end' }
     if (event.type === 'ready') {
-      subscriptionId = (event as SubscribeResult).subscriptionId
+      readyGeneration += 1
+      const generation = readyGeneration
       const isReconnect = session.connectedBefore
       session.connectedBefore = true
       if (disposed) {
-        unsubscribeServer(subscriptionId)
-        unsubscribeStream()
         return
       }
       const readyEpoch = (event as SubscribeResult).epoch
@@ -235,7 +261,7 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
       // every notification between the stored watermark and the next live seq.
       void (async () => {
         await session.watermarkSeeded
-        if (disposed) {
+        if (disposed || generation !== readyGeneration) {
           return
         }
         // Why before fetchMissed: adopting the epoch here is what voids a watermark
@@ -269,9 +295,10 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
     // preserved — every handler waits on the same promise, and the 'ready' continuation
     // registered on it first, so catch-up still builds its request before any live seq.
     const liveEvent = event
+    const generation = readyGeneration
     void (async () => {
       await session.watermarkSeeded
-      if (disposed) {
+      if (disposed || generation !== readyGeneration) {
         return
       }
       // Why the queue (#8591): a live event must not overtake an in-flight
@@ -285,10 +312,7 @@ export function subscribeToDesktopNotifications(client: RpcClient, hostId: strin
 
   return () => {
     disposed = true
-    // Why: drop the local stream first — readiness can race unmount; don't hold the callback while a subscription id is pending.
+    // The transport owns the server token, including ready arriving after disposal.
     unsubscribeStream()
-    if (subscriptionId) {
-      unsubscribeServer(subscriptionId)
-    }
   }
 }

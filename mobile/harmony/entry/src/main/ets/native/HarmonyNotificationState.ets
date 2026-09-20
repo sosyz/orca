@@ -48,6 +48,14 @@ export class HarmonyNotificationState {
     HarmonyNotificationState.lastResponse = null;
   }
 
+  static clearIfMatches(identifier: string): boolean {
+    if (HarmonyNotificationState.lastResponse?.notification.request.identifier !== identifier) {
+      return false;
+    }
+    HarmonyNotificationState.lastResponse = null;
+    return true;
+  }
+
   static receiveWant(want: Want): void {
     const identifier = want.parameters?.[NOTIFICATION_ID_KEY];
     if (typeof identifier !== 'string' || identifier.length === 0) {

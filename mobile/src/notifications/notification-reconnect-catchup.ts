@@ -138,6 +138,7 @@ export type HostNotificationSession = {
   // Highest seq known delivered CONTIGUOUSLY, frozen here while a catch-up is
   // outstanding; null when none has failed. See quarantineCatchUpWatermark.
   catchUpQuarantineSeq: number | null
+  activeCatchUpFloors: Map<object, number>
   seen: ReturnType<typeof createSeenNotificationGuard>
   // False only until the host's first subscription reaches 'ready' — a true cold open.
   connectedBefore: boolean
@@ -165,6 +166,7 @@ export function getHostNotificationSession(hostId: string): HostNotificationSess
       lastDeliveredSeq: 0,
       lastDeliveredEpoch: null,
       catchUpQuarantineSeq: null,
+      activeCatchUpFloors: new Map(),
       seen: createSeenNotificationGuard(),
       connectedBefore: false,
       hadStoredWatermark: false,
@@ -277,7 +279,7 @@ export function resolveCatchUpQuarantine(session: HostNotificationSession, hostI
   }
   session.catchUpQuarantineSeq = null
   void saveWatermark(hostId, {
-    seq: session.lastDeliveredSeq,
+    seq: catchUpWatermarkSeq(session),
     epoch: session.lastDeliveredEpoch
   })
 }
@@ -287,9 +289,32 @@ export function resolveCatchUpQuarantine(session: HostNotificationSession, hostI
  * watermark, clamped to any open gap.
  */
 export function catchUpWatermarkSeq(session: HostNotificationSession): number {
-  return session.catchUpQuarantineSeq == null
-    ? session.lastDeliveredSeq
-    : Math.min(session.catchUpQuarantineSeq, session.lastDeliveredSeq)
+  let seq =
+    session.catchUpQuarantineSeq == null
+      ? session.lastDeliveredSeq
+      : Math.min(session.catchUpQuarantineSeq, session.lastDeliveredSeq)
+  for (const floor of session.activeCatchUpFloors.values()) {
+    seq = Math.min(seq, floor)
+  }
+  return seq
+}
+
+/** Keep live delivery from persisting past a replay that has not returned yet. */
+export function holdCatchUpWatermark(
+  session: HostNotificationSession,
+  hostId: string,
+  seq: number
+): () => void {
+  const claim = {}
+  session.activeCatchUpFloors.set(claim, seq)
+  return () => {
+    if (session.activeCatchUpFloors.delete(claim)) {
+      void saveWatermark(hostId, {
+        seq: catchUpWatermarkSeq(session),
+        epoch: session.lastDeliveredEpoch
+      })
+    }
+  }
 }
 
 // Why (#8591): the desktop's seq counter restarts at 0 every launch, so a watermark
@@ -317,6 +342,7 @@ export function adoptNotificationEpoch(
   session.seen.clear()
   // The quarantined gap indexed the dead counter; the watermark it guarded is gone too.
   session.catchUpQuarantineSeq = null
+  session.activeCatchUpFloors.clear()
   session.lastDeliveredEpoch = epoch
   void saveWatermark(hostId, { seq: 0, epoch })
 }

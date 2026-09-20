@@ -7,6 +7,35 @@ type NotificationService = {
 }
 
 describe('Harmony notification service', () => {
+  it('does not clear a newer tap after JavaScript read an older response', () => {
+    type Response = { notification: { request: { identifier: string } } }
+    type NotificationState = {
+      clear(): void
+      clearIfMatches(identifier: string): boolean
+      getLast(): Response | null
+      receiveWant(want: { parameters: Record<string, string> }): void
+    }
+    const { HarmonyNotificationState: state } = loadHarmonyNativeService<{
+      HarmonyNotificationState: NotificationState
+    }>('HarmonyNotificationState.ets', {})
+    const receive = (identifier: string) =>
+      state.receiveWant({ parameters: { 'orca.notification.id': identifier } })
+
+    receive('first')
+    const first = state.getLast()
+    receive('second')
+
+    expect(state.clearIfMatches(first!.notification.request.identifier)).toBe(false)
+    expect(state.getLast()?.notification.request.identifier).toBe('second')
+    expect(state.clearIfMatches('second')).toBe(true)
+    expect(state.getLast()).toBeNull()
+    expect(state.clearIfMatches('second')).toBe(false)
+
+    receive('legacy')
+    state.clear()
+    expect(state.getLast()).toBeNull()
+  })
+
   it('keeps concurrent notification identifiers stable when want agents resolve out of order', async () => {
     const pendingAgents: Array<{ requestCode: number; resolve: (agent: object) => void }> = []
     const publish = vi.fn(async () => undefined)

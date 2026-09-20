@@ -171,10 +171,8 @@ describe('#8591 catch-up failure quarantines the watermark', () => {
     expect(host.askedFrom).toEqual([5, 5, 5, 12])
   })
 
-  it('rolls back a watermark a live event stored while the catch-up was in flight', async () => {
-    // getMissedSince waits up to 30s, so live traffic routinely persists during it.
-    // Clamping only writes made AFTER the failure leaves that higher seq on disk, and
-    // the next launch reads it back and resumes past the range this catch-up abandoned.
+  it('holds the watermark while catch-up is pending and after it fails', async () => {
+    // A process exit before the RPC settles must not persist past the unreplayed gap.
     storage.set(WATERMARK_KEY, JSON.stringify({ seq: 5, epoch: 'epoch-1' }))
     const host = makeHostClient()
     host.setOutcome({ kind: 'heldReject' })
@@ -186,7 +184,7 @@ describe('#8591 catch-up failure quarantines the watermark', () => {
 
     host.onData?.({ ...notification(11), notificationEpoch: 'epoch-1' })
     await flushAsync()
-    expect(persistedSeq()).toBe(11)
+    expect(persistedSeq()).toBe(5)
 
     host.settleHeld()
     await flushAsync()

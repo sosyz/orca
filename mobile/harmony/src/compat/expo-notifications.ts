@@ -19,6 +19,16 @@ export function clearLastNotificationResponse(): void {
   }
 }
 
+export function clearLastNotificationResponseIfMatches(identifier: string): boolean | null {
+  if (
+    !hasHarmonyNativeModule() ||
+    typeof HarmonyNative.clearLastNotificationResponseIfMatches !== 'function'
+  ) {
+    return null
+  }
+  return HarmonyNative.clearLastNotificationResponseIfMatches(identifier)
+}
+
 export function getLastNotificationResponse(): NotificationResponse | null {
   return hasHarmonyNativeModule() ? HarmonyNative.getLastNotificationResponse() : null
 }

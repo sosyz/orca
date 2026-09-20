@@ -81,8 +81,38 @@ export default function RootLayout() {
   // and worktree that scheduled the notification.
   useEffect(() => {
     let disposed = false
+    let latestNotificationResponse = 0
 
-    function clearLastNotificationResponse() {
+    function clearLastNotificationResponse(response: Notifications.NotificationResponse) {
+      const notificationsWithConditionalClear = Notifications as typeof Notifications & {
+        clearLastNotificationResponseIfMatches?: (identifier: string) => boolean | null
+      }
+      if (
+        typeof notificationsWithConditionalClear.clearLastNotificationResponseIfMatches ===
+        'function'
+      ) {
+        try {
+          const result = notificationsWithConditionalClear.clearLastNotificationResponseIfMatches(
+            response.notification.request.identifier
+          )
+          if (typeof result === 'boolean') {
+            return
+          }
+        } catch {
+          // Fall back for an older Harmony shell whose native method is unavailable.
+        }
+      }
+      try {
+        const current = Notifications.getLastNotificationResponse()
+        if (
+          current &&
+          current.notification.request.identifier !== response.notification.request.identifier
+        ) {
+          return
+        }
+      } catch {
+        // Older native shells may not expose the last-response getter.
+      }
       try {
         Notifications.clearLastNotificationResponse()
       } catch {
@@ -110,8 +140,12 @@ export default function RootLayout() {
     }
 
     async function handleNotificationResponse(response: Notifications.NotificationResponse) {
+      if (disposed) {
+        return
+      }
       if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
-        clearLastNotificationResponse()
+        latestNotificationResponse += 1
+        clearLastNotificationResponse(response)
         return
       }
 
@@ -129,9 +163,10 @@ export default function RootLayout() {
         }
       }
 
+      const responseSequence = ++latestNotificationResponse
+      clearLastNotificationResponse(response)
       const target = await getNavigationTarget(response.notification.request.content.data)
-      clearLastNotificationResponse()
-      if (disposed) {
+      if (disposed || responseSequence !== latestNotificationResponse) {
         return
       }
       if (target) {
@@ -139,14 +174,14 @@ export default function RootLayout() {
       }
     }
 
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      void handleNotificationResponse(response)
+    })
     const initialResponse = getInitialNotificationResponse()
     if (initialResponse) {
       void handleNotificationResponse(initialResponse)
     }
 
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      void handleNotificationResponse(response)
-    })
     return () => {
       disposed = true
       sub.remove()

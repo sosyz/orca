@@ -322,6 +322,10 @@ export class OrcaHarmonyTurboModule extends UITurboModule implements HarmonyAppL
     HarmonyNotificationState.clear();
   }
 
+  clearLastNotificationResponseIfMatches(identifier: string): boolean {
+    return HarmonyNotificationState.clearIfMatches(identifier);
+  }
+
   getLatestUrlEvent(): HarmonyUrlEvent | null {
     return HarmonyLinkingState.getLatest();
   }
