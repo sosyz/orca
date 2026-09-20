@@ -98,4 +98,49 @@ describe('RpcClientStreamRegistry', () => {
       params: { subscriptionId: 'browser-screencast:page-1:test' }
     })
   })
+
+  it.each(['browser.screencast', 'runtime.clientEvents.subscribe'])(
+    'cancels the new %s owner when disposed before replay is ready',
+    (method) => {
+      const { registry, sent } = createRegistry()
+      const events: unknown[] = []
+      const dispose = registry.subscribe(method, {}, (event) => events.push(event))
+      const request = sent[0]!
+      const ready = (subscriptionId: string) =>
+        registry.handleResponse(streamingResponse(request.id, { type: 'ready', subscriptionId }))
+      ready('old-owner')
+
+      registry.markForReplay()
+      registry.replayAfterAuthentication()
+      dispose()
+
+      expect(sent).toHaveLength(2)
+      expect(registry.size()).toBe(1)
+      ready('new-owner')
+      expect(sent[2]).toMatchObject({ params: { subscriptionId: 'new-owner' } })
+      expect(registry.size()).toBe(0)
+      expect(events).toEqual([{ type: 'ready', subscriptionId: 'old-owner' }])
+    }
+  )
+
+  it.each(['browser.screencast', 'runtime.clientEvents.subscribe'])(
+    'cancels the current %s owner after repeated replay',
+    (method) => {
+      const { registry, sent } = createRegistry()
+      const dispose = registry.subscribe(method, {}, () => {})
+      const request = sent[0]!
+      for (const subscriptionId of ['first-owner', 'second-owner', 'third-owner']) {
+        registry.handleResponse(streamingResponse(request.id, { type: 'ready', subscriptionId }))
+        if (subscriptionId !== 'third-owner') {
+          registry.markForReplay()
+          registry.replayAfterAuthentication()
+        }
+      }
+
+      dispose()
+
+      expect(sent.at(-1)).toMatchObject({ params: { subscriptionId: 'third-owner' } })
+      expect(registry.size()).toBe(0)
+    }
+  )
 })

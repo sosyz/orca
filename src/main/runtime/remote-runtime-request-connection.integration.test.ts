@@ -15,6 +15,7 @@ import type {
 import type { OrcaRuntimeService } from './orca-runtime'
 import { OrcaRuntimeRpcServer } from './runtime-rpc'
 import { REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY } from '../../shared/protocol-version'
+import { createSubscriptionRegistryDouble } from './rpc/subscription-registry-test-double'
 
 const REMOTE_RUNTIME_TEST_TIMEOUT_MS = 15_000
 const REMOTE_RUNTIME_REQUEST_TIMEOUT_MS = 5_000
@@ -495,7 +496,8 @@ describe('remote runtime request connection integration', () => {
       const accountsListeners = new Set<(snapshot: unknown) => void>()
       const notificationListeners = new Set<(event: unknown) => void>()
       const sessionTabListeners = new Set<(snapshot: unknown) => void>()
-      const subscriptionCleanups = new Map<string, () => void>()
+      const subscriptionRegistry = createSubscriptionRegistryDouble()
+      const cleanupCount = () => subscriptionRegistry.captureSubscriptionCleanups('').size
       const sessionTabSnapshot = {
         worktree: 'wt-1',
         publicationEpoch: 'epoch-1',
@@ -506,6 +508,7 @@ describe('remote runtime request connection integration', () => {
         tabs: []
       }
       const runtime = {
+        ...subscriptionRegistry,
         getRuntimeId: () => 'shared-runtime-test',
         getStartedAt: () => 1,
         getStatus: () => ({
@@ -517,29 +520,6 @@ describe('remote runtime request connection integration', () => {
           minCompatibleMobileVersion: '1.0.0',
           capabilities: [REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY]
         }),
-        cleanupSubscriptionsForConnection: (connectionId: string) => {
-          for (const [id, cleanup] of Array.from(subscriptionCleanups)) {
-            if (id.includes(connectionId)) {
-              cleanup()
-              subscriptionCleanups.delete(id)
-            }
-          }
-        },
-        registerSubscriptionCleanup: (id: string, cleanup: () => void) => {
-          subscriptionCleanups.set(id, cleanup)
-        },
-        cleanupSubscription: (id: string) => {
-          subscriptionCleanups.get(id)?.()
-          subscriptionCleanups.delete(id)
-        },
-        cleanupSubscriptionsByPrefix: (prefix: string) => {
-          for (const [id, cleanup] of Array.from(subscriptionCleanups)) {
-            if (id.startsWith(prefix)) {
-              cleanup()
-              subscriptionCleanups.delete(id)
-            }
-          }
-        },
         cancelMobileDictationForConnection: () => {},
         onClientDisconnected: () => {},
         onClientEvent: (listener: (event: RuntimeClientEvent) => void) => {
@@ -690,14 +670,14 @@ describe('remote runtime request connection integration', () => {
             })
           )
           await waitFor(
-            () => subscriptionCleanups.size >= mixedSubscriptions.length + 1,
+            () => cleanupCount() >= mixedSubscriptions.length + 1,
             5000,
-            () => `cleanup count ${subscriptionCleanups.size}, event count ${mixedEvents.length}`
+            () => `cleanup count ${cleanupCount()}, event count ${mixedEvents.length}`
           )
           await waitFor(
             () => mixedEvents.length > 0,
             REMOTE_RUNTIME_REQUEST_TIMEOUT_MS,
-            () => `cleanup count ${subscriptionCleanups.size}, event count ${mixedEvents.length}`
+            () => `cleanup count ${cleanupCount()}, event count ${mixedEvents.length}`
           )
           expect(server.getMobileSocketWiring()?.connectionCount).toBe(1)
           for (const mixed of mixedSubscriptions) {

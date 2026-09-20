@@ -9,7 +9,9 @@ export type SubscriptionRegistryDouble = {
     cleanup: Cleanup,
     connectionId?: string
   ) => SubscriptionRegistration
+  captureSubscriptionCleanups: (prefix: string) => ReadonlyMap<string, SubscriptionRegistration>
   cleanupSubscription: (id: string) => void
+  cleanupSubscriptionsByPrefix: (prefix: string) => void
   cleanupSubscriptionIfOwnedByConnection: (id: string, connectionId: string | undefined) => boolean
   cleanupSubscriptionsForConnection: (connectionId: string) => void
   /** Test-only inspection; the runtime deliberately exposes no such accessor. */
@@ -23,7 +25,7 @@ export type SubscriptionRegistryDouble = {
  * This mirrors production line-for-line, so it can drift. If you change
  * `registerSubscriptionCleanup`, `cleanupSubscriptionAndWait`,
  * `cleanupOwnedSubscription`, `cleanupSubscriptionIfOwnedByConnection`, or
- * `cleanupSubscriptionsForConnection`, change this too — the runtime-level tests in
+ * `captureSubscriptionCleanups` or `cleanupSubscriptionsForConnection`, change this too — the runtime-level tests in
  * `orca-runtime.test.ts` are what pin the real behavior; these doubles only pin routing.
  *
  * Why this exists: the ad-hoc `Map` stubs these tests used to carry never evicted the
@@ -130,7 +132,23 @@ export function createSubscriptionRegistryDouble(): SubscriptionRegistryDouble {
         releaseIfCurrent: () => cleanupOwned(id, cleanup)
       }
     },
+    captureSubscriptionCleanups: (prefix) => {
+      const captured = new Map<string, SubscriptionRegistration>()
+      for (const [id, cleanup] of cleanups) {
+        if (id.startsWith(prefix)) {
+          captured.set(id, { releaseIfCurrent: () => cleanupOwned(id, cleanup) })
+        }
+      }
+      return captured
+    },
     cleanupSubscription,
+    cleanupSubscriptionsByPrefix: (prefix) => {
+      for (const id of cleanups.keys()) {
+        if (id.startsWith(prefix)) {
+          cleanupSubscription(id)
+        }
+      }
+    },
     cleanupSubscriptionIfOwnedByConnection: (id, connectionId) => {
       if (!connectionId) {
         cleanupSubscription(id)

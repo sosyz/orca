@@ -1,12 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import { RpcDispatcher } from '../dispatcher'
+import {
+  createSubscriptionRegistryDouble,
+  type SubscriptionRegistryDouble
+} from '../subscription-registry-test-double'
 import { SESSION_TAB_METHODS } from './session-tabs'
 
 describe('session tab unsubscribe RPC methods', () => {
   it('uses the resolved worktree id and connection id', async () => {
-    const cleanupSubscription = vi.fn()
-    const runtime = runtimeWithCleanup(cleanupSubscription)
+    const cleanup = vi.fn()
+    const registry = createSubscriptionRegistryDouble()
+    registry.registerSubscriptionCleanup('session.tabs:conn-1:wt-1', cleanup, 'conn-1')
+    const runtime = runtimeWithCleanup(registry)
     const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
     const messages: string[] = []
 
@@ -16,7 +22,7 @@ describe('session tab unsubscribe RPC methods', () => {
       { connectionId: 'conn-1' }
     )
 
-    expect(cleanupSubscription).toHaveBeenCalledWith('session.tabs:conn-1:wt-1')
+    expect(cleanup).toHaveBeenCalledTimes(1)
     expect(JSON.parse(messages[0]!)).toMatchObject({
       ok: true,
       result: { unsubscribed: true }
@@ -24,9 +30,12 @@ describe('session tab unsubscribe RPC methods', () => {
   })
 
   it('unsubscribes one shared-control worktree stream by subscription id', async () => {
-    const cleanupSubscription = vi.fn()
-    const cleanupSubscriptionsByPrefix = vi.fn()
-    const runtime = runtimeWithCleanup(cleanupSubscription, cleanupSubscriptionsByPrefix)
+    const cleanup = vi.fn()
+    const siblingCleanup = vi.fn()
+    const registry = createSubscriptionRegistryDouble()
+    registry.registerSubscriptionCleanup('session.tabs:conn-1:wt-1:sub-1', cleanup, 'conn-1')
+    registry.registerSubscriptionCleanup('session.tabs:conn-1:wt-1:sub-2', siblingCleanup, 'conn-1')
+    const runtime = runtimeWithCleanup(registry)
     const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
 
     await dispatcher.dispatchStreaming(
@@ -38,8 +47,8 @@ describe('session tab unsubscribe RPC methods', () => {
       { connectionId: 'conn-1' }
     )
 
-    expect(cleanupSubscription).toHaveBeenCalledWith('session.tabs:conn-1:wt-1:sub-1')
-    expect(cleanupSubscriptionsByPrefix).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    expect(siblingCleanup).not.toHaveBeenCalled()
   })
 
   it('unsubscribes one shared-control all-tabs stream by subscription id', async () => {
@@ -63,11 +72,9 @@ describe('session tab unsubscribe RPC methods', () => {
   })
 })
 
-function runtimeWithCleanup(
-  cleanupSubscription: ReturnType<typeof vi.fn>,
-  cleanupSubscriptionsByPrefix = vi.fn()
-): OrcaRuntimeService {
+function runtimeWithCleanup(registry: SubscriptionRegistryDouble): OrcaRuntimeService {
   return {
+    ...registry,
     getRuntimeId: () => 'test-runtime',
     listMobileSessionTabs: vi.fn().mockResolvedValue({
       worktree: 'wt-1',
@@ -77,9 +84,7 @@ function runtimeWithCleanup(
       activeTabId: null,
       activeTabType: null,
       tabs: []
-    }),
-    cleanupSubscription,
-    cleanupSubscriptionsByPrefix
+    })
   } as unknown as OrcaRuntimeService
 }
 

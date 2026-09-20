@@ -11,6 +11,16 @@ function rpcFailure(id: string): RpcFailure {
   }
 }
 
+function readyResponse(id: string, subscriptionId: string) {
+  return {
+    id,
+    ok: true as const,
+    streaming: true as const,
+    result: { type: 'ready', subscriptionId },
+    _meta: { runtimeId: 'runtime-1' }
+  }
+}
+
 describe('MobileRelayRpcStreams failure parity', () => {
   it('emits an RPC failure exactly once before removing the stream', async () => {
     const listener = vi.fn()
@@ -148,5 +158,77 @@ describe('MobileRelayRpcStreams failure parity', () => {
     expect(() => streams.handleResponse(rpcFailure('stream-1'))).toThrow('listener failed')
     expect(streams.handleResponse(rpcFailure('stream-1'))).toBe(false)
     expect(listener).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MobileRelayRpcStreams browser lifecycle', () => {
+  it('uses the browser screencast unsubscribe method after ready', async () => {
+    let nextId = 0
+    const sendFrame = vi.fn(() => true)
+    const streams = new MobileRelayRpcStreams({
+      nextId: () => `request-${++nextId}`,
+      sendFrame,
+      waitForConnected: async () => {}
+    })
+    const cancel = streams.subscribe('browser.screencast', { page: 'page-1' }, vi.fn())
+    await Promise.resolve()
+
+    streams.handleResponse(readyResponse('request-1', 'browser-subscription-1'))
+    cancel()
+
+    expect(sendFrame).toHaveBeenLastCalledWith({
+      id: 'request-2',
+      method: 'browser.screencast.unsubscribe',
+      params: { subscriptionId: 'browser-subscription-1' }
+    })
+  })
+
+  it('keeps an early browser cancellation until ready can be unsubscribed', async () => {
+    let nextId = 0
+    const listener = vi.fn()
+    const sendFrame = vi.fn(() => true)
+    const streams = new MobileRelayRpcStreams({
+      nextId: () => `request-${++nextId}`,
+      sendFrame,
+      waitForConnected: async () => {}
+    })
+    const cancel = streams.subscribe('browser.screencast', { page: 'page-1' }, listener)
+    await Promise.resolve()
+    cancel()
+
+    expect(streams.handleResponse(readyResponse('request-1', 'browser-subscription-1'))).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+    expect(sendFrame).toHaveBeenLastCalledWith({
+      id: 'request-2',
+      method: 'browser.screencast.unsubscribe',
+      params: { subscriptionId: 'browser-subscription-1' }
+    })
+  })
+
+  it('unsubscribes the active browser stream before replacing it', async () => {
+    let nextId = 0
+    const sendFrame = vi.fn(() => true)
+    const streams = new MobileRelayRpcStreams({
+      nextId: () => `request-${++nextId}`,
+      sendFrame,
+      waitForConnected: async () => {}
+    })
+    streams.subscribe('browser.screencast', { page: 'page-1' }, vi.fn())
+    await Promise.resolve()
+    streams.handleResponse(readyResponse('request-1', 'browser-subscription-1'))
+
+    streams.subscribe('browser.screencast', { page: 'page-2' }, vi.fn())
+    await Promise.resolve()
+
+    expect(sendFrame).toHaveBeenNthCalledWith(2, {
+      id: 'request-3',
+      method: 'browser.screencast.unsubscribe',
+      params: { subscriptionId: 'browser-subscription-1' }
+    })
+    expect(sendFrame).toHaveBeenNthCalledWith(3, {
+      id: 'request-2',
+      method: 'browser.screencast',
+      params: { page: 'page-2' }
+    })
   })
 })

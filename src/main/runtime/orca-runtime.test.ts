@@ -36360,6 +36360,66 @@ describe('OrcaRuntimeService', () => {
     expect(replacementCleanup).toHaveBeenCalledTimes(1)
   })
 
+  it('captures subscription cleanup owners without including later or unrelated registrations', async () => {
+    const runtime = createRuntime()
+    const previous = vi.fn()
+    const newer = vi.fn()
+    const otherConnection = vi.fn()
+    runtime.registerSubscriptionCleanup('session.tabs:conn-1:wt-1:old', previous, 'conn-1')
+    runtime.registerSubscriptionCleanup('session.tabs:conn-2:wt-1:other', otherConnection, 'conn-2')
+    const captured = runtime.captureSubscriptionCleanups('session.tabs:conn-1:')
+
+    runtime.registerSubscriptionCleanup('session.tabs:conn-1:wt-1:new', newer, 'conn-1')
+    for (const registration of captured.values()) {
+      registration.releaseIfCurrent()
+    }
+    await runtime.cleanupSubscriptionAndWait('session.tabs:conn-1:wt-1:old')
+
+    expect(previous).toHaveBeenCalledTimes(1)
+    expect(newer).not.toHaveBeenCalled()
+    expect(otherConnection).not.toHaveBeenCalled()
+  })
+
+  it('keeps a captured subscription cleanup from releasing a replacement owner of the same id', async () => {
+    const runtime = createRuntime()
+    const oldDone = deferred<void>()
+    const previous = vi.fn(() => oldDone.promise)
+    const replacement = vi.fn()
+    const id = 'session.tabs:conn-1:wt-1:stable'
+    runtime.registerSubscriptionCleanup(id, previous, 'conn-1')
+    const captured = runtime.captureSubscriptionCleanups('session.tabs:conn-1:')
+
+    runtime.registerSubscriptionCleanup(id, replacement, 'conn-1')
+    captured.get(id)?.releaseIfCurrent()
+    oldDone.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(previous).toHaveBeenCalledTimes(1)
+    expect(replacement).not.toHaveBeenCalled()
+    runtime.cleanupSubscriptionsForConnection('conn-1')
+    expect(replacement).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains captured subscription cleanup retry and in-flight deduplication', async () => {
+    const runtime = createRuntime()
+    const first = deferred<void>()
+    const cleanup = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(undefined)
+    const id = 'session.tabs:conn-1:wt-1:retry'
+    runtime.registerSubscriptionCleanup(id, cleanup, 'conn-1')
+    const registration = runtime.captureSubscriptionCleanups('session.tabs:conn-1:').get(id)!
+    registration.releaseIfCurrent()
+    registration.releaseIfCurrent()
+    const attempt = runtime.cleanupSubscriptionAndWait(id)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    first.reject(new Error('temporary cleanup failure'))
+    await expect(attempt).rejects.toThrow('temporary cleanup failure')
+
+    registration.releaseIfCurrent()
+    await runtime.cleanupSubscriptionAndWait(id)
+    registration.releaseIfCurrent()
+    expect(cleanup).toHaveBeenCalledTimes(2)
+  })
+
   it('releases an owned subscription only while its registration still owns the id', async () => {
     const runtime = createRuntime()
     const oldCleanup = vi.fn()

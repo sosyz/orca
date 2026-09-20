@@ -132,4 +132,48 @@ describe('runtime client-event stream disposal', () => {
     ])
     client.close()
   })
+
+  it.each([
+    ['browser.screencast', 'browser.screencast.unsubscribe'],
+    ['runtime.clientEvents.subscribe', 'runtime.clientEvents.unsubscribe']
+  ])('ignores old-socket ready while cancelling replayed %s', async (method, unsubscribeMethod) => {
+    const { client, socket: first } = connectReadyClient()
+    const listener = vi.fn()
+    const unsubscribe = client.subscribe(method, {}, listener)
+    const firstRequest = sentRequests(first, method)[0]!
+    emitReady(first, firstRequest.id, 'first-owner')
+
+    try {
+      first.close()
+      await vi.advanceTimersByTimeAsync(500)
+      const second = sockets.at(-1)!
+      second.open()
+      second.receive('encrypted:{"type":"e2ee_authenticated"}')
+      const secondRequest = sentRequests(second, method)[0]!
+      emitReady(second, secondRequest.id, 'second-owner')
+
+      second.close()
+      await vi.advanceTimersByTimeAsync(500)
+      const third = sockets.at(-1)!
+      third.open()
+      third.receive('encrypted:{"type":"e2ee_authenticated"}')
+      const thirdRequest = sentRequests(third, method)[0]!
+
+      emitReady(first, firstRequest.id, 'stale-first-owner')
+      emitReady(second, secondRequest.id, 'stale-second-owner')
+      unsubscribe()
+      expect(sentRequests(third, unsubscribeMethod)).toEqual([])
+      emitReady(third, thirdRequest.id, 'third-owner')
+
+      expect(sentRequests(third, unsubscribeMethod)).toEqual([
+        expect.objectContaining({ params: { subscriptionId: 'third-owner' } })
+      ])
+      expect(listener.mock.calls.map(([result]) => result.subscriptionId)).toEqual([
+        'first-owner',
+        'second-owner'
+      ])
+    } finally {
+      client.close()
+    }
+  })
 })

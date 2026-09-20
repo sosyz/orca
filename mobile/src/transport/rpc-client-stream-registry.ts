@@ -107,6 +107,8 @@ export class RpcClientStreamRegistry {
     this.pendingBrowserRequestId = null
     for (const [id, stream] of this.streams) {
       stream.sent = false
+      // Server subscription IDs belong to the socket that emitted ready.
+      stream.subscriptionId = undefined
       this.resetTerminalRouting(id)
     }
   }
@@ -202,7 +204,7 @@ export class RpcClientStreamRegistry {
       this.disposeServerSubscription(id, stream)
       return
     }
-    if (stream?.method === 'runtime.clientEvents.subscribe') {
+    if (stream && buildReadyStreamUnsubscribe(stream.method, 'pending-subscription')) {
       this.disposeServerSubscription(id, stream)
       return
     }

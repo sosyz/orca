@@ -754,7 +754,7 @@ describe('session tab RPC methods', () => {
         tabs: []
       }),
       onMobileSessionTabsChanged: vi.fn(() => vi.fn()),
-      registerSubscriptionCleanup: vi.fn()
+      registerOwnedSubscriptionCleanup: vi.fn(() => ({ releaseIfCurrent: vi.fn() }))
     } as unknown as OrcaRuntimeService
     const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
 
@@ -764,12 +764,12 @@ describe('session tab RPC methods', () => {
       { connectionId: 'conn-1' }
     )
 
-    expect(runtime.registerSubscriptionCleanup).toHaveBeenCalledWith(
+    expect(runtime.registerOwnedSubscriptionCleanup).toHaveBeenCalledWith(
       'session.tabs:conn-1:wt-1:req-1',
       expect.any(Function),
       'conn-1'
     )
-    expect(runtime.registerSubscriptionCleanup).not.toHaveBeenCalledWith(
+    expect(runtime.registerOwnedSubscriptionCleanup).not.toHaveBeenCalledWith(
       'session.tabs:conn-1:id:wt-1',
       expect.any(Function),
       'conn-1'
@@ -789,7 +789,7 @@ describe('session tab RPC methods', () => {
         tabs: []
       }),
       onMobileSessionTabsChanged: vi.fn(() => vi.fn()),
-      registerSubscriptionCleanup: vi.fn()
+      registerOwnedSubscriptionCleanup: vi.fn(() => ({ releaseIfCurrent: vi.fn() }))
     } as unknown as OrcaRuntimeService
     const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
 
@@ -804,12 +804,12 @@ describe('session tab RPC methods', () => {
       { connectionId: 'conn-1' }
     )
 
-    expect(runtime.registerSubscriptionCleanup).toHaveBeenCalledWith(
+    expect(runtime.registerOwnedSubscriptionCleanup).toHaveBeenCalledWith(
       'session.tabs:conn-1:wt-1:sub-1',
       expect.any(Function),
       'conn-1'
     )
-    expect(runtime.registerSubscriptionCleanup).toHaveBeenCalledWith(
+    expect(runtime.registerOwnedSubscriptionCleanup).toHaveBeenCalledWith(
       'session.tabs:conn-1:wt-1:sub-2',
       expect.any(Function),
       'conn-1'

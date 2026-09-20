@@ -16220,6 +16220,19 @@ export class OrcaRuntimeService {
     }
   }
 
+  // An async selector lookup must release only owners that existed before it started.
+  captureSubscriptionCleanups(prefix: string): ReadonlyMap<string, SubscriptionRegistration> {
+    const captured = new Map<string, SubscriptionRegistration>()
+    for (const [id, cleanup] of this.subscriptionCleanups) {
+      if (id.startsWith(prefix)) {
+        captured.set(id, {
+          releaseIfCurrent: () => this.cleanupOwnedSubscription(id, cleanup)
+        })
+      }
+    }
+    return captured
+  }
+
   cleanupSubscription(subscriptionId: string): void {
     void this.cleanupSubscriptionAndWait(subscriptionId).catch((error) => {
       console.error(`[runtime] subscription cleanup failed for ${subscriptionId}:`, error)
