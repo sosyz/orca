@@ -1,29 +1,22 @@
 import type {
-  ClaudeManagedAccountRuntimeSelection,
   ClaudeRateLimitAccountsState,
-  CodexManagedAccountRuntimeSelection,
   CodexRateLimitAccountsState
 } from '../../../../shared/managed-account-types'
+import {
+  getProviderAccountActiveIdForView,
+  type ProviderAccountSelection,
+  type ProviderAccountRuntimeView
+} from '../../../../shared/provider-account-runtime-selection'
+
+export {
+  getProviderAccountActiveIdForView,
+  WSL_DEFAULT_DISTRO_KEY,
+  type ProviderAccountRuntimeView
+} from '../../../../shared/provider-account-runtime-selection'
 
 type ProviderAccount =
   | ClaudeRateLimitAccountsState['accounts'][number]
   | CodexRateLimitAccountsState['accounts'][number]
-
-type ProviderAccountSelection = {
-  activeAccountId: string | null
-  activeAccountIdsByRuntime?:
-    | ClaudeManagedAccountRuntimeSelection
-    | CodexManagedAccountRuntimeSelection
-}
-
-export type ProviderAccountRuntimeView = {
-  runtime: 'host' | 'wsl'
-  wslDistro?: string | null
-}
-
-// Why: sentinel for the "WSL default" distro slot; shared so the AccountsPane
-// distro Select and this active-account resolution can't drift out of sync.
-export const WSL_DEFAULT_DISTRO_KEY = '__default__'
 
 export function getProviderAccountRuntime(account: ProviderAccount): {
   runtime: 'host' | 'wsl'
@@ -37,24 +30,6 @@ export function getProviderAccountRuntime(account: ProviderAccount): {
     runtime,
     wslDistro: account.wslDistro ?? null
   }
-}
-
-export function getProviderAccountActiveIdForView(
-  selection: ProviderAccountSelection,
-  runtime: ProviderAccountRuntimeView
-): string | null {
-  if (runtime.runtime === 'host') {
-    return selection.activeAccountIdsByRuntime?.host ?? selection.activeAccountId ?? null
-  }
-  if (runtime.wslDistro) {
-    return selection.activeAccountIdsByRuntime?.wsl?.[runtime.wslDistro] ?? null
-  }
-  const wsl = selection.activeAccountIdsByRuntime?.wsl ?? {}
-  if (wsl[WSL_DEFAULT_DISTRO_KEY]) {
-    return wsl[WSL_DEFAULT_DISTRO_KEY]
-  }
-  const selectedIds = Array.from(new Set(Object.values(wsl).filter(Boolean)))
-  return selectedIds.length === 1 ? selectedIds[0] : null
 }
 
 export function providerAccountMatchesView(
