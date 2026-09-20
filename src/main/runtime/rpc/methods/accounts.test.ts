@@ -154,45 +154,50 @@ describe('account RPC methods', () => {
     expect(consumeCodexRateLimitResetCredit).toHaveBeenCalledWith(idempotencyKey, expectedScope)
   })
 
-  it('forwards the exact WSL target when selecting a Codex account', async () => {
-    const selectCodexAccountForTarget = vi
-      .fn()
-      .mockResolvedValue({ accounts: [], activeAccountId: null })
-    const runtime = { selectCodexAccountForTarget } as unknown as OrcaRuntimeService
-    const select = method('accounts.selectCodexForTarget')
-    if (isStreamingMethod(select)) {
-      throw new Error('accounts.selectCodexForTarget must be a request method')
-    }
-    const params = {
-      accountId: null,
-      target: { runtime: 'wsl' as const, wslDistro: 'Ubuntu' }
-    }
+  it.each(['Codex', 'Claude'])(
+    'forwards the exact WSL target when selecting a %s account',
+    async (provider) => {
+      const selectAccountForTarget = vi
+        .fn()
+        .mockResolvedValue({ accounts: [], activeAccountId: null })
+      const runtime = {
+        [`select${provider}AccountForTarget`]: selectAccountForTarget
+      } as unknown as OrcaRuntimeService
+      const select = method(`accounts.select${provider}ForTarget`)
+      if (isStreamingMethod(select)) {
+        throw new Error(`accounts.select${provider}ForTarget must be a request method`)
+      }
+      const params = {
+        accountId: null,
+        target: { runtime: 'wsl' as const, wslDistro: 'Ubuntu' }
+      }
 
-    expect(select.params?.parse(params)).toEqual(params)
-    expect(
-      select.params?.parse({
-        accountId: null,
-        target: { runtime: 'wsl', wslDistro: null }
+      expect(select.params?.parse(params)).toEqual(params)
+      expect(
+        select.params?.parse({
+          accountId: null,
+          target: { runtime: 'wsl', wslDistro: null }
+        })
+      ).toEqual({ accountId: null, target: { runtime: 'wsl', wslDistro: null } })
+      expect(() =>
+        select.params?.parse({
+          accountId: null,
+          target: { runtime: 'host', wslDistro: 'Ubuntu' }
+        })
+      ).toThrow()
+      expect(() =>
+        select.params?.parse({
+          accountId: null,
+          target: { runtime: 'wsl', wslDistro: '   ' }
+        })
+      ).toThrow()
+      await expect(select.handler(params, { runtime })).resolves.toEqual({
+        accounts: [],
+        activeAccountId: null
       })
-    ).toEqual({ accountId: null, target: { runtime: 'wsl', wslDistro: null } })
-    expect(() =>
-      select.params?.parse({
-        accountId: null,
-        target: { runtime: 'host', wslDistro: 'Ubuntu' }
-      })
-    ).toThrow()
-    expect(() =>
-      select.params?.parse({
-        accountId: null,
-        target: { runtime: 'wsl', wslDistro: '   ' }
-      })
-    ).toThrow()
-    await expect(select.handler(params, { runtime })).resolves.toEqual({
-      accounts: [],
-      activeAccountId: null
-    })
-    expect(selectCodexAccountForTarget).toHaveBeenCalledWith(null, params.target)
-  })
+      expect(selectAccountForTarget).toHaveBeenCalledWith(null, params.target)
+    }
+  )
 
   it('uses a stale-aware refresh when a connection replays the subscription', async () => {
     const snapshot = { claude: null, codex: null }

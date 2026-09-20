@@ -10,6 +10,7 @@ export function createMobileRpcSurfaceRuntime() {
   const getStatus: MobileRpcMock = vi.fn().mockResolvedValue({ graphStatus: 'ok' })
   const pushRuntimeGit: MobileRpcMock = vi.fn().mockResolvedValue({ ok: true })
   const selectClaudeAccount: MobileRpcMock = vi.fn().mockResolvedValue({ ok: true })
+  const selectClaudeAccountForTarget: MobileRpcMock = vi.fn().mockResolvedValue({ ok: true })
   const selectCodexAccount: MobileRpcMock = vi.fn().mockResolvedValue({ ok: true })
   const expectedCodexResetScope = {
     target: { runtime: 'host' as const, wslDistro: null },
@@ -121,6 +122,7 @@ export function createMobileRpcSurfaceRuntime() {
     getStatus,
     pushRuntimeGit,
     selectClaudeAccount,
+    selectClaudeAccountForTarget,
     selectCodexAccount,
     consumeCodexRateLimitResetCredit,
     removeClaudeAccount,

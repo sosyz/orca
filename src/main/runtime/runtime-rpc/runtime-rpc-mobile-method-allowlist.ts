@@ -2,6 +2,7 @@ export const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'accounts.list',
   'accounts.consumeCodexResetCredit',
   'accounts.selectClaude',
+  'accounts.selectClaudeForTarget',
   'accounts.selectCodex',
   'accounts.selectCodexForTarget',
   'accounts.subscribe',

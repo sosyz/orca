@@ -1340,6 +1340,7 @@ import {
 import { detectGitHubAvatarIcon, detectRepoIconAndUpstream } from '../repo-icon-autodetect'
 import { enrichMissingRepoGitRemoteIdentities } from '../repo-git-remote-identity-enrichment'
 import type { ClaudeAccountService } from '../claude-accounts/service'
+import type { ClaudeAccountSelectionTarget } from '../claude-accounts/runtime-selection'
 import type {
   CodexAccountService,
   CodexResetCreditRejectedBeforeProviderReason
@@ -16827,6 +16828,13 @@ export class OrcaRuntimeService {
 
   selectClaudeAccount(accountId: string | null): Promise<ClaudeRateLimitAccountsState> {
     return this.requireAccountServices().claudeAccounts.selectAccount(accountId)
+  }
+
+  selectClaudeAccountForTarget(
+    accountId: string | null,
+    target: ClaudeAccountSelectionTarget
+  ): Promise<ClaudeRateLimitAccountsState> {
+    return this.requireAccountServices().claudeAccounts.selectAccountForTarget(accountId, target)
   }
 
   selectCodexAccount(accountId: string | null): Promise<CodexRateLimitAccountsState> {

@@ -13,7 +13,7 @@ const CodexResetTarget = z.discriminatedUnion('runtime', [
   z.object({ runtime: z.literal('wsl'), wslDistro: z.string().trim().min(1).max(255) }).strict()
 ])
 
-const CodexSelectionTarget = z.discriminatedUnion('runtime', [
+const AccountSelectionTarget = z.discriminatedUnion('runtime', [
   z.object({ runtime: z.literal('host'), wslDistro: z.null() }).strict(),
   z
     .object({
@@ -30,8 +30,8 @@ const SelectAccountParams = z.object({
     .transform((v) => (v === null ? null : v))
 })
 
-const SelectCodexAccountForTargetParams = SelectAccountParams.extend({
-  target: CodexSelectionTarget
+const SelectAccountForTargetParams = SelectAccountParams.extend({
+  target: AccountSelectionTarget
 })
 
 const RemoveAccountParams = z.object({
@@ -116,6 +116,13 @@ export const ACCOUNT_METHODS: readonly RpcAnyMethod[] = [
     handler: async (params, { runtime }) => runtime.selectClaudeAccount(params.accountId)
   }),
   defineMethod({
+    // Older selectClaude handlers strip target fields and would clear the host slot.
+    name: 'accounts.selectClaudeForTarget',
+    params: SelectAccountForTargetParams,
+    handler: async (params, { runtime }) =>
+      runtime.selectClaudeAccountForTarget(params.accountId, params.target)
+  }),
+  defineMethod({
     name: 'accounts.selectCodex',
     params: SelectAccountParams,
     handler: async (params, { runtime }) => runtime.selectCodexAccount(params.accountId)
@@ -124,7 +131,7 @@ export const ACCOUNT_METHODS: readonly RpcAnyMethod[] = [
     // Why: old hosts silently strip unknown target fields from selectCodex.
     // A distinct RPC makes version skew fail before it can clear the host slot.
     name: 'accounts.selectCodexForTarget',
-    params: SelectCodexAccountForTargetParams,
+    params: SelectAccountForTargetParams,
     handler: async (params, { runtime }) =>
       runtime.selectCodexAccountForTarget(params.accountId, params.target)
   }),
