@@ -41,6 +41,7 @@ export function UsageBar({
 }) {
   // Why: round then clamp so bar width, color, and label share one value (desktop parity).
   const used = usedPercent == null ? null : Math.max(0, Math.min(100, Math.round(usedPercent)))
+  const wideLabel = label === 'Fable'
   // Why: same consumption bands as desktop barColor (green <60, amber <80, red ≥80).
   const barColor =
     used == null
@@ -53,7 +54,9 @@ export function UsageBar({
   return (
     <View style={styles.usageBarColumn}>
       <View style={styles.usageBar}>
-        <Text style={styles.usageLabel}>{label}</Text>
+        <Text style={[styles.usageLabel, wideLabel && styles.usageLabelWide]} numberOfLines={1}>
+          {label}
+        </Text>
         <View style={styles.usageTrack}>
           <View
             style={[
@@ -76,7 +79,10 @@ export function UsageBar({
         )}
       </View>
       {resetText ? (
-        <Text style={styles.usageResetText} numberOfLines={1}>
+        <Text
+          style={[styles.usageResetText, wideLabel && styles.usageResetTextWide]}
+          numberOfLines={1}
+        >
           {resetText}
         </Text>
       ) : null}
@@ -99,6 +105,7 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     width: 22
   },
+  usageLabelWide: { width: 36 },
   usageTrack: {
     flex: 1,
     height: 6,
@@ -125,5 +132,6 @@ const styles = StyleSheet.create({
     fontSize: typography.metaSize,
     color: colors.textMuted,
     marginLeft: 22 + spacing.xs
-  }
+  },
+  usageResetTextWide: { marginLeft: 36 + spacing.xs }
 })

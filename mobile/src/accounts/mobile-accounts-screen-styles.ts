@@ -108,6 +108,10 @@ export const styles = StyleSheet.create({
     gap: spacing.md,
     marginTop: 4
   },
+  usageColumn: {
+    flexDirection: 'column',
+    gap: spacing.xs
+  },
   errorText: {
     fontSize: typography.metaSize,
     color: colors.statusRed

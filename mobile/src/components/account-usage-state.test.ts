@@ -72,6 +72,22 @@ describe('hasActiveProviderUsage', () => {
     ).toBe(true)
   })
 
+  it('is true when Fable is the only available Claude window', () => {
+    expect(
+      hasActiveProviderUsage(
+        makeLimits({
+          status: 'error',
+          fableWeekly: {
+            usedPercent: 99,
+            windowMinutes: 10_080,
+            resetsAt: null,
+            resetDescription: null
+          }
+        })
+      )
+    ).toBe(true)
+  })
+
   it('is true when a successful fetch returned ok even with empty windows', () => {
     expect(hasActiveProviderUsage(makeLimits({ status: 'ok' }))).toBe(true)
   })
@@ -185,6 +201,15 @@ describe('getWindowResetLabel', () => {
     const limits = makeLimits({ session: makeWindow(now + hour) })
     expect(getWindowResetLabel(limits, 'weekly', now)).toBe(null)
   })
+
+  it('formats the Fable reset independently from the standard week', () => {
+    const limits = makeLimits({
+      weekly: makeWindow(now + day),
+      fableWeekly: makeWindow(now + 3 * day + 2 * hour)
+    })
+    expect(getWindowResetLabel(limits, 'fableWeekly', now)).toBe('Resets in 3d 2h')
+    expect(getWindowResetLabel(limits, 'weekly', now)).toBe('Resets in 1d')
+  })
 })
 
 describe('getUsageBarState', () => {
@@ -207,5 +232,22 @@ describe('getUsageBarState', () => {
       unavailable: false,
       loading: true
     })
+  })
+
+  it('keeps stale Fable usage visible during an error', () => {
+    expect(
+      getUsageBarState(
+        makeLimits({
+          status: 'error',
+          fableWeekly: {
+            usedPercent: 99,
+            windowMinutes: 10_080,
+            resetsAt: null,
+            resetDescription: null
+          }
+        }),
+        'fableWeekly'
+      )
+    ).toEqual({ usedPercent: 99, unavailable: false, loading: false })
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   View,
   Text,
@@ -23,15 +23,15 @@ import {
   decodeAccountsSnapshot,
   getActiveProviderRateLimits,
   getInactiveProviderUsage,
-  getUsageBarState,
-  getWindowResetLabel,
-  hasActiveProviderUsage,
-  UsageBar
+  hasActiveProviderUsage
 } from '../../../src/components/AccountUsage'
+import { getCodexResetCreditSummary } from '../../../src/components/codex-reset-credit'
+import { getMobileAccountDisplayActiveId } from '../../../src/components/mobile-account-display-selection'
+import { MobileAccountUsageWindows } from '../../../src/accounts/MobileAccountUsageWindows'
 import {
-  getActiveCodexAccountIdForRateLimitTarget,
-  getCodexResetCreditSummary
-} from '../../../src/components/codex-reset-credit'
+  formatMobileAccountSelectionError,
+  getMobileAccountSelectionRequest
+} from '../../../src/accounts/mobile-account-selection'
 import { CodexResetCreditAction } from '../../../src/components/CodexResetCreditAction'
 import { useCodexResetCreditAction } from '../../../src/components/use-codex-reset-credit-action'
 
@@ -48,14 +48,18 @@ export default function AccountsScreen() {
   const [refreshing, setRefreshing] = useState(false)
   const [busyAccountId, setBusyAccountId] = useState<string | null>(null)
   const [clockEnabled, setClockEnabled] = useState(false)
+  const snapshotRevisionRef = useRef(0)
+  const refreshAttemptRef = useRef(0)
 
   const acceptSnapshot = useCallback((nextSnapshot: AccountsSnapshot) => {
+    snapshotRevisionRef.current += 1
     setSnapshot(nextSnapshot)
     setError(null)
   }, [])
   const rejectInvalidSnapshot = useCallback(() => {
     // Why: a stale snapshot can expose a finite reset action for the wrong
     // account; fail closed if a host sends a shape this mobile cannot prove.
+    snapshotRevisionRef.current += 1
     setSnapshot(null)
     setError('Invalid accounts snapshot from host')
   }, [])
@@ -112,69 +116,108 @@ export default function AccountsScreen() {
     if (!client || connState !== 'connected') {
       return
     }
-    const unsubscribe = client.subscribe('accounts.subscribe', null, (payload) => {
-      if (!payload || typeof payload !== 'object') {
+    let disposed = false
+    let fallbackStarted = false
+    const fallbackToList = (streamError: string) => {
+      if (disposed || fallbackStarted) {
         return
       }
-      const evt = payload as { type?: string; snapshot?: unknown }
+      fallbackStarted = true
+      setError(streamError)
+      const revision = snapshotRevisionRef.current
+      void (async () => {
+        try {
+          const response = await client.sendRequest('accounts.list')
+          if (disposed || snapshotRevisionRef.current !== revision) {
+            return
+          }
+          if (!response.ok) {
+            setError(response.error.message)
+            return
+          }
+          try {
+            acceptSnapshot(decodeAccountsSnapshot(response.result))
+          } catch {
+            rejectInvalidSnapshot()
+          }
+        } catch (error) {
+          if (!disposed && snapshotRevisionRef.current === revision) {
+            setError(error instanceof Error ? error.message : String(error))
+          }
+        }
+      })()
+    }
+    const unsubscribe = client.subscribe('accounts.subscribe', null, (payload) => {
+      if (disposed || !payload || typeof payload !== 'object') {
+        return
+      }
+      const evt = payload as { type?: string; snapshot?: unknown; message?: string }
       if (evt.type === 'ready' || evt.type === 'snapshot') {
         try {
           acceptSnapshot(decodeAccountsSnapshot(evt.snapshot))
         } catch {
           rejectInvalidSnapshot()
         }
+      } else if (evt.type === 'error') {
+        fallbackToList(evt.message || 'Failed to subscribe to accounts')
       }
     })
-    return unsubscribe
+    return () => {
+      disposed = true
+      snapshotRevisionRef.current += 1
+      refreshAttemptRef.current += 1
+      setRefreshing(false)
+      unsubscribe()
+    }
   }, [acceptSnapshot, client, connState, rejectInvalidSnapshot])
 
   const refresh = useCallback(async () => {
     if (!client) {
       return
     }
+    const revision = ++snapshotRevisionRef.current
+    const attempt = ++refreshAttemptRef.current
     setRefreshing(true)
     try {
       const res = await client.sendRequest('accounts.list')
+      if (snapshotRevisionRef.current !== revision) {
+        return
+      }
       if (res.ok) {
         acceptSnapshot(decodeAccountsSnapshot(res.result))
       } else {
         setError(res.error.message)
       }
     } catch (e) {
+      if (snapshotRevisionRef.current !== revision) {
+        return
+      }
       if (e instanceof Error && e.message === 'Invalid accounts snapshot from host') {
         rejectInvalidSnapshot()
       } else {
         setError(e instanceof Error ? e.message : String(e))
       }
     } finally {
-      setRefreshing(false)
+      if (refreshAttemptRef.current === attempt) {
+        setRefreshing(false)
+      }
     }
   }, [acceptSnapshot, client, rejectInvalidSnapshot])
 
   const selectAccount = useCallback(
     async (provider: ProviderKey, accountId: string | null) => {
-      if (!client) {
-        return
-      }
-      const codexTarget = provider === 'codex' ? snapshot?.rateLimits.codexTarget : null
-      if (provider === 'codex' && !codexTarget) {
+      if (!client || !snapshot) {
         return
       }
       setBusyAccountId(accountId ?? `${provider}:default`)
-      const method =
-        provider === 'claude'
-          ? 'accounts.selectClaude'
-          : codexTarget?.runtime === 'wsl'
-            ? 'accounts.selectCodexForTarget'
-            : 'accounts.selectCodex'
       try {
-        // Why: old hosts silently strip unknown target fields. Use the distinct
-        // targeted RPC for WSL so version skew fails before mutating host state.
-        const params =
-          codexTarget?.runtime === 'wsl' ? { accountId, target: codexTarget } : { accountId }
-        const res = await client.sendRequest(method, params)
+        const request = getMobileAccountSelectionRequest(snapshot, provider, accountId)
+        const res = await client.sendRequest(request.method, request.params)
         if (!res.ok) {
-          Alert.alert('Could not switch account', res.error.message)
+          Alert.alert(
+            'Could not switch account',
+            formatMobileAccountSelectionError(request, res.error)
+          )
         } else {
           // Why: optimistic refresh — the streaming subscription will also
           // emit, but a one-shot keeps the UI responsive even if the stream
@@ -195,13 +238,8 @@ export default function AccountsScreen() {
       return null
     }
     const state = provider === 'claude' ? snapshot.claude : snapshot.codex
-    const activeAccountId =
-      provider === 'codex' && snapshot.codex.activeAccountIdsByRuntime
-        ? getActiveCodexAccountIdForRateLimitTarget(snapshot)
-        : state.activeAccountId
+    const activeAccountId = getMobileAccountDisplayActiveId(snapshot, provider)
     const activeUsage = getActiveProviderRateLimits(snapshot, provider)
-    const activeSessionBar = getUsageBarState(activeUsage, 'session')
-    const activeWeeklyBar = getUsageBarState(activeUsage, 'weekly')
     const resetCredit = provider === 'codex' ? getCodexResetCreditSummary(activeUsage, now) : null
     const Icon = provider === 'claude' ? ClaudeIcon : OpenAIIcon
     return (
@@ -224,22 +262,7 @@ export default function AccountsScreen() {
                   holds the system-default login's rate limits — surface them
                   here so non-managed users still see their usage. */}
               {activeAccountId === null && hasActiveProviderUsage(activeUsage) ? (
-                <View style={styles.usageRow}>
-                  <UsageBar
-                    label="5h"
-                    usedPercent={activeSessionBar.usedPercent}
-                    unavailable={activeSessionBar.unavailable}
-                    loading={activeSessionBar.loading}
-                    resetText={getWindowResetLabel(activeUsage, 'session', now)}
-                  />
-                  <UsageBar
-                    label="7d"
-                    usedPercent={activeWeeklyBar.usedPercent}
-                    unavailable={activeWeeklyBar.unavailable}
-                    loading={activeWeeklyBar.loading}
-                    resetText={getWindowResetLabel(activeUsage, 'weekly', now)}
-                  />
-                </View>
+                <MobileAccountUsageWindows usage={activeUsage} now={now} />
               ) : null}
             </View>
             <View style={styles.rowTrailing}>
@@ -260,8 +283,6 @@ export default function AccountsScreen() {
             const isFetching =
               (isActive && usage?.status === 'fetching') ||
               (!isActive && inactiveEntry?.isFetching === true)
-            const sessionBar = getUsageBarState(usage, 'session', isFetching)
-            const weeklyBar = getUsageBarState(usage, 'weekly', isFetching)
             return (
               <View key={account.id}>
                 <View style={styles.separator} />
@@ -279,22 +300,7 @@ export default function AccountsScreen() {
                     <Text style={styles.rowTitle} numberOfLines={1}>
                       {account.email}
                     </Text>
-                    <View style={styles.usageRow}>
-                      <UsageBar
-                        label="5h"
-                        usedPercent={sessionBar.usedPercent}
-                        unavailable={sessionBar.unavailable}
-                        loading={sessionBar.loading}
-                        resetText={getWindowResetLabel(usage, 'session', now)}
-                      />
-                      <UsageBar
-                        label="7d"
-                        usedPercent={weeklyBar.usedPercent}
-                        unavailable={weeklyBar.unavailable}
-                        loading={weeklyBar.loading}
-                        resetText={getWindowResetLabel(usage, 'weekly', now)}
-                      />
-                    </View>
+                    <MobileAccountUsageWindows usage={usage} isFetching={isFetching} now={now} />
                     {usage?.error ? (
                       <Text style={styles.errorText} numberOfLines={1}>
                         {usage.error}
