@@ -14,6 +14,7 @@ import {
   REQUIRED_EMPTY_HOME_TEXT,
   assertHomeLayout,
   assertPairingErrorLayout,
+  classifyPairingErrorLayout,
   chooseHdcTarget,
   classifyFatalLogs,
   classifyHomeLayout,
@@ -30,6 +31,7 @@ import {
   sanitizeLog,
   scopeHilogToPidEpochWindow
 } from './run-harmony-simulator-acceptance.mjs'
+import { recordPhase } from './harmony-simulator-acceptance-device.mjs'
 import {
   PAIRED_HOME_LAYOUT_FIXTURE,
   PAIRED_HOME_WITH_PAIR_DESKTOP_FOOTER_FIXTURE,
@@ -187,17 +189,19 @@ test('bounds preserve-data hilog to the current PID and time window', () => {
 
 test('recognizes empty and paired home layouts without accepting arbitrary text', () => {
   assert.deepEqual(REQUIRED_EMPTY_HOME_TEXT, [
-    'Connect your desktop',
-    'Pair Desktop',
-    'How it works'
+    ['Connect your desktop', '连接你的桌面端'],
+    ['Pair Desktop', '配对桌面端'],
+    ['How it works', 'HOW IT WORKS', '使用方式']
   ])
   assert.equal(
     assertHomeLayout('Orca\nConnect your desktop\nPair Desktop\nHOW IT WORKS'),
     'empty-home'
   )
   assert.equal(assertHomeLayout('Connect your desktop\nPair Desktop\nHow it works'), 'empty-home')
+  assert.equal(assertHomeLayout('连接你的桌面端\n配对桌面端\n使用方式'), 'empty-home')
   assert.equal(assertHomeLayout(PAIRED_HOME_LAYOUT_FIXTURE), 'paired-home')
   assert.equal(assertHomeLayout(PAIRED_HOME_WITH_PAIR_DESKTOP_FOOTER_FIXTURE), 'paired-home')
+  assert.equal(assertHomeLayout('欢迎回来\n桌面端\n任务'), 'paired-home')
   assert.deepEqual(classifyHomeLayout(PAIRED_HOME_LAYOUT_FIXTURE), {
     kind: 'paired-home',
     missing: { emptyHome: [], pairedHome: [] },
@@ -226,12 +230,61 @@ test('recognizes empty and paired home layouts without accepting arbitrary text'
   )
   assert.throws(() => assertHomeLayout('Orca\nHost1'), /paired-home missing: Welcome back/u)
   assert.equal(assertPairingErrorLayout('Not a valid pairing code\nBack to home'), true)
+  assert.equal(assertPairingErrorLayout('配对码无效\n返回首页'), true)
+  assert.deepEqual(classifyPairingErrorLayout('配对码无效\n返回首页'), {
+    missing: [],
+    recognized: true
+  })
   assert.throws(() => assertPairingErrorLayout('Not a valid pairing code'), /Back to home/u)
   assert.match(
     remoteAcceptanceDirectory('fixed-run'),
     /^\/data\/local\/tmp\/orca-harmony-acceptance-[a-f0-9]{16}$/u
   )
 })
+
+for (const [locale, layoutText] of [
+  ['en', 'Not a valid pairing code\nBack to home'],
+  ['zh', '配对码无效\n返回首页']
+]) {
+  test(`recordPhase recognizes ${locale} pairing error layouts`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), `orca-harmony-record-phase-${locale}-`))
+    try {
+      const calls = []
+      const command = (_hdc, _target, args) => {
+        calls.push(args)
+        if (args[0] === 'shell' && args[1] === 'uitest' && args[2] === 'dumpLayout') {
+          return layoutText
+        }
+        if (args[0] === 'file' && args[1] === 'recv') {
+          writeFileSync(args[3], args[2].endsWith('.png') ? 'png' : layoutText)
+          return ''
+        }
+        return ''
+      }
+      const result = await recordPhase(
+        command,
+        'hdc',
+        'simulator-one',
+        directory,
+        `pairing-${locale}`,
+        ['101'],
+        '/data/local/tmp/orca-harmony-test',
+        { assertPairing: true }
+      )
+      assert.equal(result.uiState, 'pairing-error')
+      assert.equal(result.layout, `pairing-${locale}.layout.json`)
+      assert.equal(result.screenshot, `pairing-${locale}.png`)
+      assert.equal(
+        calls.some(
+          (args) => args[0] === 'shell' && args[1] === 'uitest' && args[2] === 'screenCap'
+        ),
+        true
+      )
+    } finally {
+      rmSync(directory, { force: true, recursive: true })
+    }
+  })
+}
 
 test('PID extraction handles common Harmony ps rows', () => {
   assert.deepEqual(

@@ -10,13 +10,16 @@ import {
   clampHostSidebarWidth,
   loadDisabledTerminalLiveInputHandles,
   loadHostSidebarWidth,
+  loadMobileUiLanguage,
   loadPushNotificationsEnabled,
   loadTerminalAutocompleteEnabled,
   loadTerminalLinkOpenMode,
-  readPushNotificationsPreference,
   readDisabledTerminalLiveInputHandlesPreference,
+  readMobileUiLanguagePreference,
+  readPushNotificationsPreference,
   saveDisabledTerminalLiveInputHandles,
   saveHostSidebarWidth,
+  saveMobileUiLanguage,
   savePushNotificationsEnabled,
   saveTerminalAutocompleteEnabled,
   saveTerminalLinkOpenMode
@@ -37,6 +40,8 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
   }
 }))
 
+const UI_LANGUAGE_KEY = 'orca:uiLanguage'
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((resolvePromise) => {
@@ -44,6 +49,90 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   })
   return { promise, resolve }
 }
+
+describe('mobile UI language preference', () => {
+  beforeEach(() => {
+    vi.mocked(AsyncStorage.getItem).mockReset()
+    vi.mocked(AsyncStorage.setItem).mockReset()
+  })
+
+  it('defaults to system and loads only supported language choices', async () => {
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(null)
+
+    await expect(readMobileUiLanguagePreference()).resolves.toEqual({
+      loaded: true,
+      value: 'system'
+    })
+    await expect(loadMobileUiLanguage()).resolves.toBe('system')
+    expect(AsyncStorage.getItem).toHaveBeenCalledWith(UI_LANGUAGE_KEY)
+
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue('zh')
+    await expect(loadMobileUiLanguage()).resolves.toBe('zh')
+
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue('bogus')
+    await expect(loadMobileUiLanguage()).resolves.toBe('system')
+  })
+
+  it('reports storage failures without blocking the provider fallback', async () => {
+    vi.mocked(AsyncStorage.getItem).mockRejectedValue(new Error('storage unavailable'))
+
+    await expect(readMobileUiLanguagePreference()).resolves.toEqual({
+      loaded: false,
+      value: 'system'
+    })
+    await expect(loadMobileUiLanguage()).resolves.toBe('system')
+  })
+
+  it('normalizes unsupported writes to system', async () => {
+    await saveMobileUiLanguage('zh')
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(UI_LANGUAGE_KEY, 'zh')
+
+    await saveMobileUiLanguage('fr' as never)
+    expect(AsyncStorage.setItem).toHaveBeenLastCalledWith(UI_LANGUAGE_KEY, 'system')
+  })
+
+  it('serializes language writes across provider mounts and waits before reading', async () => {
+    let stored = 'system'
+    const oldWrite = deferred<void>()
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async () => stored)
+    vi.mocked(AsyncStorage.setItem)
+      .mockImplementationOnce(async (_key, value) => {
+        await oldWrite.promise
+        stored = value
+      })
+      .mockImplementation(async (_key, value) => {
+        stored = value
+      })
+
+    const older = saveMobileUiLanguage('zh')
+    await Promise.resolve()
+    const newer = saveMobileUiLanguage('en')
+    const reloaded = readMobileUiLanguagePreference()
+
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1)
+    oldWrite.resolve()
+    await Promise.all([older, newer])
+    await expect(reloaded).resolves.toEqual({ value: 'en', loaded: true })
+    expect(AsyncStorage.setItem).toHaveBeenNthCalledWith(2, UI_LANGUAGE_KEY, 'en')
+  })
+
+  it('allows a later language choice after an earlier storage failure', async () => {
+    let stored = 'system'
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async () => stored)
+    vi.mocked(AsyncStorage.setItem)
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockImplementation(async (_key, value) => {
+        stored = value
+      })
+
+    const older = expect(saveMobileUiLanguage('zh')).rejects.toThrow('storage unavailable')
+    const newer = saveMobileUiLanguage('en')
+    await older
+    await newer
+
+    await expect(readMobileUiLanguagePreference()).resolves.toEqual({ value: 'en', loaded: true })
+  })
+})
 
 describe('session view preference', () => {
   beforeEach(() => {
@@ -487,5 +576,65 @@ describe('terminal link open mode preference', () => {
     await saveTerminalLinkOpenMode('phone-browser')
 
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('orca:terminalLinkOpenMode', 'phone-browser')
+  })
+
+  it('persists rapid choices in order and makes reads wait for the latest write', async () => {
+    let stored = 'orca-browser'
+    const firstWrite = deferred<void>()
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async () => stored)
+    vi.mocked(AsyncStorage.setItem)
+      .mockImplementationOnce(async (_key, value) => {
+        await firstWrite.promise
+        stored = value
+      })
+      .mockImplementation(async (_key, value) => {
+        stored = value
+      })
+
+    const older = saveTerminalLinkOpenMode('phone-browser')
+    await Promise.resolve()
+    const newer = saveTerminalLinkOpenMode('orca-browser')
+    const reloaded = loadTerminalLinkOpenMode()
+
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1)
+    firstWrite.resolve()
+    await Promise.all([older, newer])
+    await expect(reloaded).resolves.toBe('orca-browser')
+    await expect(loadTerminalLinkOpenMode()).resolves.toBe('orca-browser')
+  })
+
+  it('lets a later link-mode choice persist after an earlier write fails', async () => {
+    let stored = 'orca-browser'
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async () => stored)
+    vi.mocked(AsyncStorage.setItem)
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockImplementation(async (_key, value) => {
+        stored = value
+      })
+
+    const failed = expect(saveTerminalLinkOpenMode('phone-browser')).rejects.toThrow(
+      'storage unavailable'
+    )
+    const latest = saveTerminalLinkOpenMode('orca-browser')
+    await failed
+    await latest
+    await expect(loadTerminalLinkOpenMode()).resolves.toBe('orca-browser')
+  })
+
+  it('does not block a language choice behind a pending link-mode write', async () => {
+    const linkWrite = deferred<void>()
+    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key) => {
+      if (key === 'orca:terminalLinkOpenMode') {
+        await linkWrite.promise
+      }
+    })
+
+    const pendingLink = saveTerminalLinkOpenMode('phone-browser')
+    await Promise.resolve()
+    await saveMobileUiLanguage('zh')
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(UI_LANGUAGE_KEY, 'zh')
+
+    linkWrite.resolve()
+    await pendingLink
   })
 })

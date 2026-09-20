@@ -16,6 +16,7 @@ export interface Spec extends TurboModule {
   getLatestUrlEvent(): UnsafeObject | null
   getNetworkState(): Promise<UnsafeObject>
   getNotificationPermission(): Promise<UnsafeObject>
+  getSystemLocale(): string | null
   getSecureValue(key: string): Promise<string | null>
   hasClipboardImage(): Promise<boolean>
   hasClipboardString(): Promise<boolean>

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -10,6 +10,7 @@ import {
   PRESERVE_DATA_MODE,
   runHarmonySimulatorAcceptance
 } from './run-harmony-simulator-acceptance.mjs'
+import { recordPhase } from './harmony-simulator-acceptance-device.mjs'
 import {
   PAIRED_HOME_LAYOUT_FIXTURE,
   createPassingAcceptanceCommand,
@@ -282,6 +283,50 @@ test('preserve-data accepts an already paired cold-launch home layout fixture', 
     rmSync(directory, { force: true, recursive: true })
   }
 })
+
+for (const [locale, layoutText] of [
+  ['en', 'Not a valid pairing code\nBack to home'],
+  ['zh', '配对码无效\n返回首页']
+]) {
+  test(`recordPhase accepts ${locale} pairing error layouts`, async () => {
+    const directory = mkdtempSync(join(tmpdir(), `orca-harmony-record-phase-${locale}-`))
+    try {
+      const calls = []
+      const command = (_hdc, _target, args) => {
+        calls.push(args)
+        if (args[0] === 'shell' && args[1] === 'uitest' && args[2] === 'dumpLayout') {
+          return layoutText
+        }
+        if (args[0] === 'file' && args[1] === 'recv') {
+          writeFileSync(args[3], args[2].endsWith('.png') ? 'png' : layoutText)
+          return ''
+        }
+        return ''
+      }
+      const result = await recordPhase(
+        command,
+        '/opt/hdc',
+        'simulator-secret',
+        directory,
+        `pairing-${locale}`,
+        ['101'],
+        '/data/local/tmp/orca-harmony-test',
+        { assertPairing: true }
+      )
+      assert.equal(result.uiState, 'pairing-error')
+      assert.equal(result.layout, `pairing-${locale}.layout.json`)
+      assert.equal(result.screenshot, `pairing-${locale}.png`)
+      assert.equal(
+        calls.some(
+          (args) => args[0] === 'shell' && args[1] === 'uitest' && args[2] === 'screenCap'
+        ),
+        true
+      )
+    } finally {
+      rmSync(directory, { force: true, recursive: true })
+    }
+  })
+}
 
 test('writes failed evidence with phase artifacts without leaking layout text', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'orca-harmony-acceptance-failed-evidence-'))

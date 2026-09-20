@@ -1,7 +1,51 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
+import { normalizeMobileUiLanguage, type MobileUiLanguage } from '../i18n/supported-languages'
+
 const PINS_PREFIX = 'orca:pins:'
 const NOTIF_KEY = 'orca:pushNotificationsEnabled'
+const UI_LANGUAGE_KEY = 'orca:uiLanguage'
+const preferenceWriteBarriers = new Map<string, Promise<void>>()
+
+function queuePreferenceWrite(key: string, value: string): Promise<void> {
+  const write = (preferenceWriteBarriers.get(key) ?? Promise.resolve()).then(() =>
+    AsyncStorage.setItem(key, value)
+  )
+  const barrier = write.catch(() => undefined)
+  preferenceWriteBarriers.set(key, barrier)
+  void barrier.then(() => {
+    if (preferenceWriteBarriers.get(key) === barrier) {
+      preferenceWriteBarriers.delete(key)
+    }
+  })
+  return write
+}
+
+export type MobileUiLanguagePreference = {
+  readonly value: MobileUiLanguage
+  readonly loaded: boolean
+}
+
+export async function readMobileUiLanguagePreference(): Promise<MobileUiLanguagePreference> {
+  await preferenceWriteBarriers.get(UI_LANGUAGE_KEY)
+  try {
+    return {
+      value: normalizeMobileUiLanguage(await AsyncStorage.getItem(UI_LANGUAGE_KEY)),
+      loaded: true
+    }
+  } catch {
+    return { value: normalizeMobileUiLanguage(null), loaded: false }
+  }
+}
+
+export async function loadMobileUiLanguage(): Promise<MobileUiLanguage> {
+  return (await readMobileUiLanguagePreference()).value
+}
+
+export function saveMobileUiLanguage(language: MobileUiLanguage): Promise<void> {
+  // Why: a prior provider can finish writing after Settings remounts and reverse a newer choice.
+  return queuePreferenceWrite(UI_LANGUAGE_KEY, normalizeMobileUiLanguage(language))
+}
 
 export type PushNotificationsPreference = {
   readonly value: boolean | null
@@ -43,6 +87,7 @@ export const TERMINAL_TEXT_SCALES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const
 const DEFAULT_TEXT_SCALE = 1
 
 export async function loadTerminalTextScale(): Promise<number> {
+  await preferenceWriteBarriers.get(TEXT_SCALE_KEY)
   try {
     const raw = await AsyncStorage.getItem(TEXT_SCALE_KEY)
     if (raw === null) {
@@ -57,8 +102,8 @@ export async function loadTerminalTextScale(): Promise<number> {
   }
 }
 
-export async function saveTerminalTextScale(scale: number): Promise<void> {
-  await AsyncStorage.setItem(TEXT_SCALE_KEY, String(scale))
+export function saveTerminalTextScale(scale: number): Promise<void> {
+  return queuePreferenceWrite(TEXT_SCALE_KEY, String(scale))
 }
 
 const AUTOCOMPLETE_KEY = 'orca:terminalAutocompleteEnabled'
@@ -198,6 +243,7 @@ const TERMINAL_LINK_OPEN_MODE_KEY = 'orca:terminalLinkOpenMode'
 export const DEFAULT_TERMINAL_LINK_OPEN_MODE: MobileTerminalLinkOpenMode = 'orca-browser'
 
 export async function loadTerminalLinkOpenMode(): Promise<MobileTerminalLinkOpenMode> {
+  await preferenceWriteBarriers.get(TERMINAL_LINK_OPEN_MODE_KEY)
   try {
     const raw = await AsyncStorage.getItem(TERMINAL_LINK_OPEN_MODE_KEY)
     return raw === 'phone-browser' || raw === 'orca-browser' ? raw : DEFAULT_TERMINAL_LINK_OPEN_MODE
@@ -206,8 +252,8 @@ export async function loadTerminalLinkOpenMode(): Promise<MobileTerminalLinkOpen
   }
 }
 
-export async function saveTerminalLinkOpenMode(mode: MobileTerminalLinkOpenMode): Promise<void> {
-  await AsyncStorage.setItem(TERMINAL_LINK_OPEN_MODE_KEY, mode)
+export function saveTerminalLinkOpenMode(mode: MobileTerminalLinkOpenMode): Promise<void> {
+  return queuePreferenceWrite(TERMINAL_LINK_OPEN_MODE_KEY, mode)
 }
 
 function stringArray(value: unknown): string[] {

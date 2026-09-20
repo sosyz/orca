@@ -60,6 +60,7 @@ export {
   REQUIRED_PAIRING_TEXT,
   assertHomeLayout,
   assertPairingErrorLayout,
+  classifyPairingErrorLayout,
   classifyHomeLayout,
   extractLayoutText
 } from './harmony-simulator-layout-semantics.mjs'

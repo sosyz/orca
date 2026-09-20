@@ -1,6 +1,7 @@
 import { pasteboard } from '@kit.BasicServicesKit';
 import type { BusinessError } from '@kit.BasicServicesKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { i18n } from '@kit.LocalizationKit';
 import { scanBarcode, scanCore } from '@kit.ScanKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { UITurboModule, UITurboModuleContext } from '@rnoh/react-native-openharmony/ts';
@@ -311,6 +312,17 @@ export class OrcaHarmonyTurboModule extends UITurboModule implements HarmonyAppL
 
   getLatestUrlEvent(): HarmonyUrlEvent | null {
     return HarmonyLinkingState.getLatest();
+  }
+
+  getSystemLocale(): string | null {
+    if (!canIUse('SystemCapability.Global.I18n')) {
+      return null;
+    }
+    try {
+      return i18n.System.getSystemLocale();
+    } catch (_) {
+      return null;
+    }
   }
 
   async openExternalUrl(uri: string): Promise<void> {

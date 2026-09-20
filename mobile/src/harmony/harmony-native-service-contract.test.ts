@@ -310,6 +310,18 @@ describe('Harmony native service safety contract', () => {
     expect(linking).not.toContain("'mailto:'")
   })
 
+  it('exposes Harmony system locale through the native module without requiring Intl', () => {
+    const harmonyRoot = resolve(import.meta.dirname, '../../harmony')
+    const spec = readFileSync(join(harmonyRoot, 'src/native/NativeOrcaHarmony.ts'), 'utf8')
+    const module = readNativeSource('OrcaHarmonyTurboModule.ets')
+
+    expect(spec).toContain('getSystemLocale(): string | null')
+    expect(module).toContain("import { i18n } from '@kit.LocalizationKit'")
+    expect(module).toContain('getSystemLocale(): string | null')
+    expect(module).toContain("canIUse('SystemCapability.Global.I18n')")
+    expect(module).toContain('return i18n.System.getSystemLocale()')
+  })
+
   it('checks clipboard availability without requesting restricted read permission', () => {
     const source = readNativeSource('OrcaHarmonyTurboModule.ets')
     const passiveChecks = source.slice(

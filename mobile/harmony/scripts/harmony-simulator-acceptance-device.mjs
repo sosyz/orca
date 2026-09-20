@@ -3,9 +3,9 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, posix, resolve } from 'node:path'
 import { BUNDLE_NAME, sha256 } from './harmony-simulator-acceptance-options.mjs'
 import {
-  REQUIRED_PAIRING_TEXT,
   assertHomeLayout,
   assertPairingErrorLayout,
+  classifyPairingErrorLayout,
   classifyHomeLayout,
   extractLayoutText
 } from './harmony-simulator-layout-semantics.mjs'
@@ -112,10 +112,10 @@ export async function recordPhase(
       const homeLayout = classifyHomeLayout(layout)
       ready = homeLayout.recognized
       uiState = homeLayout.recognized ? homeLayout.kind : undefined
+    } else if (options.assertPairing) {
+      ready = classifyPairingErrorLayout(layout).recognized
     } else {
-      ready = options.assertPairing
-        ? REQUIRED_PAIRING_TEXT.every((text) => visibleText.includes(text))
-        : visibleText.length > 0
+      ready = visibleText.length > 0
     }
     if (ready) {
       break

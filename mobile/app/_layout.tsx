@@ -7,6 +7,7 @@ import * as Notifications from 'expo-notifications'
 import * as Linking from 'expo-linking'
 import { colors } from '../src/theme/mobile-theme'
 import { OrcaLogo } from '../src/components/OrcaLogo'
+import { MobileI18nProvider } from '../src/i18n'
 import { RpcClientProvider } from '../src/transport/client-context'
 import { getNotificationNavigationTarget } from '../src/notifications/notification-routing'
 import { useOpenNotificationRoute } from '../src/notifications/use-open-notification-route'
@@ -162,50 +163,52 @@ export default function RootLayout() {
   }, [])
 
   return (
-    <RpcClientProvider>
-      <View style={styles.root} onLayout={onNavigatorLayout}>
-        <StatusBar style="light" />
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.bgPanel },
-            headerTintColor: colors.textPrimary,
-            headerTitleStyle: { fontSize: 16, fontWeight: '600' },
-            contentStyle: { backgroundColor: colors.bgBase },
-            headerShadowVisible: false
-            // Why: deliberately no `orientation` screenOption. react-native-screens
-            // has no value that respects the device rotation lock — even 'default'
-            // calls setRequestedOrientation(UNSPECIFIED) at runtime, overriding the
-            // manifest. Leaving it unset lets the manifest's "fullUser" (set by the
-            // android-respect-rotation-lock config plugin) honor the auto-rotate lock.
-          }}
-        >
-          <Stack.Screen
-            name="index"
-            options={{
-              headerShown: false,
-              headerTitle: () => <OrcaLogo size={22} />
+    <MobileI18nProvider>
+      <RpcClientProvider>
+        <View style={styles.root} onLayout={onNavigatorLayout}>
+          <StatusBar style="light" />
+          <Stack
+            screenOptions={{
+              headerStyle: { backgroundColor: colors.bgPanel },
+              headerTintColor: colors.textPrimary,
+              headerTitleStyle: { fontSize: 16, fontWeight: '600' },
+              contentStyle: { backgroundColor: colors.bgBase },
+              headerShadowVisible: false
+              // Why: deliberately no `orientation` screenOption. react-native-screens
+              // has no value that respects the device rotation lock — even 'default'
+              // calls setRequestedOrientation(UNSPECIFIED) at runtime, overriding the
+              // manifest. Leaving it unset lets the manifest's "fullUser" (set by the
+              // android-respect-rotation-lock config plugin) honor the auto-rotate lock.
             }}
-          />
-          <Stack.Screen name="pair-scan" options={{ headerShown: false }} />
-          <Stack.Screen name="pair" options={{ headerShown: false }} />
-          <Stack.Screen name="pair-confirm" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="mobile-onboarding"
-            options={{ headerShown: false, presentation: 'modal', gestureEnabled: false }}
-          />
-          <Stack.Screen name="settings" options={{ headerShown: false }} />
-          <Stack.Screen name="terminal-settings" options={{ headerShown: false }} />
-          <Stack.Screen name="native-chat-settings" options={{ headerShown: false }} />
-          <Stack.Screen name="browser-settings" options={{ headerShown: false }} />
-          <Stack.Screen name="voice-settings" options={{ headerShown: false }} />
-          <Stack.Screen name="notifications" options={{ headerShown: false }} />
-          <Stack.Screen name="troubleshoot" options={{ headerShown: false }} />
-          <Stack.Screen name="connection-log" options={{ headerShown: false }} />
-          <Stack.Screen name="about" options={{ headerShown: false }} />
-          <Stack.Screen name="h" options={{ headerShown: false }} />
-        </Stack>
-      </View>
-    </RpcClientProvider>
+          >
+            <Stack.Screen
+              name="index"
+              options={{
+                headerShown: false,
+                headerTitle: () => <OrcaLogo size={22} />
+              }}
+            />
+            <Stack.Screen name="pair-scan" options={{ headerShown: false }} />
+            <Stack.Screen name="pair" options={{ headerShown: false }} />
+            <Stack.Screen name="pair-confirm" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="mobile-onboarding"
+              options={{ headerShown: false, presentation: 'modal', gestureEnabled: false }}
+            />
+            <Stack.Screen name="settings" options={{ headerShown: false }} />
+            <Stack.Screen name="terminal-settings" options={{ headerShown: false }} />
+            <Stack.Screen name="native-chat-settings" options={{ headerShown: false }} />
+            <Stack.Screen name="browser-settings" options={{ headerShown: false }} />
+            <Stack.Screen name="voice-settings" options={{ headerShown: false }} />
+            <Stack.Screen name="notifications" options={{ headerShown: false }} />
+            <Stack.Screen name="troubleshoot" options={{ headerShown: false }} />
+            <Stack.Screen name="connection-log" options={{ headerShown: false }} />
+            <Stack.Screen name="about" options={{ headerShown: false }} />
+            <Stack.Screen name="h" options={{ headerShown: false }} />
+          </Stack>
+        </View>
+      </RpcClientProvider>
+    </MobileI18nProvider>
   )
 }
 
