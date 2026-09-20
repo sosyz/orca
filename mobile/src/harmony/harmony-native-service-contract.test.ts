@@ -132,7 +132,7 @@ describe('Harmony native service safety contract', () => {
     expect(module).toContain('this.audio.tearDown()')
     expect(module).toContain('this.keepAwake.setForeground(false)')
     expect(module).toContain('HarmonyAppLifecycle.detach(this.lifecycleListenerToken)')
-    expect(keepAwake).toContain('this.foreground && this.owners.size > 0')
+    expect(keepAwake).toContain('owner.foreground && owner.owners.size > 0')
   })
 
   it('does not let an older notification module detach a newer listener', () => {
@@ -192,10 +192,12 @@ describe('Harmony native service safety contract', () => {
     const source = readNativeSource('HarmonyKeepAwakeService.ets')
 
     expect(source).toContain('const alreadyActive = this.owners.has(tag)')
-    expect(source).toContain('if (!alreadyActive)')
+    expect(source).toContain('if (!alreadyActive && this.ownerTokens.get(tag) === token)')
     expect(source).toContain('this.owners.delete(tag)')
-    expect(source).toContain('this.applyTail.then(() => this.apply(), () => this.apply())')
-    expect(source).toContain('this.applyTail = pending.catch(() => undefined)')
+    expect(source).toContain(
+      'this.coordinator.applyTail.then(() => this.apply(), () => this.apply())'
+    )
+    expect(source).toContain('this.coordinator.applyTail = pending.catch(() => undefined)')
     expect(source).toContain('throw activationError')
   })
 
