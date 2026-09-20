@@ -20,7 +20,7 @@ import { createRequire } from 'node:module'
 import { electronViteConfig } from '../../electron.vite.config'
 import { BOOTSTRAP_FATAL_EXIT_GUARD_KEY } from '../../src/main/startup/bootstrap-fatal-exit-guard'
 
-const targetConfig = readFileSync('config/electron-vite-target.config.ts', 'utf8')
+const targetConfig = readFileSync('config/electron-vite-target.config.cts', 'utf8')
 const devRunner = readFileSync('config/scripts/run-electron-vite-dev.mjs', 'utf8')
 
 type BootstrapProcessMock = EventEmitter & {
@@ -116,9 +116,9 @@ describe('Electron Vite output contract', () => {
     expect(external('node:fs', undefined, false)).toBe(true)
     expect(external('@xterm/headless', undefined, false)).toBe(false)
     expect(external('@xterm/addon-serialize', undefined, false)).toBe(false)
-    expect(external('psl', undefined, false)).toBe(false)
+    expect(external('tldts', undefined, false)).toBe(false)
     expect(external('zod', undefined, false)).toBe(false)
-    expect(electronViteConfig.main?.build?.externalizeDeps?.exclude).toContain('psl')
+    expect(electronViteConfig.main?.build?.externalizeDeps?.exclude).toContain('tldts')
     expect(electronViteConfig.main?.build?.externalizeDeps?.exclude).toContain('zod')
   })
 

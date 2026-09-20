@@ -176,6 +176,13 @@ export function installSessionReconcileDispose(session: ConnectPanePtySession): 
       session.spawnedFreshPtyId === ptyId && !Number.isFinite(session.lastTerminalInputAt),
     dispose() {
       session.disposed = true
+      session.startupTiming?.finish('disposed')
+      // A successor can claim the numeric pane slot before this retired
+      // binding's disposal callback runs; do not clear its pane-scoped error.
+      const currentPaneTransport = session.deps.paneTransportsRef.current.get(session.pane.id)
+      if (!currentPaneTransport || currentPaneTransport === session.transport) {
+        session.deps.onPtyErrorClearedRef?.current?.(session.pane.id)
+      }
       // Why: a detached client stops observing the pane's bytes, so it must cede
       // agent-status authority back to the host on the next mirrored snapshot.
       session.releaseRendererOwnedAgentStatusPane?.()
