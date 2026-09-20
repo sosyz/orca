@@ -37,7 +37,7 @@ vi.mock('lucide-react-native', () => ({
 
 let renderer: ReactTestRenderer | null = null
 
-function postWebViewMessage(payload: Record<string, unknown>): void {
+function postWebViewMessage(payload: unknown): void {
   if (!renderer) {
     throw new Error('TerminalWebView did not render')
   }
@@ -54,6 +54,19 @@ describe('TerminalWebView query reply routing', () => {
       renderer = null
     }
     vi.restoreAllMocks()
+  })
+
+  it('ignores malformed bridge messages and continues routing valid replies', () => {
+    const onTerminalQueryReply = vi.fn()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    act(() => {
+      renderer = create(createElement(TerminalWebView, { onTerminalQueryReply }))
+    })
+    for (const payload of [null, false, 1, 'message', []]) {
+      expect(() => postWebViewMessage(payload)).not.toThrow()
+    }
+    postWebViewMessage({ type: 'terminal-data', bytes: '\x1b[3;4R' })
+    expect(onTerminalQueryReply).toHaveBeenCalledOnce()
   })
 
   it('routes only complete terminal query replies to native', () => {

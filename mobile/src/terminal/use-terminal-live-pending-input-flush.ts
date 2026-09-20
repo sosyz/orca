@@ -87,9 +87,16 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
   }, [])
 
   const sendQueuedMirrorPayload = useCallback(
-    (handle: string, payload: string): Promise<boolean> =>
-      sendLiveTerminalInputRef.current(handle, payload),
-    [sendLiveTerminalInputRef]
+    async (handle: string, payload: string): Promise<boolean> => {
+      const generation = pendingLiveInputFlushRef.current.generation
+      const sent = await sendLiveTerminalInputRef.current(handle, payload).catch(() => false)
+      if (!sent && pendingLiveInputFlushRef.current.generation === generation) {
+        // Later deltas depend on this prefix; an uncertain write cannot be replayed.
+        clearPendingLiveInputCommit()
+      }
+      return sent
+    },
+    [clearPendingLiveInputCommit, sendLiveTerminalInputRef]
   )
 
   const runMirrorStep = useCallback<RunTerminalLiveMirrorStep>(
@@ -173,6 +180,7 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
         return waitForPendingLiveInputFlush()
       }
 
+      const generation = pendingLiveInputFlushRef.current.generation
       const heldText = heldLiveInputTextRef.current
       const result =
         heldText.length > 0
@@ -181,7 +189,9 @@ export function useTerminalLivePendingInputFlush<TTabType extends string>({
 
       // Why: an explicit flush ends the field's editing session; the echoed PTY
       // text stays, so local mirror state must restart from empty.
-      clearPendingLiveInputCommit()
+      if (pendingLiveInputFlushRef.current.generation === generation) {
+        clearPendingLiveInputCommit()
+      }
       return result
     },
     [clearPendingLiveInputCommit, runMirrorStep, waitForPendingLiveInputFlush]

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalLiveInputSender } from './terminal-live-input-sender'
 import { TERMINAL_LIVE_HELD_PREEDIT_COMMIT_DELAY_MS } from './terminal-live-preedit-mirror'
 import { useTerminalLiveInputCommit } from './use-terminal-live-input-commit'
+import harmonyPreeditCases from '../../harmony/scripts/test-fixtures/text-input-preedit-cases.json'
 
 type TerminalLiveInputCommitHandlers = ReturnType<typeof useTerminalLiveInputCommit<string>>
 
@@ -30,10 +31,12 @@ type TerminalLiveInputCommitHarness = {
 
 type TerminalLiveInputCommitHarnessOptions = {
   readonly sendResult?: boolean
+  readonly send?: TerminalLiveInputSender
 }
 
 function createTerminalLiveInputCommitHarness({
-  sendResult = true
+  sendResult = true,
+  send
 }: TerminalLiveInputCommitHarnessOptions = {}): TerminalLiveInputCommitHarness {
   const activeHandle = 'terminal-a'
   const activeHandleRef: RefObject<string | null> = { current: activeHandle }
@@ -50,9 +53,9 @@ function createTerminalLiveInputCommitHarness({
   const sent: string[] = []
   let currentSendResult = sendResult
   const sendLiveTerminalInputRef: RefObject<TerminalLiveInputSender> = {
-    current: async (_handle, bytes) => {
+    current: async (handle, bytes) => {
       sent.push(bytes)
-      return currentSendResult
+      return send ? send(handle, bytes) : currentSendResult
     }
   }
   // Refs never re-render; only these variables re-run the hook's clear effects.
@@ -121,6 +124,25 @@ function createTerminalLiveInputCommitHarness({
 describe('terminal live input commit hook', () => {
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it.each(harmonyPreeditCases)('mirrors the native Harmony sequence: $name', async (scenario) => {
+    vi.useFakeTimers()
+    const { handlers, sent, unmount } = createTerminalLiveInputCommitHarness()
+    for (const event of scenario.events) {
+      if (event.key !== undefined) {
+        handlers.handleLiveInputKeyPress({ nativeEvent: { key: event.key } })
+      } else if (event.text !== undefined) {
+        changeLiveInput(handlers, event.text, event.isComposing)
+        if (event.isComposing === true) {
+          await vi.advanceTimersByTimeAsync(TERMINAL_LIVE_HELD_PREEDIT_COMMIT_DELAY_MS * 2)
+          expect(sent).toEqual([])
+        }
+      }
+    }
+    await vi.advanceTimersByTimeAsync(TERMINAL_LIVE_HELD_PREEDIT_COMMIT_DELAY_MS * 2)
+    expect(sent).toEqual(scenario.sent)
+    unmount()
   })
 
   it('Given Hangul composition and no marked-text report When steps arrive Then no jamo leaks', async () => {
@@ -198,9 +220,10 @@ describe('terminal live input commit hook', () => {
   })
 
   it('Given a failed mirrored Backspace When accessory input commits Then reports failure', async () => {
-    const { handlers, sent } = createTerminalLiveInputCommitHarness({ sendResult: false })
+    const { handlers, sent, setSendResult } = createTerminalLiveInputCommitHarness()
     changeLiveInput(handlers, 'a', false)
     await vi.waitFor(() => expect(sent).toEqual(['a']))
+    setSendResult(false)
 
     const result = await handlers.handleLiveInputAccessoryBytes({
       bytes: '\x7f',
@@ -210,6 +233,71 @@ describe('terminal live input commit hook', () => {
     expect(sent).toEqual(['a', '\x7f'])
     expect(result).toEqual({ kind: 'suppress-raw' })
   })
+
+  it.each([false, true])(
+    'drops dependent deltas after a rejected prefix (explicit flush: %s)',
+    async (explicitFlush) => {
+      let resolveFirst!: (sent: boolean) => void
+      const firstSend = new Promise<boolean>((resolve) => {
+        resolveFirst = resolve
+      })
+      let sends = 0
+      const { captures, handlers, sent, unmount } = createTerminalLiveInputCommitHarness({
+        send: async () => (++sends === 1 ? firstSend : true)
+      })
+      changeLiveInput(handlers, 'a', false)
+      changeLiveInput(handlers, 'ab', false)
+      const flush = explicitFlush
+        ? handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+        : null
+
+      resolveFirst(false)
+      if (flush) {
+        await expect(flush).resolves.toBe(false)
+      }
+      await vi.waitFor(() => expect(captures.at(-1)).toBe(''))
+      expect(sent).toEqual(['a'])
+      expect(captures.at(-1)).toBe('')
+
+      changeLiveInput(handlers, 'fresh', false)
+      await vi.waitFor(() => expect(sent).toEqual(['a', 'fresh']))
+      unmount()
+    }
+  )
+
+  it.each([false, true])(
+    'preserves fresh composition after a cancelled send fails late (explicit flush: %s)',
+    async (explicitFlush) => {
+      let rejectFirst!: (error: Error) => void
+      const firstSend = new Promise<boolean>((_resolve, reject) => {
+        rejectFirst = reject
+      })
+      let sends = 0
+      const { captures, handlers, sent, setConnected, unmount } =
+        createTerminalLiveInputCommitHarness({
+          send: async () => (++sends === 1 ? firstSend : true)
+        })
+      changeLiveInput(handlers, 'old', false)
+      const flush = explicitFlush
+        ? handlers.flushPendingLiveInputBeforeExternalSend('terminal-a')
+        : null
+      setConnected(false)
+      setConnected(true)
+      changeLiveInput(handlers, 'new', false)
+      await vi.waitFor(() => expect(sent).toEqual(['old', 'new']))
+
+      rejectFirst(new Error('old connection failed'))
+      if (flush) {
+        await expect(flush).resolves.toBe(false)
+      }
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(captures.at(-1)).toBe('new')
+      changeLiveInput(handlers, 'newer', false)
+      await vi.waitFor(() => expect(sent).toEqual(['old', 'new', 'er']))
+      unmount()
+    }
+  )
 
   it('Given a held syllable When the settle timer elapses Then commits it to the terminal', async () => {
     // Given

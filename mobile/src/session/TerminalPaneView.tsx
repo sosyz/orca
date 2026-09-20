@@ -9,10 +9,11 @@ import type {
   TerminalWebViewHandle
 } from '../terminal/terminal-webview-contract'
 
-type TerminalPaneViewProps = {
+export type TerminalPaneViewProps = {
   handle: string
   active: boolean
   covered: boolean
+  retained?: boolean
   keyboardLift: number
   terminalTheme?: MobileTerminalTheme
   textScale: number
@@ -36,6 +37,7 @@ export function TerminalPaneView({
   handle,
   active,
   covered,
+  retained = false,
   keyboardLift,
   terminalTheme,
   textScale,
@@ -58,6 +60,7 @@ export function TerminalPaneView({
     {
       active,
       covered,
+      retained,
       platform: Platform.OS as string
     }
   )

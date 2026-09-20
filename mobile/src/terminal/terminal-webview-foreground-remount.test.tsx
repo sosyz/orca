@@ -88,6 +88,7 @@ function registrationHarness() {
     terminalGestureInputBucketsRef: mutableRef(new Map()),
     terminalGestureInputInFlightRef: mutableRef(new Set<string>()),
     terminalGestureInputQueuesRef: mutableRef(new Map()),
+    terminalRenderedHandlesRef: mutableRef(new Set<string>()),
     terminalRefs: mutableRef(new Map<string, TerminalWebViewHandle>()),
     terminalUnsubsRef: mutableRef(new Map<string, () => void>()),
     unsubscribeTerminal: vi.fn((handle: string) => {
@@ -135,6 +136,39 @@ describe('TerminalWebView foreground remount recovery', () => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
     ;(Platform as { OS: string }).OS = 'ios'
+  })
+
+  it('ignores an older measurement reply after a newer viewport request starts', async () => {
+    vi.useFakeTimers()
+    const ref = createRef<TerminalWebViewHandle>()
+    const view = renderTerminalWebView({ ref }).root.findByType('WebView')
+    act(() => postWebViewMessage(view, { type: 'web-ready' }))
+    const first = ref.current!.measureFitDimensions(640)
+    const firstId = postedCommands().at(-1)!.id
+    const second = ref.current!.measureFitDimensions(320)
+    const secondId = postedCommands().at(-1)!.id
+    await expect(first).resolves.toBeNull()
+    const settled = vi.fn()
+    void second.then(settled)
+    act(() =>
+      postWebViewMessage(view, { type: 'measure-result', measureId: firstId, cols: 80, rows: 40 })
+    )
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+    act(() =>
+      postWebViewMessage(view, { type: 'measure-result', measureId: secondId, cols: 80, rows: 20 })
+    )
+    await expect(second).resolves.toEqual({ cols: 80, rows: 20 })
+  })
+
+  it.each([20.5, 1e100])('rejects invalid measurement dimensions %s', async (cols) => {
+    const ref = createRef<TerminalWebViewHandle>()
+    const view = renderTerminalWebView({ ref }).root.findByType('WebView')
+    act(() => postWebViewMessage(view, { type: 'web-ready' }))
+    const result = ref.current!.measureFitDimensions()
+    const measureId = postedCommands().at(-1)!.id
+    act(() => postWebViewMessage(view, { type: 'measure-result', measureId, cols, rows: 24 }))
+    await expect(result).resolves.toBeNull()
   })
 
   it('remounts Harmony foreground recovery and rejects stale generation messages immediately', async () => {

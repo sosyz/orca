@@ -1,8 +1,9 @@
-import { useCallback, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, type RefObject } from 'react'
 import * as Clipboard from 'expo-clipboard'
 import { File as FsFile, Paths } from 'expo-file-system'
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
 import type { TerminalModes } from '../terminal/terminal-webview-contract'
+import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import {
@@ -106,13 +107,31 @@ export function useMobileTerminalPaste({
   refreshCanPaste,
   showToast
 }: UseMobileTerminalPasteOptions): () => Promise<void> {
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   return useCallback(async () => {
-    if (!client || !activeHandle || !canSend) {
+    if (!client || !activeHandle || !canSend || connState !== 'connected') {
       return
     }
     const targetHandle = activeHandle
+    const isCurrentTarget = () =>
+      mountedRef.current &&
+      clientRef.current === client &&
+      activeHandleRef.current === targetHandle &&
+      activeSessionTabTypeRef.current === 'terminal'
+    if (!isCurrentTarget()) {
+      return
+    }
     try {
       const text = await Clipboard.getStringAsync()
+      if (!isCurrentTarget()) {
+        return
+      }
       let payload: string | null = null
       if (text.length > 0) {
         payload = buildMobileTerminalClipboardTextPayload(
@@ -121,18 +140,27 @@ export function useMobileTerminalPaste({
         )
       } else {
         const image = await Clipboard.getImageAsync({ format: 'png' })
+        if (!isCurrentTarget()) {
+          return
+        }
         if (!image) {
           refreshCanPaste()
           return
         }
         const connectionId = await getActiveWorktreeConnectionId()
         const base64 = await prepareMobileClipboardImageBase64(image, resizeMobileClipboardImage)
+        if (!isCurrentTarget()) {
+          return
+        }
         const imagePath = await saveMobileClipboardImageAsTempFile(client, base64, {
           connectionId
         })
         payload = buildMobileImagePastePayload(imagePath)
       }
 
+      if (!isCurrentTarget()) {
+        return
+      }
       const wrappedBytes = new TextEncoder().encode(payload).byteLength
       if (wrappedBytes > 256 * 1024) {
         onError()
@@ -146,16 +174,10 @@ export function useMobileTerminalPaste({
       if (!flushedPendingInput) {
         return
       }
-      const currentClient = clientRef.current
-      if (
-        !currentClient ||
-        connStateRef.current !== 'connected' ||
-        targetHandle !== activeHandleRef.current ||
-        activeSessionTabTypeRef.current !== 'terminal'
-      ) {
+      if (!isCurrentTarget() || connStateRef.current !== 'connected') {
         return
       }
-      await currentClient.sendRequest('terminal.send', {
+      const response = await client.sendRequest('terminal.send', {
         terminal: targetHandle,
         text: payload,
         enter: false,
@@ -163,12 +185,21 @@ export function useMobileTerminalPaste({
           ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
           : {})
       })
+      if (!isCurrentTarget()) {
+        return
+      }
+      if (!isTerminalSendRpcAccepted(response)) {
+        throw new Error(response.ok ? 'Terminal did not accept paste' : response.error.message)
+      }
       onSuccess()
       refreshCanPaste()
     } catch (e) {
+      if (!isCurrentTarget()) {
+        return
+      }
       onError()
       const err = e as { name?: string; message?: string }
-      const isDisconnected = connState !== 'connected'
+      const isDisconnected = connStateRef.current !== 'connected'
       // eslint-disable-next-line no-console
       console.warn('[mobile-clip] paste failed', { name: err.name, message: err.message })
       if (isDisconnected) {

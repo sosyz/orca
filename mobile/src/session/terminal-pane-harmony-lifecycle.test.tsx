@@ -47,13 +47,14 @@ const callbacks = {
   onWebReady: vi.fn()
 }
 
-function pane(active: boolean, covered = false) {
+function pane(active: boolean, covered = false, retained = false) {
   return createElement(TerminalPaneView, {
     ...callbacks,
     active,
     covered,
     handle: 'term-1',
     keyboardLift: 0,
+    retained,
     textScale: 1
   })
 }
@@ -100,6 +101,33 @@ describe('TerminalPaneView Harmony lifecycle', () => {
 
     act(() => {
       renderer?.update(pane(true, true))
+    })
+    expect(renderer?.root.findAllByType('TerminalWebView')).toHaveLength(0)
+    expect(callbacks.onRef).toHaveBeenLastCalledWith('term-1', null)
+  })
+
+  it('can keep retained Harmony ArkWeb mounted without activating the hidden pane', () => {
+    act(() => {
+      renderer = create(pane(true, false, true))
+    })
+    expect(callbacks.onRef).toHaveBeenLastCalledWith('term-1', terminalWebViewMock.handle)
+    callbacks.onRef.mockClear()
+
+    act(() => {
+      renderer?.update(pane(false, false, true))
+    })
+    expect(renderer?.root.findAllByType('TerminalWebView')).toHaveLength(1)
+    expect(renderer?.root.findByType('TerminalWebView').props.active).toBe(false)
+    expect(callbacks.onRef).not.toHaveBeenCalledWith('term-1', null)
+
+    act(() => {
+      renderer?.update(pane(true, true, true))
+    })
+    expect(renderer?.root.findAllByType('TerminalWebView')).toHaveLength(1)
+    expect(renderer?.root.findByType('TerminalWebView').props.active).toBe(false)
+
+    act(() => {
+      renderer?.update(pane(false, false, false))
     })
     expect(renderer?.root.findAllByType('TerminalWebView')).toHaveLength(0)
     expect(callbacks.onRef).toHaveBeenLastCalledWith('term-1', null)

@@ -15,6 +15,7 @@ import { dispatchTerminalWebViewNotification } from './terminal-webview-notifica
 import { routeTerminalQueryReply } from './terminal-webview-query-reply-routing'
 import { TerminalWebViewSurface } from './terminal-webview-surface'
 import { useTerminalWebViewHandle } from './terminal-webview-handle'
+import type { TerminalMeasureResolver } from './terminal-webview-measurement'
 import { createTerminalWriteCoalescer } from './terminal-write-coalescer'
 
 export const TerminalWebView = forwardRef<TerminalWebViewHandle, TerminalWebViewProps>(
@@ -51,9 +52,7 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, TerminalWebView
     const messageIdRef = useRef(0)
     const pendingPingIdRef = useRef<number | null>(null)
     const terminalThemeKey = useMemo(() => JSON.stringify(terminalTheme ?? null), [terminalTheme])
-    const measureResolveRef = useRef<
-      ((result: { cols: number; rows: number } | null) => void) | null
-    >(null)
+    const measureResolveRef = useRef<TerminalMeasureResolver | null>(null)
     const readyPromiseRef = useRef<Promise<void> | null>(null)
     const readyResolveRef = useRef<(() => void) | null>(null)
     const readyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -169,6 +168,9 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, TerminalWebView
         } catch {
           return
         }
+        if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+          return
+        }
         routeTerminalQueryReply(msg, onTerminalQueryReply)
 
         if (msg.type === 'bridge-ready') {
@@ -195,11 +197,19 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, TerminalWebView
           settleReady()
         } else if (msg.type === 'measure-result') {
           const resolve = measureResolveRef.current
-          measureResolveRef.current = null
-          if (resolve) {
+          if (resolve && msg.measureId === resolve.requestId) {
             const cols = typeof msg.cols === 'number' ? msg.cols : null
             const rows = typeof msg.rows === 'number' ? msg.rows : null
-            resolve(cols && rows && cols >= 20 && rows >= 8 ? { cols, rows } : null)
+            resolve(
+              cols &&
+                rows &&
+                Number.isSafeInteger(cols) &&
+                Number.isSafeInteger(rows) &&
+                cols >= 20 &&
+                rows >= 8
+                ? { cols, rows }
+                : null
+            )
           }
         } else {
           dispatchTerminalWebViewNotification(msg, {

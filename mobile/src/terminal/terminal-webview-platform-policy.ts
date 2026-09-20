@@ -23,6 +23,7 @@ export type TerminalWebViewPlatformPolicy = {
 type TerminalPaneWebViewStateOptions = {
   active: boolean
   covered: boolean
+  retained?: boolean
   platform: string
 }
 
@@ -70,13 +71,14 @@ export function getTerminalWebViewPlatformPolicy(platform: string): TerminalWebV
 export function getTerminalPaneWebViewState({
   active,
   covered,
+  retained = false,
   platform
 }: TerminalPaneWebViewStateOptions): TerminalPaneWebViewState {
   const policy = getTerminalWebViewPlatformPolicy(platform)
   const webViewActive = active && !covered
   return {
     webViewActive,
-    shouldMountWebView: policy.mountStrategy === 'retain-hidden' || webViewActive,
+    shouldMountWebView: policy.mountStrategy === 'retain-hidden' || webViewActive || retained,
     hiddenPanePresentation: policy.hiddenPanePresentation
   }
 }

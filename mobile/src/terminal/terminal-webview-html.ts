@@ -878,7 +878,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     reportEngineError('terminal runtime error', err || msg);
   };
 
-  function measureFitDimensions(containerHeightPx, retriesLeft) {
+  function measureFitDimensions(containerHeightPx, measureId, retriesLeft) {
     if (typeof retriesLeft !== 'number') retriesLeft = 30;
     // Why: init and measure are posted back-to-back from React, but
     // init has an async rAF chain. A measure that runs synchronously
@@ -897,7 +897,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     if (notReady || cellWidth <= 0 || cellHeight <= 0) {
       if (retriesLeft > 0) {
         requestAnimationFrame(function() {
-          measureFitDimensions(containerHeightPx, retriesLeft - 1);
+          measureFitDimensions(containerHeightPx, measureId, retriesLeft - 1);
         });
         return;
       }
@@ -907,7 +907,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
         cellHeight: cellHeight,
         retriesLeft: retriesLeft
       });
-      notify({ type: 'measure-result', cols: null, rows: null });
+      notify({ type: 'measure-result', measureId: measureId, cols: null, rows: null });
       return;
     }
     var vpWidth = window.innerWidth;
@@ -926,7 +926,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
         cellWidth: cellWidth,
         cols: cols
       });
-      notify({ type: 'measure-result', cols: null, rows: null });
+      notify({ type: 'measure-result', measureId: measureId, cols: null, rows: null });
       return;
     }
     // Why: the rows we report become the PTY's actual row count after the
@@ -938,7 +938,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     // from RN layout (terminalFrame's flex bounds), not from undersizing
     // the PTY.
     var rows = Math.max(8, Math.floor(vpHeight / cellHeight));
-    notify({ type: 'measure-result', cols: cols, rows: rows });
+    notify({ type: 'measure-result', measureId: measureId, cols: cols, rows: rows });
   }
 
   function handleMsg(msg) {
@@ -992,7 +992,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
         cancelSelect();
       }
     } else if (msg.type === 'measure') {
-      measureFitDimensions(msg.containerHeight);
+      measureFitDimensions(msg.containerHeight, msg.id);
     } else if (msg.type === 'reset-zoom') {
       applyFitScale('reset-zoom-msg');
     } else if (msg.type === 'set-theme') {

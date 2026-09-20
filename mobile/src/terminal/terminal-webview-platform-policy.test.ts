@@ -62,6 +62,32 @@ describe('terminal WebView platform policy', () => {
     })
   })
 
+  it('allows an already visited Harmony pane to remain mounted while inactive', () => {
+    expect(
+      getTerminalPaneWebViewState({
+        active: false,
+        covered: false,
+        platform: 'harmony',
+        retained: true
+      })
+    ).toEqual({
+      hiddenPanePresentation: 'display-none',
+      shouldMountWebView: true,
+      webViewActive: false
+    })
+    expect(
+      getTerminalPaneWebViewState({
+        active: true,
+        covered: true,
+        platform: 'harmony',
+        retained: true
+      })
+    ).toMatchObject({
+      shouldMountWebView: true,
+      webViewActive: false
+    })
+  })
+
   it('centralizes bridge, WebGL, reload, and foreground recovery differences', () => {
     expect(getTerminalWebViewPlatformPolicy('harmony')).toMatchObject({
       bridgeAutoRecovery: 'foreground-visible-once',

@@ -3,7 +3,7 @@ import type { TerminalOscLinkRange } from '../../../src/shared/terminal-osc-link
 import type { MobileTerminalTheme, TerminalWebViewHandle } from './terminal-webview-contract'
 import {
   measureTerminalFitDimensions,
-  type TerminalFitDimensions
+  type TerminalMeasureResolver
 } from './terminal-webview-measurement'
 import type { TerminalWebViewCommand } from './terminal-webview-messages'
 import type { TerminalWebViewPlatformPolicy } from './terminal-webview-platform-policy'
@@ -18,7 +18,7 @@ type TerminalWebViewHandleOptions = {
   armWebReadyWatchdog: () => void
   active: boolean
   isWebReadyRef: RefObject<boolean>
-  measureResolveRef: RefObject<((result: TerminalFitDimensions | null) => void) | null>
+  measureResolveRef: RefObject<TerminalMeasureResolver | null>
   pendingPingIdRef: RefObject<number | null>
   platformPolicy: TerminalWebViewPlatformPolicy
   postMessage: (msg: TerminalWebViewCommand) => void
