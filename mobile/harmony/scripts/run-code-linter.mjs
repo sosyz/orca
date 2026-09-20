@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { inspectCodeLinterResult, listNativeLintSources } from './code-linter-result.mjs'
 
 const projectRoot = resolve(import.meta.dirname, '..')
 const defaultDevEcoHome =
@@ -25,6 +26,7 @@ if (!devEcoNode || !existsSync(codeLinterEntry)) {
 }
 
 const sdkPath = process.env.DEVECO_SDK_HOME ?? join(devEcoHome, 'sdk')
+const logPath = join(tmpdir(), 'orca-harmony-codelinter.log')
 const result = spawnSync(
   devEcoNode,
   [
@@ -46,7 +48,7 @@ const result = spawnSync(
     '--sdkStringVersion',
     process.env.HARMONY_SDK_VERSION ?? '6.0.1',
     '--logPath',
-    join(tmpdir(), 'orca-harmony-codelinter.log'),
+    logPath,
     '--inIde',
     'false',
     '--isTooManyFiles',
@@ -55,40 +57,44 @@ const result = spawnSync(
   { encoding: 'utf8' }
 )
 
-let checkedFiles = 0
-const defects = []
-const diagnostics = []
-if (result.error) {
-  diagnostics.push(`DevEco Code Linter failed to start: ${result.error.message}`)
-}
-for (const line of `${result.stdout ?? ''}\n${result.stderr ?? ''}`.split('\n')) {
-  if (!line) {
-    continue
-  }
-  try {
-    const report = JSON.parse(line)
-    if (Array.isArray(report.defects)) {
-      checkedFiles += 1
-      defects.push(...report.defects)
-    } else if ([0, -1, -2].includes(report.messageType)) {
-      diagnostics.push(report.content)
-    }
-  } catch {
-    diagnostics.push(line)
-  }
-}
+const expectedSources = listNativeLintSources(join(projectRoot, 'entry', 'src', 'main', 'ets'))
+const inspection = inspectCodeLinterResult(result, expectedSources)
 
-for (const diagnostic of diagnostics) {
-  process.stderr.write(`${diagnostic}\n`)
+for (const failure of inspection.failures) {
+  process.stderr.write(`${failure}\n`)
 }
-for (const defect of defects) {
+if (inspection.failures.length > 0) {
+  process.stderr.write(`DevEco Code Linter log: ${logPath}\n`)
+}
+if (
+  inspection.failures.some((failure) => failure.includes('incomplete report results')) &&
+  process.platform === 'darwin' &&
+  process.arch === 'arm64'
+) {
+  const binary = join(codeLinterRoot, 'performanceAgent', 'hpaudit')
+  const architectures = spawnSync('/usr/bin/lipo', ['-archs', binary], { encoding: 'utf8' })
+  if (
+    architectures.status === 0 &&
+    architectures.stdout.includes('x86_64') &&
+    !architectures.stdout.includes('arm64')
+  ) {
+    const rosetta = spawnSync('/usr/bin/arch', ['-x86_64', '/usr/bin/true'], {
+      encoding: 'utf8'
+    })
+    if (rosetta.status !== 0) {
+      process.stderr.write(
+        `DevEco performanceAgent/hpaudit is x86_64-only and cannot run on this arm64 Mac; Code Linter results are incomplete.\n`
+      )
+    }
+  }
+}
+for (const defect of inspection.defects) {
   process.stderr.write(
     `${defect._filePath ?? 'unknown'}:${defect.reportLine ?? 0}:${defect.reportColumn ?? 0} ${defect.ruleId ?? ''} ${defect.description ?? ''}\n`
   )
 }
-process.stdout.write(`Code Linter checked ${checkedFiles} reports; ${defects.length} defects.\n`)
+process.stdout.write(
+  `Code Linter checked ${inspection.reportCount} reports for ${inspection.sourceCount} ArkTS sources; ${inspection.defects.length} defects.\n`
+)
 
-const hasErrors = defects.some((defect) => defect.severity === 2)
-const failedToRun = result.error !== undefined || result.status === null || checkedFiles === 0
-
-process.exitCode = failedToRun || result.status !== 0 || hasErrors ? 1 : 0
+process.exitCode = inspection.failures.length > 0 ? 1 : 0
