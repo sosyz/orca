@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, View, Text, Pressable, StyleSheet } from 'react-native'
 import { ChevronLeft } from 'lucide-react-native'
 import { colors, spacing } from '../theme/mobile-theme'
@@ -47,7 +47,22 @@ export function QuickCommandsSheet({
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<QuickCommandDraft | null>(null)
   const [saving, setSaving] = useState(false)
-  const savingRef = useRef(false)
+  const savingRef = useRef<{ scope: object } | null>(null)
+  const saveScopeRef = useRef<object | null>(null)
+  const draftRevisionRef = useRef(0)
+
+  useLayoutEffect(() => {
+    const scope = {}
+    saveScopeRef.current = scope
+    if (savingRef.current && savingRef.current.scope !== scope) {
+      setSaving(false)
+    }
+    return () => {
+      if (saveScopeRef.current === scope) {
+        saveScopeRef.current = null
+      }
+    }
+  }, [client, repoId, visible])
 
   const [wasVisible, setWasVisible] = useState(visible)
   if (visible !== wasVisible) {
@@ -86,6 +101,7 @@ export function QuickCommandsSheet({
     if (!command && commands.length >= MAX_QUICK_COMMANDS) {
       return
     }
+    draftRevisionRef.current += 1
     setDraft(
       command
         ? quickCommandToDraft(command)
@@ -120,25 +136,30 @@ export function QuickCommandsSheet({
   }
 
   const handleSave = async () => {
-    if (!draft || savingRef.current) {
+    const saveScope = saveScopeRef.current
+    if (!visible || !draft || !saveScope || savingRef.current?.scope === saveScope) {
       return
     }
     const built = draftToQuickCommand(draft)
     if (!built) {
       return
     }
+    const draftRevision = draftRevisionRef.current
     // Why: state cannot lock out a second tap until React commits the disabled UI.
-    savingRef.current = true
+    const saveAttempt = { scope: saveScope }
+    savingRef.current = saveAttempt
     setSaving(true)
     try {
       const ok = await persist({ type: 'upsert', command: built })
-      if (ok) {
+      if (ok && saveScopeRef.current === saveScope && draftRevisionRef.current === draftRevision) {
         setView('list')
         setDraft(null)
       }
     } finally {
-      savingRef.current = false
-      setSaving(false)
+      if (savingRef.current === saveAttempt) {
+        savingRef.current = null
+        setSaving(false)
+      }
     }
   }
 
@@ -159,7 +180,10 @@ export function QuickCommandsSheet({
         ) : (
           <Pressable
             style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-            onPress={() => setView(view === 'agent' ? 'editor' : 'list')}
+            onPress={() => {
+              draftRevisionRef.current += 1
+              setView(view === 'agent' ? 'editor' : 'list')
+            }}
             accessibilityLabel="Back"
           >
             <ChevronLeft size={18} color={colors.textSecondary} />
@@ -203,11 +227,16 @@ export function QuickCommandsSheet({
           error={error}
           repoId={repoId}
           repoName={repoName}
-          onChange={(patch) =>
+          onChange={(patch) => {
+            draftRevisionRef.current += 1
             setDraft((current) => (current ? { ...current, ...patch } : current))
-          }
-          onOpenAgentPicker={() => setView('agent')}
+          }}
+          onOpenAgentPicker={() => {
+            draftRevisionRef.current += 1
+            setView('agent')
+          }}
           onCancel={() => {
+            draftRevisionRef.current += 1
             setView('list')
             setDraft(null)
           }}
@@ -219,6 +248,7 @@ export function QuickCommandsSheet({
         <QuickCommandAgentPicker
           selected={draft.agent}
           onSelect={(agent) => {
+            draftRevisionRef.current += 1
             setDraft((current) => (current ? { ...current, agent } : current))
             setView('editor')
           }}

@@ -40,10 +40,12 @@ function failure(message: string): RpcResponse {
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => {}
-  const promise = new Promise<T>((done) => {
+  let reject: (reason: Error) => void = () => {}
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 describe('useQuickCommands', () => {
@@ -415,6 +417,158 @@ describe('useQuickCommands', () => {
     expect(loadCount).toBe(2)
     expect(state?.commands).toEqual([])
     expect(state?.ready).toBe(true)
+  })
+
+  it('does not let a pending reopen load restore a command deleted from an earlier alert', async () => {
+    const reload = deferred<RpcResponse>()
+    let loadCount = 0
+    const client = {
+      sendRequest: vi.fn((method: string) => {
+        if (method === 'settings.getTerminalQuickCommands') {
+          loadCount += 1
+          return loadCount === 1 ? Promise.resolve(success([FIRST])) : reload.promise
+        }
+        return Promise.resolve(success([]))
+      })
+    } as unknown as RpcClient
+    function Harness({ enabled }: { enabled: boolean }): null {
+      state = useQuickCommands({ client, enabled })
+      return null
+    }
+    await act(async () => {
+      renderer = create(createElement(Harness, { enabled: true }))
+      await Promise.resolve()
+    })
+    const alertConfirm = state!.persist
+    await act(async () => {
+      renderer!.update(createElement(Harness, { enabled: false }))
+    })
+    await act(async () => {
+      renderer!.update(createElement(Harness, { enabled: true }))
+      await Promise.resolve()
+    })
+    expect(loadCount).toBe(2)
+
+    await act(async () => {
+      expect(await alertConfirm({ type: 'delete', id: FIRST.id })).toBe(true)
+    })
+    expect(state?.commands).toEqual([])
+    await act(async () => {
+      reload.resolve(success([FIRST]))
+      await reload.promise
+    })
+    expect(state?.commands).toEqual([])
+    expect(state?.ready).toBe(true)
+  })
+
+  it.each([
+    ['ordinary rejection', new Error('stale read failed')],
+    ['cutover rejection', new LogicalClientCutoverError()]
+  ])('ignores a pending reopen load %s after an alert mutation succeeds', async (_label, error) => {
+    const reload = deferred<RpcResponse>()
+    let loadCount = 0
+    const client = {
+      sendRequest: vi.fn((method: string) => {
+        if (method === 'settings.getTerminalQuickCommands') {
+          loadCount += 1
+          return loadCount === 1 ? Promise.resolve(success([FIRST])) : reload.promise
+        }
+        return Promise.resolve(success([]))
+      })
+    } as unknown as RpcClient
+    function Harness({ enabled }: { enabled: boolean }): null {
+      state = useQuickCommands({ client, enabled })
+      return null
+    }
+    await act(async () => {
+      renderer = create(createElement(Harness, { enabled: true }))
+      await Promise.resolve()
+    })
+    const alertConfirm = state!.persist
+    await act(async () => {
+      renderer!.update(createElement(Harness, { enabled: false }))
+    })
+    await act(async () => {
+      renderer!.update(createElement(Harness, { enabled: true }))
+      await Promise.resolve()
+    })
+    expect(loadCount).toBe(2)
+
+    await act(async () => {
+      expect(await alertConfirm({ type: 'delete', id: FIRST.id })).toBe(true)
+    })
+    expect(state?.commands).toEqual([])
+    expect(state?.ready).toBe(true)
+    expect(state?.error).toBeNull()
+    await act(async () => {
+      reload.reject(error)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(loadCount).toBe(2)
+    expect(state?.commands).toEqual([])
+    expect(state?.ready).toBe(true)
+    expect(state?.error).toBeNull()
+  })
+
+  it('waits for a mutation queued during the reopen wait before reading settings', async () => {
+    const firstUpdate = deferred<RpcResponse>()
+    const secondUpdate = deferred<RpcResponse>()
+    let loadCount = 0
+    let updateCount = 0
+    const client = {
+      sendRequest: vi.fn((method: string) => {
+        if (method === 'settings.getTerminalQuickCommands') {
+          loadCount += 1
+          return Promise.resolve(success(loadCount === 1 ? [FIRST, SECOND] : []))
+        }
+        updateCount += 1
+        return updateCount === 1 ? firstUpdate.promise : secondUpdate.promise
+      })
+    } as unknown as RpcClient
+    function Harness({ enabled }: { enabled: boolean }): null {
+      state = useQuickCommands({ client, enabled })
+      return null
+    }
+    await act(async () => {
+      renderer = create(createElement(Harness, { enabled: true }))
+      await Promise.resolve()
+    })
+    const alertConfirm = state!.persist
+    let firstSave: Promise<boolean> = Promise.resolve(false)
+    let secondSave: Promise<boolean> = Promise.resolve(false)
+    await act(async () => {
+      firstSave = state!.persist({ type: 'delete', id: FIRST.id })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.update(createElement(Harness, { enabled: false }))
+    })
+    await act(async () => {
+      renderer!.update(createElement(Harness, { enabled: true }))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      secondSave = alertConfirm({ type: 'delete', id: SECOND.id })
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      firstUpdate.resolve(success([SECOND]))
+      await firstSave
+      await Promise.resolve()
+    })
+    expect(updateCount).toBe(2)
+    expect(loadCount).toBe(1)
+
+    await act(async () => {
+      secondUpdate.resolve(success([]))
+      await secondSave
+      await Promise.resolve()
+    })
+    expect(loadCount).toBe(2)
+    expect(state?.commands).toEqual([])
   })
 
   it('rolls back to the confirmed list when consecutive queued mutations fail', async () => {

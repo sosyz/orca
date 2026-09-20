@@ -104,29 +104,31 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
     setError(null)
 
     void (async () => {
+      let loadMutationId: number | null = null
+      const isCurrentOperation = () =>
+        !stale &&
+        operationId === operationIdRef.current &&
+        mutationContextRef.current === mutationContext
+      const isObsoleteLoad = () =>
+        !isCurrentOperation() ||
+        (loadMutationId !== null && mutationContext.nextMutationId !== loadMutationId)
       try {
         // A close/reopen can overlap an in-flight save. Read only after that
         // save settles so an older snapshot cannot replace its canonical result.
-        await mutationContext.queue
-        if (
-          stale ||
-          operationId !== operationIdRef.current ||
-          mutationContextRef.current !== mutationContext
-        ) {
-          return
+        let pendingQueue = mutationContext.queue
+        for (;;) {
+          await pendingQueue
+          if (!isCurrentOperation()) {
+            return
+          }
+          if (pendingQueue === mutationContext.queue) {
+            break
+          }
+          pendingQueue = mutationContext.queue
         }
-        const response = await loadQuickCommandsWithCutoverRetry(
-          client,
-          () =>
-            stale ||
-            operationId !== operationIdRef.current ||
-            mutationContextRef.current !== mutationContext
-        )
-        if (
-          stale ||
-          operationId !== operationIdRef.current ||
-          mutationContextRef.current !== mutationContext
-        ) {
+        loadMutationId = mutationContext.nextMutationId
+        const response = await loadQuickCommandsWithCutoverRetry(client, isObsoleteLoad)
+        if (isObsoleteLoad()) {
           return
         }
         if (!response.ok) {
@@ -143,19 +145,11 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
         setCommands(next)
         setReady(true)
       } catch (err) {
-        if (
-          !stale &&
-          operationId === operationIdRef.current &&
-          mutationContextRef.current === mutationContext
-        ) {
+        if (!isObsoleteLoad()) {
           setError(err instanceof Error ? err.message : 'Failed to load quick commands')
         }
       } finally {
-        if (
-          !stale &&
-          operationId === operationIdRef.current &&
-          mutationContextRef.current === mutationContext
-        ) {
+        if (isCurrentOperation()) {
           setLoading(false)
         }
       }
@@ -220,6 +214,7 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
             )
             commandsRef.current = next
             setCommands(next)
+            setReady(true)
             const hasNewerMutation = mutationContext.pending.some(
               (pending) => pending.id > mutation.id
             )

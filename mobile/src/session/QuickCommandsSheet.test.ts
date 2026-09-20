@@ -133,6 +133,132 @@ describe('QuickCommandsSheet', () => {
     })
   })
 
+  it('keeps a new draft opened while an earlier save is still pending', async () => {
+    const save = deferred<boolean>()
+    mocks.persist.mockReturnValue(save.promise)
+    const client = {} as RpcClient
+    const props = {
+      onClose: vi.fn(),
+      client,
+      repoId: 'repo-1',
+      repoName: 'Repo',
+      onLaunch: () => true
+    }
+    await act(async () => {
+      renderer = create(createElement(QuickCommandsSheet, { ...props, visible: true }))
+    })
+    act(() => renderer!.root.findByType(quickCommandsList).props.onAdd())
+    act(() => {
+      const editor = renderer!.root.findByType(quickCommandEditorForm)
+      editor.props.onChange({ label: 'First' })
+      editor.props.onChange({ command: 'echo first' })
+    })
+    act(() => renderer!.root.findByType(quickCommandEditorForm).props.onSave())
+
+    await act(async () => {
+      renderer!.update(createElement(QuickCommandsSheet, { ...props, visible: false }))
+    })
+    await act(async () => {
+      renderer!.update(createElement(QuickCommandsSheet, { ...props, visible: true }))
+    })
+    act(() => renderer!.root.findByType(quickCommandsList).props.onAdd())
+    act(() => renderer!.root.findByType(quickCommandEditorForm).props.onChange({ label: 'Second' }))
+
+    await act(async () => {
+      save.resolve(true)
+      await save.promise
+    })
+    expect(renderer!.root.findByType(quickCommandEditorForm).props.draft.label).toBe('Second')
+  })
+
+  it('keeps edits made to the same draft after the save was dispatched', async () => {
+    const save = deferred<boolean>()
+    mocks.persist.mockReturnValue(save.promise)
+    await act(async () => {
+      renderer = create(
+        createElement(QuickCommandsSheet, {
+          visible: true,
+          onClose: vi.fn(),
+          client: {} as RpcClient,
+          repoId: 'repo-1',
+          repoName: 'Repo',
+          onLaunch: () => true
+        })
+      )
+    })
+    act(() => renderer!.root.findByType(quickCommandsList).props.onAdd())
+    act(() => {
+      const editor = renderer!.root.findByType(quickCommandEditorForm)
+      editor.props.onChange({ label: 'First' })
+      editor.props.onChange({ command: 'echo first' })
+    })
+    act(() => renderer!.root.findByType(quickCommandEditorForm).props.onSave())
+    act(() =>
+      renderer!.root.findByType(quickCommandEditorForm).props.onChange({ label: 'Revised' })
+    )
+
+    await act(async () => {
+      save.resolve(true)
+      await save.promise
+    })
+    expect(renderer!.root.findByType(quickCommandEditorForm).props.draft.label).toBe('Revised')
+  })
+
+  it('lets a new client save independently of the prior client pending save', async () => {
+    const firstSave = deferred<boolean>()
+    const secondSave = deferred<boolean>()
+    mocks.persist.mockReturnValueOnce(firstSave.promise).mockReturnValueOnce(secondSave.promise)
+    const client = {} as RpcClient
+    const nextClient = {} as RpcClient
+    const props = {
+      onClose: vi.fn(),
+      client,
+      repoId: 'repo-1',
+      repoName: 'Repo',
+      onLaunch: () => true
+    }
+    await act(async () => {
+      renderer = create(createElement(QuickCommandsSheet, { ...props, visible: true }))
+    })
+    act(() => renderer!.root.findByType(quickCommandsList).props.onAdd())
+    act(() => {
+      const editor = renderer!.root.findByType(quickCommandEditorForm)
+      editor.props.onChange({ label: 'First' })
+      editor.props.onChange({ command: 'echo first' })
+    })
+    act(() => renderer!.root.findByType(quickCommandEditorForm).props.onSave())
+    await act(async () => {
+      renderer!.update(
+        createElement(QuickCommandsSheet, { ...props, client: nextClient, visible: false })
+      )
+    })
+    await act(async () => {
+      renderer!.update(
+        createElement(QuickCommandsSheet, { ...props, client: nextClient, visible: true })
+      )
+    })
+    act(() => renderer!.root.findByType(quickCommandsList).props.onAdd())
+    act(() => {
+      const editor = renderer!.root.findByType(quickCommandEditorForm)
+      editor.props.onChange({ label: 'Second' })
+      editor.props.onChange({ command: 'echo second' })
+    })
+    act(() => renderer!.root.findByType(quickCommandEditorForm).props.onSave())
+    expect(mocks.persist).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      firstSave.resolve(true)
+      await firstSave.promise
+    })
+    expect(renderer!.root.findByType(quickCommandEditorForm).props.draft.label).toBe('Second')
+    expect(renderer!.root.findByType(quickCommandEditorForm).props.saving).toBe(true)
+    await act(async () => {
+      secondSave.resolve(true)
+      await secondSave.promise
+    })
+    expect(renderer!.root.findAllByType(quickCommandEditorForm)).toHaveLength(0)
+  })
+
   it('keeps creation closed when the host command limit is reached', async () => {
     mocks.commands = Array.from({ length: MAX_QUICK_COMMANDS }, (_, index) => ({
       ...command,
